@@ -116,7 +116,7 @@ router.get('/me', async (req, res) => {
   }
 });
 
-// ── POST /api/users — create user (sends reset link, never password) ─────────
+// ── POST /api/users — create user (Hybrid: Custom password OR reset link) ────
 router.post('/', requirePerm('perm_create_users'), async (req, res) => {
   const client = await pool.connect();
   try {
@@ -142,8 +142,9 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
     }
     // ----------------------------------------------
 
+    // HYBRID TWEAK: We added 'password' to the incoming body request here
     const {
-      full_name, email, role = 'viewer',
+      full_name, email, role = 'viewer', password, 
       assigned_state = 'All India', assigned_district,
       perm_publish_apps = false, perm_upload_unity = false,
       perm_manage_geo = false, perm_view_analytics = false,
@@ -168,8 +169,21 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
     await client.query('BEGIN');
 
     const id = uuidv4();
-    const tempPassword = crypto.randomBytes(24).toString('base64');
-    const hash = await bcrypt.hash(tempPassword, 12);
+    
+    // HYBRID LOGIC START --------------------------------------
+    let hash;
+    let is_custom_password = false;
+    
+    if (password && password.trim() !== '') {
+        // Option B: Admin typed a custom password. Use it.
+        hash = await bcrypt.hash(password, 12);
+        is_custom_password = true;
+    } else {
+        // Option A: Admin left it blank. Generate unguessable password.
+        const tempPassword = crypto.randomBytes(24).toString('base64');
+        hash = await bcrypt.hash(tempPassword, 12);
+    }
+    // HYBRID LOGIC END ----------------------------------------
 
     const result = await client.query(
       `INSERT INTO users (
@@ -196,23 +210,26 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
       return res.status(409).json({ error: 'Email already in use' });
     }
 
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    const resetHash  = crypto.createHash('sha256').update(resetToken).digest('hex');
-    await client.query(
-      `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at)
-       VALUES ($1, $2, $3, NOW() + INTERVAL '48 hours', NOW())`,
-      [uuidv4(), id, resetHash]
-    );
+    // Only send the reset email if the Admin left the password blank
+    if (!is_custom_password) {
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        const resetHash  = crypto.createHash('sha256').update(resetToken).digest('hex');
+        await client.query(
+          `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at)
+           VALUES ($1, $2, $3, NOW() + INTERVAL '48 hours', NOW())`,
+          [uuidv4(), id, resetHash]
+        );
+
+        const link = `${process.env.PUBLIC_URL || 'https://dashboard.mitra.gov.in'}/reset/index.html?token=${resetToken}`;
+        sendResetEmail({ to: email.toLowerCase().trim(), name: full_name, link })
+          .catch(e => log.error({ err: e.message }, 'sendResetEmail failed'));
+    }
 
     await client.query('COMMIT');
 
-    const link = `${process.env.PUBLIC_URL || 'https://dashboard.mitra.gov.in'}/reset?token=${resetToken}`;
-    sendResetEmail({ to: email.toLowerCase().trim(), name: full_name, link })
-      .catch(e => log.error({ err: e.message }, 'sendResetEmail failed'));
-
     audit({
       userId: req.user.id, action: 'user.create', resourceType: 'user', resourceId: id,
-      ip: req.ip, details: { email: email.toLowerCase().trim(), role },
+      ip: req.ip, details: { email: email.toLowerCase().trim(), role, custom_password_set: is_custom_password },
     });
 
     res.status(201).json(result.rows[0]);

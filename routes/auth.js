@@ -397,6 +397,59 @@ async function sendResetEmail({ to, name, link }) {
   }
 }
 
+// ── POST /api/auth/reset-password ──────────────────────────────────────────
+// Handles the password reset form submission from the /reset link
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: 'Token and new password are required' });
+    }
+    
+    // Enforce the CERT-In minimum length rule
+    if (newPassword.length < 12) {
+      return res.status(400).json({ error: 'Password must be at least 12 characters' });
+    }
+
+    // 1. Hash the incoming token using SHA-256 to match what is stored in the database
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    // 2. Look up the token in the database (ensuring it hasn't expired)
+    const tokenRes = await query(
+      `SELECT user_id FROM password_reset_tokens
+       WHERE token_hash = $1 AND expires_at > NOW()`,
+      [tokenHash]
+    );
+
+    if (!tokenRes.rows.length) {
+      return res.status(400).json({ error: 'Invalid or expired reset token. Please request a new link.' });
+    }
+
+    const userId = tokenRes.rows[0].user_id;
+
+    // 3. Hash the brand new password securely
+    const newPasswordHash = await bcrypt.hash(newPassword, 12);
+
+    // 4. Update the user's password and ensure their account is marked as active
+    await query(
+      `UPDATE users SET password_hash = $1, is_active = true, updated_at = NOW() WHERE id = $2`,
+      [newPasswordHash, userId]
+    );
+
+    // 5. Delete the used token so it can never be used again (Security Best Practice)
+    await query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [userId]);
+
+    // 6. Log the successful action
+    audit({ userId, action: 'user.password_reset_completed', resourceType: 'auth', ip: req.ip });
+
+    res.json({ success: true, message: 'Password updated successfully' });
+  } catch (err) {
+    log.error({ err: err.message }, 'reset-password error');
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
 module.exports = router;
 module.exports.passwordPolicyError = passwordPolicyError;
 module.exports.sendResetEmail = sendResetEmail;

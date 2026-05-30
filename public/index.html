@@ -973,7 +973,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 
 <div id="toast" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(40px);background:var(--card2);border:1px solid var(--border2);padding:10px 20px;border-radius:10px;font-size:13px;z-index:999;opacity:0;transition:.3s;white-space:nowrap;pointer-events:none"></div>
 
-<div class="app">
+<div class="app" id="mitra-dashboard-main" style="display: none;">
 <div class="topbar">
   <div class="logo" onclick="showPage('dashboard')">
     <div class="logo-gem" style="background:linear-gradient(135deg,var(--accent3),var(--accent5));">M</div>
@@ -9085,10 +9085,13 @@ function showSessionExpired() {
 }
 
 function showLoginScreen() {
+  // 1. Show the login overlay
   const overlay = document.getElementById('mitra-login-overlay');
   if (overlay) overlay.classList.remove('hidden');
-  const banner = document.getElementById('session-expired-banner');
-  if (banner) banner.style.display = 'none';
+
+  // 2. FORCE the dashboard to stay hidden
+  const dashboard = document.getElementById('mitra-dashboard-main'); 
+  if (dashboard) dashboard.style.display = 'none';
 }
 
 async function doLogin() {
@@ -9152,7 +9155,7 @@ async function doLogin() {
   }
 }
 
-// ── On page load: check auth token ──────────────────────────────────────────
+// ── On page load: check auth token (Strict Bouncer) ─────────────────────────
 document.addEventListener('DOMContentLoaded', async function mitraAuthInit() {
   const token = localStorage.getItem('mitra_token');
 
@@ -9160,15 +9163,19 @@ document.addEventListener('DOMContentLoaded', async function mitraAuthInit() {
   if (!token) { showLoginScreen(); return; }
 
   // Token exists — verify it is still valid with the server
-  // This stops a refresh from bypassing login after logout
   try {
     const res = await fetch('/api/auth/me', {
       headers: { 'Authorization': 'Bearer ' + token }
     });
+    
     if (res.ok) {
-      // Valid — hide login and go to dashboard
+      // Valid — hide login AND un-hide the dashboard
       const overlay = document.getElementById('mitra-login-overlay');
       if (overlay) overlay.classList.add('hidden');
+      
+      const dashboard = document.getElementById('mitra-dashboard-main'); 
+      if (dashboard) dashboard.style.display = 'flex'; 
+      
     } else {
       // Expired or revoked — clear everything and show login
       localStorage.removeItem('mitra_token');
@@ -11665,6 +11672,25 @@ async function downloadBulkTemplate() {
   } catch (error) {
     console.error('Template Download Error:', error);
     showToast('Error downloading template. Please check connection.');
+  }
+}
+
+// The Front Door Bouncer
+function checkLoginState() {
+  const token = localStorage.getItem('mitra_token');
+  const dashboardElement = document.getElementById('mitra-dashboard-main'); // Change to your actual dashboard container ID
+  const loginElement = document.getElementById('mitra-login-screen'); // Change to your actual login container ID
+
+  if (!token) {
+    // No token found? Lock them out immediately.
+    if (dashboardElement) dashboardElement.style.display = 'none';
+    if (loginElement) loginElement.style.display = 'block';
+    return false; // Stop the rest of the page from loading data
+  } else {
+    // Token exists? Let them in.
+    if (loginElement) loginElement.style.display = 'none';
+    if (dashboardElement) dashboardElement.style.display = 'block';
+    return true;
   }
 }
 </script>
