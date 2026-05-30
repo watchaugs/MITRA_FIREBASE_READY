@@ -64,6 +64,18 @@ async function boot() {
 
   const app = express();
 
+  // ── Strict CORS Firewall ──────────────────────────────────────────────────
+  // Only accept requests from the official Firebase frontend (and localhost for local development)
+  app.use(cors({
+      origin: [
+          'https://watchaugs-mitra.web.app', 
+          'https://watchaugs-mitra.firebaseapp.com',
+          'http://localhost:3000' 
+      ],
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      credentials: true
+  }));
+
   // ── Trust proxy ─────────────────────────────────────────────────────────────
   // Cloud Run sits behind exactly one proxy hop. Local dev: trust nothing.
   const trustProxy = process.env.TRUST_PROXY;

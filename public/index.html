@@ -9143,10 +9143,11 @@ async function doLogin() {
         console.warn('Could not extract userId from token');
       }
     }
-    // Hide login overlay
+  // Hide login overlay
     document.getElementById('mitra-login-overlay').classList.add('hidden');
-    // Initialise the dashboard
-    typeof initDashboard === 'function' && initDashboard();
+    
+    // FORCE HARD RELOAD: Guarantees the dashboard boots up with the fresh token
+    window.location.reload(); 
   } catch(e) {
     errEl.textContent = 'Connection error. Check your network and try again.';
     errEl.classList.add('visible');

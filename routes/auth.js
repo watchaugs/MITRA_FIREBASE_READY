@@ -361,39 +361,41 @@ router.post('/reset-password', async (req, res) => {
 // ── Email sender (replaces sendCredentialEmail) ─────────────────────────────
 // Sends a one-time reset link, never the password itself.
 async function sendResetEmail({ to, name, link }) {
-  const { SMTP_HOST, SMTP_USER, SMTP_PASS } = process.env;
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    log.warn({ to }, 'SMTP not configured — reset email NOT sent. Link recorded in audit log only.');
-    return;
-  }
+  console.log(`[MITRA EMAIL ENGINE] Preparing to send email to: ${to}`);
+  
   try {
-    // eslint-disable-next-line global-require
+    // 1. Initialize Nodemailer
     const nodemailer = require('nodemailer');
+    
+    // 2. Build the transport using process.env safely
     const transport = nodemailer.createTransport({
-      host: SMTP_HOST,
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: parseInt(process.env.SMTP_PORT || '587', 10),
       secure: process.env.SMTP_SECURE === 'true',
-      auth: { user: SMTP_USER, pass: SMTP_PASS },
+      auth: { 
+        user: process.env.SMTP_USER, 
+        pass: process.env.SMTP_PASS 
+      },
     });
-    await transport.sendMail({
-      from: process.env.SMTP_FROM || SMTP_USER,
-      to,
-      subject: 'Your MITRA Dashboard password reset',
-      text: [
-        `Dear ${name || 'colleague'},`,
-        '',
-        'A password reset has been requested for your MITRA account.',
-        'If you did not request this, you can ignore this email.',
-        '',
-        `Reset link (valid for 1 hour):`,
-        link,
-        '',
-        'MITRA Platform · Ministry of Education',
-      ].join('\n'),
+
+    console.log(`[MITRA EMAIL ENGINE] Transport built. Using sender: ${process.env.SMTP_USER}`);
+
+    // 3. Dispatch the email
+    const info = await transport.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: to,
+      subject: 'MITRA Dashboard - Account Setup & Password Reset',
+      text: `Dear ${name || 'Colleague'},\n\nAn account setup or password reset has been requested for your MITRA Dashboard profile.\n\nIf you did not request this, please notify your administrator.\n\nSetup / Reset Link (valid for 48 hours):\n${link}\n\nMITRA Platform · Ministry of Education`,
     });
-    log.info({ to }, 'reset email sent');
+
+    console.log(`[MITRA EMAIL ENGINE] SUCCESS! Email sent. Message ID: ${info.messageId}`);
+    return info;
+
   } catch (err) {
-    log.error({ err: err.message, to }, 'sendResetEmail failed');
+    // 4. Guaranteed Google Cloud Logging if it fails
+    console.error(`[MITRA EMAIL ENGINE] CRITICAL FAILURE:`, err.message);
+    console.error(`[MITRA EMAIL ENGINE] Full Error Details:`, err);
+    throw err; // Throw it back so the router catches it too
   }
 }
 

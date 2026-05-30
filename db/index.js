@@ -2,16 +2,17 @@
  * db/index.js — PostgreSQL connection pool
  *
  * Supports three modes (auto-detected):
- *   1. Cloud SQL via Cloud SQL Node.js Connector (preferred for production)
- *      Set CLOUD_SQL_INSTANCE=project:region:instance
- *   2. DATABASE_URL connection string (Heroku/Railway/Render style)
- *   3. Individual DB_* env vars (local development / Docker Compose)
+ * 1. Cloud SQL via Cloud SQL Node.js Connector (preferred for production)
+ * Set CLOUD_SQL_INSTANCE=project:region:instance
+ * 2. DATABASE_URL connection string (Heroku/Railway/Render style)
+ * 3. Individual DB_* env vars (local development / Docker Compose)
  *
  * Security fixes in this rewrite:
- *   - C6: poolConfig is now actually used (no longer constructed and discarded)
- *   - C7: No schema-altering DDL runs in this file. Migrations are a separate concern.
- *   - SSL: Default-on for any non-localhost connection; never silently disabled.
- *   - M8: Query logging now gated on DB_QUERY_LOGGING=true (not just NODE_ENV).
+ * - C6: poolConfig is now actually used (no longer constructed and discarded)
+ * - C7: No schema-altering DDL runs in this file. Migrations are a separate concern.
+ * - SSL: Default-on for any non-localhost connection; never silently disabled.
+ * - M8: Query logging now gated on DB_QUERY_LOGGING=true (not just NODE_ENV).
+ * - Serverless Throttling: Explicitly forced short timeouts to prevent container hangs.
  */
 
 'use strict';
@@ -54,8 +55,11 @@ async function buildCloudSqlPool() {
     user:     process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME || 'mitra_dashboard',
-    max:      parseInt(process.env.DB_POOL_MAX, 10) || 10,
-    idleTimeoutMillis: 30000,
+    
+    // Serverless Throttling Protections
+    max:                     parseInt(process.env.DB_POOL_MAX, 10) || 10,
+    idleTimeoutMillis:       30000, // Close idle clients after 30 seconds
+    connectionTimeoutMillis: 2000,  // Fail fast in 2 seconds if pool is maxed out
   };
 
   if (!cfg.user || (!cfg.password && process.env.CLOUD_SQL_AUTH !== 'IAM')) {
@@ -114,9 +118,11 @@ function buildStandardPool() {
   }
 
   cfg.ssl = ssl;
+  
+  // Serverless Throttling Protections
   cfg.max = parseInt(process.env.DB_POOL_MAX, 10) || 10;
   cfg.idleTimeoutMillis = 30000;
-  cfg.connectionTimeoutMillis = 10000;
+  cfg.connectionTimeoutMillis = 2000; // Reduced from 10000 to 2000 to prevent Cloud Run hanging
 
   const p = new Pool(cfg);
   p.on('error', (err) => log.error({ err }, 'pg pool error'));

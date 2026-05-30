@@ -461,8 +461,10 @@ router.post('/:id/reset-password', requirePerm('perm_create_users'), async (req,
       [uuidv4(), req.params.id, resetHash]
     );
 
-    const link = `${process.env.PUBLIC_URL || 'https://dashboard.mitra.gov.in'}/reset?token=${resetToken}`;
-    sendResetEmail({ to: userRes.rows[0].email, name: userRes.rows[0].full_name, link })
+    const link = `${process.env.PUBLIC_URL || 'https://dashboard.mitra.gov.in'}/reset/index.html?token=${resetToken}`;
+    
+    // ADDED AWAIT HERE to prevent the serverless freeze
+    await sendResetEmail({ to: userRes.rows[0].email, name: userRes.rows[0].full_name, link })
       .catch(e => log.error({ err: e.message }, 'sendResetEmail failed'));
 
     audit({ userId: req.user.id, action: 'user.password_reset_triggered', resourceType: 'user', resourceId: req.params.id, ip: req.ip });
