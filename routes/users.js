@@ -120,39 +120,14 @@ router.get('/me', async (req, res) => {
 router.post('/', requirePerm('perm_create_users'), async (req, res) => {
   const client = await pool.connect();
   try {
-    // --- TRANSLATION ENGINE (New UI -> Old DB) ---
-    if (req.body.permissions) {
-      const p = req.body.permissions;
-      req.body.perm_manage_geo = p.geofence;
-      req.body.perm_create_users = p.users;
-      req.body.perm_edit_curriculum = p.ar_curriculum;
-      req.body.perm_upload_unity = p.ar_curriculum;
-      req.body.perm_view_analytics = p.analytics;
-      req.body.perm_publish_apps = p.notifications;
-      
-      // Global Read-Only Override
-      if (p.readonly) {
-        req.body.perm_manage_geo = false;
-        req.body.perm_create_users = false;
-        req.body.perm_edit_curriculum = false;
-        req.body.perm_upload_unity = false;
-        req.body.perm_publish_apps = false;
-        req.body.perm_view_analytics = true;
-      }
-    }
-    // ----------------------------------------------
-
-    // HYBRID TWEAK: We added 'password' to the incoming body request here
+    // 1. EXTRACT DATA (Safely pulling the nested `permissions` object from the new UI)
     const {
-      full_name, email, role = 'viewer', password, 
+      full_name, email, role = 'view_only', password, 
       assigned_state = 'All India', assigned_district,
-      perm_publish_apps = false, perm_upload_unity = false,
-      perm_manage_geo = false, perm_view_analytics = false,
-      perm_create_users = false, perm_edit_curriculum = false,
-      perm_approve_content = false, perm_export_data = false,
-      perm_manage_ads = false, perm_replay_analytics = false,
+      permissions = {} 
     } = req.body || {};
 
+    // 2. STANDARD VALIDATIONS
     if (!full_name || typeof full_name !== 'string' || full_name.length > 150) {
       return res.status(400).json({ error: 'full_name required' });
     }
@@ -166,25 +141,64 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
       return res.status(403).json({ error: 'You cannot grant this role.' });
     }
 
-    await client.query('BEGIN');
+    // 3. SECURITY GUARD & PERMISSION MAPPING
+    const creatorRole = req.user.role;
+    let finalPerms = {};
 
+    if (['master_admin', 'developer', 'admin'].includes(creatorRole)) {
+      // High-level admin: Trust the frontend toggles and map them perfectly to DB flags
+      finalPerms = {
+        manage_geo: permissions.geofence === true,
+        create_users: permissions.users === true,
+        edit_curriculum: permissions.ar_curriculum === true,
+        upload_unity: permissions.ar_curriculum === true, 
+        view_analytics: permissions.analytics === true,
+        publish_apps: permissions.notifications === true,
+        // Ensure missing ones default to false
+        approve_content: false, export_data: false, manage_ads: false, replay_analytics: false
+      };
+      
+      // Global Read-Only Override
+      if (permissions.readonly === true) {
+        finalPerms.manage_geo = false;
+        finalPerms.create_users = false;
+        finalPerms.edit_curriculum = false;
+        finalPerms.upload_unity = false;
+        finalPerms.publish_apps = false;
+        finalPerms.view_analytics = true;
+      }
+    } else {
+      // Lower-level admin: Ignore frontend, force defaults from the ROLE_PERMISSIONS matrix
+      const defaults = ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.view_only;
+      finalPerms = {
+        manage_geo: defaults.geo || false,
+        create_users: defaults.users || false,
+        edit_curriculum: defaults.curriculum || false,
+        upload_unity: defaults.unity || false,
+        view_analytics: defaults.analytics || false,
+        publish_apps: defaults.apps || false,
+        approve_content: false, export_data: false, manage_ads: false, replay_analytics: false
+      };
+    }
+
+    await client.query('BEGIN');
     const id = uuidv4();
     
-    // HYBRID LOGIC START --------------------------------------
+    // 4. HYBRID PASSWORD LOGIC
     let hash;
     let is_custom_password = false;
     
     if (password && password.trim() !== '') {
-        // Option B: Admin typed a custom password. Use it.
+        // Admin typed a custom password. Use it.
         hash = await bcrypt.hash(password, 12);
         is_custom_password = true;
     } else {
-        // Option A: Admin left it blank. Generate unguessable password.
+        // Admin left it blank. Generate unguessable password.
         const tempPassword = crypto.randomBytes(24).toString('base64');
         hash = await bcrypt.hash(tempPassword, 12);
     }
-    // HYBRID LOGIC END ----------------------------------------
 
+    // 5. DATABASE INSERT (Using the cleanly mapped finalPerms object)
     const result = await client.query(
       `INSERT INTO users (
          id, full_name, email, password_hash, role,
@@ -199,9 +213,9 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
       [
         id, full_name, email.toLowerCase().trim(), hash, role,
         assigned_state, assigned_district || null,
-        !!perm_publish_apps, !!perm_upload_unity, !!perm_manage_geo,
-        !!perm_view_analytics, !!perm_create_users, !!perm_edit_curriculum,
-        !!perm_approve_content, !!perm_export_data, !!perm_manage_ads, !!perm_replay_analytics,
+        finalPerms.publish_apps, finalPerms.upload_unity, finalPerms.manage_geo,
+        finalPerms.view_analytics, finalPerms.create_users, finalPerms.edit_curriculum,
+        finalPerms.approve_content, finalPerms.export_data, finalPerms.manage_ads, finalPerms.replay_analytics,
       ]
     );
 
@@ -210,10 +224,11 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
       return res.status(409).json({ error: 'Email already in use' });
     }
 
-    // Only send the reset email if the Admin left the password blank
+    // 6. HYBRID EMAIL ENGINE
     if (!is_custom_password) {
         const resetToken = crypto.randomBytes(32).toString('hex');
         const resetHash  = crypto.createHash('sha256').update(resetToken).digest('hex');
+        
         await client.query(
           `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at)
            VALUES ($1, $2, $3, NOW() + INTERVAL '48 hours', NOW())`,
@@ -334,31 +349,48 @@ router.get('/:id', requirePerm('perm_create_users'), async (req, res) => {
   }
 });
 
-// ── PUT /api/users/:id — C4 role-elevation check ────────────────────────────
-// 1. EDIT USER (PUT)
-// ==========================================
+// ── PUT /api/users/:id — Edit existing user ────────────────────────────
 router.put('/:id', requirePerm('perm_create_users'), async (req, res) => {
   try {
-    // --- TRANSLATION ENGINE (New UI -> Old DB) ---
+    const editorRole = req.user.role;
+    const isHighLevelAdmin = ['master_admin', 'developer', 'admin'].includes(editorRole);
+
+    // --- SECURE TRANSLATION ENGINE (New UI -> Old DB) ---
     if (req.body.permissions) {
       const p = req.body.permissions;
-      if (p.geofence !== undefined) req.body.perm_manage_geo = p.geofence;
-      if (p.users !== undefined) req.body.perm_create_users = p.users;
-      if (p.ar_curriculum !== undefined) {
-        req.body.perm_edit_curriculum = p.ar_curriculum;
-        req.body.perm_upload_unity = p.ar_curriculum; // Grants both AR permissions
-      }
-      if (p.analytics !== undefined) req.body.perm_view_analytics = p.analytics;
-      if (p.notifications !== undefined) req.body.perm_publish_apps = p.notifications;
 
-      // Global Read-Only Override
-      if (p.readonly) {
-        req.body.perm_manage_geo = false;
-        req.body.perm_create_users = false;
-        req.body.perm_edit_curriculum = false;
-        req.body.perm_upload_unity = false;
-        req.body.perm_publish_apps = false;
-        req.body.perm_view_analytics = true; // Guests can view, but not touch
+      if (isHighLevelAdmin) {
+        // High-Level Admins: Trust the frontend toggles and map them
+        if (p.geofence !== undefined) req.body.perm_manage_geo = p.geofence;
+        if (p.users !== undefined) req.body.perm_create_users = p.users;
+        if (p.ar_curriculum !== undefined) {
+          req.body.perm_edit_curriculum = p.ar_curriculum;
+          req.body.perm_upload_unity = p.ar_curriculum; 
+        }
+        if (p.analytics !== undefined) req.body.perm_view_analytics = p.analytics;
+        if (p.notifications !== undefined) req.body.perm_publish_apps = p.notifications;
+
+        // Global Read-Only Override
+        if (p.readonly) {
+          req.body.perm_manage_geo = false;
+          req.body.perm_create_users = false;
+          req.body.perm_edit_curriculum = false;
+          req.body.perm_upload_unity = false;
+          req.body.perm_publish_apps = false;
+          req.body.perm_view_analytics = true; 
+        }
+      } else {
+        // Lower-Level Admins: Ignore custom toggles. 
+        // If they are changing the user's role, force the rigid defaults for that new role.
+        if (req.body.role) {
+          const defaults = ROLE_PERMISSIONS[req.body.role] || ROLE_PERMISSIONS.view_only;
+          req.body.perm_manage_geo = defaults.geo || false;
+          req.body.perm_create_users = defaults.users || false;
+          req.body.perm_edit_curriculum = defaults.curriculum || false;
+          req.body.perm_upload_unity = defaults.unity || false;
+          req.body.perm_view_analytics = defaults.analytics || false;
+          req.body.perm_publish_apps = defaults.apps || false;
+        }
       }
     }
     // ----------------------------------------------
@@ -369,8 +401,10 @@ router.put('/:id', requirePerm('perm_create_users'), async (req, res) => {
       'perm_view_analytics', 'perm_create_users', 'perm_edit_curriculum',
       'perm_approve_content', 'perm_export_data', 'perm_manage_ads', 'perm_replay_analytics',
     ];
+    
     const updates = [];
     const params = [];
+    
     for (const field of allowed) {
       if (req.body[field] === undefined) continue;
 
@@ -392,6 +426,7 @@ router.put('/:id', requirePerm('perm_create_users'), async (req, res) => {
       params.push(value);
       updates.push(`${field} = $${params.length}`);
     }
+    
     if (!updates.length) return res.status(400).json({ error: 'No valid fields' });
 
     // Block self-demotion / self-deactivation
@@ -400,16 +435,27 @@ router.put('/:id', requirePerm('perm_create_users'), async (req, res) => {
     }
 
     params.push(req.params.id);
+    
+    // Using your dynamic query builder
     const result = await query(
       `UPDATE users SET ${updates.join(', ')}, updated_at = NOW()
        WHERE id = $${params.length}
        RETURNING ${PROFILE_COLUMNS}`,
       params
     );
+    
     if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
 
     invalidateUserCache(req.params.id);
-    audit({ userId: req.user.id, action: 'user.update', resourceType: 'user', resourceId: req.params.id, ip: req.ip, details: { fields: Object.keys(req.body) } });
+    audit({ 
+      userId: req.user.id, 
+      action: 'user.update', 
+      resourceType: 'user', 
+      resourceId: req.params.id, 
+      ip: req.ip, 
+      details: { fields: Object.keys(req.body) } 
+    });
+    
     res.json(result.rows[0]);
   } catch (err) {
     log.error({ err: err.message }, 'update user error');

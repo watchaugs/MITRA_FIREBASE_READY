@@ -614,9 +614,9 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
             <div class="opt" onclick="selectRole('district_officer', 'District Officer')">District Officer</div>
             <div class="opt" onclick="selectRole('developer', 'Developer')">Developer</div>
             <div class="opt" onclick="selectRole('data_manager', 'Data Manager')">Data Manager</div>
-            <div class="opt" onclick="selectRole('viewer', 'View Only')">View Only</div>
+            <div class="opt" onclick="selectRole('view_only', 'View Only')">View Only</div>
           </div>
-          <input type="hidden" id="nu-role" value="" onchange="if(typeof updateRolePerms === 'function') updateRolePerms();">
+          <input type="hidden" id="nu-role" value="" onchange="applyRolePreset(this.value, 'cu')">
         </div>
       </div>
 
@@ -9099,14 +9099,17 @@ async function doLogin() {
   const pass  = document.getElementById('login-pass').value;
   const errEl = document.getElementById('login-error');
   const btn   = document.getElementById('login-btn');
+  
   errEl.classList.remove('visible');
   if (!email || !pass) {
     errEl.textContent = 'Please enter your email and password.';
     errEl.classList.add('visible');
-    return;
+    return false; // <-- Added false for wrapper logic
   }
+  
   btn.disabled = true;
   btn.textContent = 'Signing in…';
+  
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
@@ -9114,14 +9117,15 @@ async function doLogin() {
       body: JSON.stringify({ email, password: pass })
     });
     const data = await res.json();
+    
     if (!res.ok) {
       errEl.textContent = data.error || 'Invalid credentials. Please try again.';
       errEl.classList.add('visible');
       btn.disabled = false;
       btn.textContent = 'Sign In →';
-      return;
+      return false; // <-- Added false for wrapper logic
     }
-    // Store token
+    
     // Store token
     localStorage.setItem('mitra_token', data.token || data.access_token || '');
     if (data.refresh_token) localStorage.setItem('mitra_refresh_token', data.refresh_token);
@@ -9143,16 +9147,34 @@ async function doLogin() {
         console.warn('Could not extract userId from token');
       }
     }
-  // Hide login overlay
-    document.getElementById('mitra-login-overlay').classList.add('hidden');
     
-    // FORCE HARD RELOAD: Guarantees the dashboard boots up with the fresh token
-    window.location.reload(); 
+    // 1. Hide the login overlay
+    const overlay = document.getElementById('mitra-login-overlay');
+    if (overlay) overlay.classList.add('hidden');
+    
+    // 2. WAKE UP THE DASHBOARD IMMEDIATELY (No reload required!)
+    const dashboard = document.getElementById('mitra-dashboard-main'); 
+    if (dashboard) dashboard.style.display = 'flex'; 
+
+    // 3. Trigger your exact MITRA data loaders
+    if (typeof loadHomeDashboard === 'function') loadHomeDashboard();
+    if (typeof refreshArAssetList === 'function') refreshArAssetList();
+    if (typeof populateNotificationTopicDropdown === 'function') populateNotificationTopicDropdown();
+    if (typeof populateNotificationQuizDropdown === 'function') populateNotificationQuizDropdown();
+    
+    // Reset button state silently in background
+    btn.disabled = false;
+    btn.textContent = 'Sign In →';
+
+    // 4. Return true so the Ad Consent Wrapper knows you succeeded
+    return true; 
+    
   } catch(e) {
     errEl.textContent = 'Connection error. Check your network and try again.';
     errEl.classList.add('visible');
     btn.disabled = false;
     btn.textContent = 'Sign In →';
+    return false;
   }
 }
 
@@ -10071,18 +10093,30 @@ function openEditUser(id) {
   }
 
   // 5. Open the modal
+  // ... (whatever code you have that populates the edit form)
+  
+  // 5. Open the modal
   openModal('modal-edit-user');
-}
+} // <-- DO NOT DELETE THIS BRACKET!
+
+
+// =========================================================================
+// YOUR SUBMIT FUNCTIONS (Paste these right below that closing bracket!)
+// =========================================================================
 
 async function saveUserEdit() {
   const id   = document.getElementById('eu-id')?.value;
   const role = document.getElementById('user-role-select')?.value;
+  
   if (!id) { showToast('⚠️ No user selected'); return; }
+  
   const permissions = typeof getCheckedPerms === 'function' ? getCheckedPerms('eu-perms-grid') : {};
+  
   const data = await safeFetch(`/api/users/${id}`, {
     method: 'PUT',
     body: JSON.stringify({ role, permissions })
   });
+  
   if (data) {
     closeModal('modal-edit-user');
     showToast('✅ User updated successfully');
@@ -10091,7 +10125,6 @@ async function saveUserEdit() {
 }
 
 async function createUser() {
-  // 1. Gather the specific Page-Level permissions we built
   const perms = {
     readonly:      document.getElementById('p-readonly')?.checked || false,
     dashboard:     document.getElementById('p-page-dash')?.checked || false,
@@ -10102,50 +10135,22 @@ async function createUser() {
     notifications: document.getElementById('p-page-notif')?.checked || false,
   };
 
-  // 2. Build the payload using the correct 'nu-' IDs from our popup
-  const payload = {
-    full_name:      document.getElementById('nu-name')?.value.trim(),
-    email:          document.getElementById('nu-email')?.value.trim(),
-    password:       document.getElementById('nu-pass')?.value, // Grab password
-    assigned_state: document.getElementById('nu-state')?.value,
-    role:           document.getElementById('nu-role')?.value, // Reads from the custom dropdown hidden input
-    permissions:    perms,
-  };
+  const email = document.getElementById('new-user-email')?.value;
+  const role = document.getElementById('user-role-select')?.value; // <-- Make sure this ID is unique if the Edit Modal uses the same one!
+  
+  const data = await safeFetch('/api/users', {
+    method: 'POST',
+    body: JSON.stringify({ 
+      email: email,
+      role: role, 
+      permissions: perms 
+    })
+  });
 
-  // 3. Validation Check
-  if (!payload.full_name || !payload.email || !payload.role) {
-    if(typeof showToast === 'function') showToast('⚠️ Name, email and role are required');
-    else alert('⚠️ Name, email and role are required');
-    return;
-  }
-
-  // 4. Save to Database & Update UI
-  try {
-    if(typeof safeFetch === 'function') {
-      await safeFetch('/api/users', { method:'POST', body:JSON.stringify(payload) }, true);
-    }
-    
-    const newUser = { id: 'u'+Date.now(), ...payload, is_active:true, last_login_at:null };
-    if(typeof getSeedUsers === 'function') getSeedUsers().push(newUser);
-    
-    if(typeof showToast === 'function') {
-      showToast(`✅ User ${payload.full_name} created! Credentials sent to ${payload.email}`);
-    }
-    
-    // Close the correct window!
-    closeModal('modal-new-user'); 
-    
-    if(typeof loadUserList === 'function') loadUserList();
-    
-    // Optional: Clear inputs for next time
-    document.getElementById('nu-name').value = '';
-    document.getElementById('nu-email').value = '';
-    document.getElementById('nu-pass').value = '';
-    document.getElementById('role-display-text').innerText = '— Select Role —';
-    document.getElementById('nu-role').value = '';
-    
-  } catch (error) {
-    console.error("Error creating user:", error);
+  if (data) {
+    closeModal('modal-create-user'); 
+    showToast('✅ User created successfully');
+    loadUserList(); 
   }
 }
 
@@ -11190,7 +11195,9 @@ const originalDoLogin = window.doLogin;
 if (typeof originalDoLogin === 'function') {
   window.doLogin = async function() {
     const result = await originalDoLogin();
-    if (result && localStorage.getItem('token')) {
+    
+    // FIXED: Now checks for 'mitra_token'
+    if (result && (localStorage.getItem('token') || localStorage.getItem('mitra_token'))) {
       // Check ad consent 2 seconds after successful login
       setTimeout(checkAdConsent, 2000);
     }
