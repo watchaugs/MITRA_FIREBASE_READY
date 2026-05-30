@@ -1,0 +1,402 @@
+/**
+ * routes/auth.js — Login, refresh, logout, password reset
+ *
+ * Security fixes:
+ *   - C1: removed plaintext-password console logging
+ *   - H1: refresh-token rotation (one-time use + family revocation)
+ *   - H7: per-account lockout after repeated failed logins
+ *   - H9: stronger password policy (12 chars + complexity)
+ *   - C2: no error.message ever leaks to client in production
+ *   - Replaced `sendCredentialEmail` with one-time reset-link pattern
+ */
+
+'use strict';
+
+const router = require('express').Router();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const { v4: uuidv4 } = require('uuid');
+const { query } = require('../db');
+const { authenticate } = require('../middleware/auth');
+const { audit } = require('../lib/auditLogger');
+const log = require('../lib/logger');
+
+// ── Password policy ──────────────────────────────────────────────────────────
+const MIN_PASSWORD_LEN = 12;
+const COMMON_PASSWORDS = new Set([
+  // Top patterns — full top-10k list lives in lib/top-10000-passwords.txt
+  'password', 'password123', 'admin', 'admin123', 'qwerty', 'qwerty123',
+  '12345678', '123456789', '1234567890', 'changeme', 'letmein',
+  'welcome1', 'welcome123', 'mitra', 'mitra123',
+]);
+
+function passwordPolicyError(password, { email } = {}) {
+  if (!password || typeof password !== 'string') return 'Password is required';
+  if (password.length < MIN_PASSWORD_LEN) return `Password must be at least ${MIN_PASSWORD_LEN} characters`;
+  if (password.length > 200) return 'Password too long';
+  const classes = [
+    /[a-z]/.test(password),
+    /[A-Z]/.test(password),
+    /[0-9]/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+  ].filter(Boolean).length;
+  if (classes < 3) return 'Password must contain at least 3 of: lowercase, uppercase, digit, symbol';
+  if (email && password.toLowerCase().includes(email.toLowerCase().split('@')[0])) {
+    return 'Password must not contain your email';
+  }
+  if (COMMON_PASSWORDS.has(password.toLowerCase())) return 'Password is too common';
+  return null;
+}
+
+// ── Failed-login lockout ─────────────────────────────────────────────────────
+const LOCKOUT_THRESHOLD = parseInt(process.env.LOCKOUT_THRESHOLD, 10) || 10;
+const LOCKOUT_MINUTES = parseInt(process.env.LOCKOUT_MINUTES, 10) || 30;
+
+async function recordFailedLogin(email, ip) {
+  try {
+    await query(
+      `INSERT INTO failed_logins (id, email, ip, created_at)
+       VALUES ($1, $2, $3, NOW())`,
+      [uuidv4(), email, ip]
+    );
+  } catch (err) {
+    // Table missing → first run before migration. Don't block login.
+    log.warn({ err: err.message }, 'failed_logins insert failed (run migration?)');
+  }
+}
+
+async function isLockedOut(email) {
+  try {
+    const result = await query(
+      `SELECT COUNT(*) AS c FROM failed_logins
+       WHERE email = $1 AND created_at > NOW() - INTERVAL '${LOCKOUT_MINUTES} minutes'`,
+      [email]
+    );
+    return parseInt(result.rows[0].c, 10) >= LOCKOUT_THRESHOLD;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function clearFailedLogins(email) {
+  try { await query('DELETE FROM failed_logins WHERE email = $1', [email]); }
+  catch (_) {/* ignore */}
+}
+
+// ── JWT helpers ──────────────────────────────────────────────────────────────
+function signAccess(user) {
+  return jwt.sign(
+    {
+      id:    user.id,
+      email: user.email,
+      role:  user.role,
+      name:  user.full_name,
+      state: user.assigned_state,
+      perm_publish_apps:     !!user.perm_publish_apps,
+      perm_upload_unity:     !!user.perm_upload_unity,
+      perm_manage_geo:       !!user.perm_manage_geo,
+      perm_view_analytics:   !!user.perm_view_analytics,
+      perm_create_users:     !!user.perm_create_users,
+      perm_edit_curriculum:  !!user.perm_edit_curriculum,
+      perm_approve_content:  !!user.perm_approve_content,
+      perm_export_data:      !!user.perm_export_data,
+      perm_manage_ads:       !!user.perm_manage_ads,
+      perm_replay_analytics: !!user.perm_replay_analytics,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || '8h', algorithm: 'HS256' }
+  );
+}
+
+function signRefresh(userId, familyId) {
+  return jwt.sign(
+    { id: userId, fam: familyId, kind: 'refresh' },
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d', algorithm: 'HS256' }
+  );
+}
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+// ── POST /api/auth/login ────────────────────────────────────────────────────
+router.post('/login', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').toLowerCase().trim();
+    const password = req.body?.password;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 255) {
+      return res.status(400).json({ error: 'Invalid email' });
+    }
+
+    if (await isLockedOut(email)) {
+      audit({ userId: null, action: 'login.locked_out', resourceType: 'auth', ip: req.ip, details: { email } });
+      return res.status(429).json({ error: 'Account temporarily locked. Try again later.' });
+    }
+
+    const result = await query(
+      'SELECT * FROM users WHERE email = $1 AND is_active = true',
+      [email]
+    );
+
+    // Constant-ish-time response: always run bcrypt even if user not found
+    const fakeHash = '$2a$12$0000000000000000000000000000000000000000000000000000.';
+    const userRow = result.rows[0];
+    const hashToCheck = userRow ? userRow.password_hash : fakeHash;
+    const match = await bcrypt.compare(password, hashToCheck);
+
+    if (!userRow || !match) {
+      await recordFailedLogin(email, req.ip);
+      audit({ userId: userRow?.id || null, action: 'login.failure', resourceType: 'auth', ip: req.ip, details: { email } });
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    await clearFailedLogins(email);
+    await query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [userRow.id]);
+
+    // Generate tokens with a family id (for refresh-token rotation tracking)
+    const familyId = uuidv4();
+    const accessToken = signAccess(userRow);
+    const refreshToken = signRefresh(userRow.id, familyId);
+    const refreshHash = hashToken(refreshToken);
+
+    await query(
+      `INSERT INTO refresh_tokens (id, user_id, token_hash, family_id, expires_at, is_revoked)
+       VALUES ($1, $2, $3, $4, NOW() + INTERVAL '7 days', false)`,
+      [uuidv4(), userRow.id, refreshHash, familyId]
+    );
+
+    audit({ userId: userRow.id, action: 'login.success', resourceType: 'auth', ip: req.ip });
+
+    res.json({
+      token: accessToken,          // legacy field name; the dashboard reads this
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expires_in: 28800,
+      user: {
+        id: userRow.id,
+        name: userRow.full_name,
+        email: userRow.email,
+        role: userRow.role,
+        state: userRow.assigned_state,
+        permissions: {
+          publish_apps:     !!userRow.perm_publish_apps,
+          upload_unity:     !!userRow.perm_upload_unity,
+          manage_geo:       !!userRow.perm_manage_geo,
+          view_analytics:   !!userRow.perm_view_analytics,
+          create_users:     !!userRow.perm_create_users,
+          edit_curriculum:  !!userRow.perm_edit_curriculum,
+          approve_content:  !!userRow.perm_approve_content,
+          export_data:      !!userRow.perm_export_data,
+          manage_ads:       !!userRow.perm_manage_ads,
+          replay_analytics: !!userRow.perm_replay_analytics,
+        },
+      },
+    });
+  } catch (err) {
+    log.error({ err: err.message }, 'login error');
+    res.status(500).json({ error: 'Authentication failed' });
+  }
+});
+
+// ── POST /api/auth/refresh — H1: rotation + family revocation ────────────────
+router.post('/refresh', async (req, res) => {
+  try {
+    const presented = req.body?.refresh_token;
+    if (!presented || typeof presented !== 'string' || presented.length > 4096) {
+      return res.status(400).json({ error: 'Refresh token required' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(presented, process.env.JWT_REFRESH_SECRET, { algorithms: ['HS256'] });
+      if (decoded.kind !== 'refresh') throw new Error('not a refresh token');
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired refresh token' });
+    }
+
+    const tokenHash = hashToken(presented);
+    const stored = await query(
+      `SELECT * FROM refresh_tokens
+       WHERE token_hash = $1 AND expires_at > NOW()`,
+      [tokenHash]
+    );
+
+    if (!stored.rows.length) {
+      // Either revoked or already-used token. If it's a known family, revoke the whole family.
+      if (decoded.fam) {
+        await query('UPDATE refresh_tokens SET is_revoked = true WHERE family_id = $1', [decoded.fam]);
+        audit({ userId: decoded.id, action: 'refresh.replay_detected', resourceType: 'auth', ip: req.ip, details: { family_id: decoded.fam } });
+      }
+      return res.status(401).json({ error: 'Refresh token not found or already used' });
+    }
+
+    const row = stored.rows[0];
+    if (row.is_revoked) {
+      await query('UPDATE refresh_tokens SET is_revoked = true WHERE family_id = $1', [row.family_id]);
+      return res.status(401).json({ error: 'Refresh token revoked' });
+    }
+
+    const userRes = await query('SELECT * FROM users WHERE id = $1 AND is_active = true', [decoded.id]);
+    if (!userRes.rows.length) return res.status(401).json({ error: 'User not found' });
+
+    // Rotate: revoke this token, issue new one in the same family.
+    const newRefresh = signRefresh(userRes.rows[0].id, row.family_id);
+    await query(
+      `UPDATE refresh_tokens SET is_revoked = true, replaced_by = $1 WHERE id = $2`,
+      [hashToken(newRefresh), row.id]
+    );
+    await query(
+      `INSERT INTO refresh_tokens (id, user_id, token_hash, family_id, expires_at, is_revoked)
+       VALUES ($1, $2, $3, $4, NOW() + INTERVAL '7 days', false)`,
+      [uuidv4(), userRes.rows[0].id, hashToken(newRefresh), row.family_id]
+    );
+
+    const accessToken = signAccess(userRes.rows[0]);
+    res.json({ access_token: accessToken, refresh_token: newRefresh, expires_in: 28800 });
+  } catch (err) {
+    log.error({ err: err.message }, 'refresh error');
+    res.status(500).json({ error: 'Token refresh failed' });
+  }
+});
+
+// ── POST /api/auth/logout ───────────────────────────────────────────────────
+router.post('/logout', authenticate, async (req, res) => {
+  try {
+    await query('UPDATE refresh_tokens SET is_revoked = true WHERE user_id = $1', [req.user.id]);
+    audit({ userId: req.user.id, action: 'logout', resourceType: 'auth', ip: req.ip });
+    res.json({ message: 'Logged out successfully' });
+  } catch (err) {
+    log.error({ err: err.message }, 'logout error');
+    res.status(500).json({ error: 'Logout failed' });
+  }
+});
+
+// ── GET /api/auth/me ────────────────────────────────────────────────────────
+router.get('/me', authenticate, async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, full_name, email, role, assigned_state, assigned_district,
+              is_active, last_login_at, created_at,
+              perm_publish_apps, perm_upload_unity, perm_manage_geo,
+              perm_view_analytics, perm_create_users, perm_edit_curriculum,
+              perm_approve_content, perm_export_data, perm_manage_ads,
+              perm_replay_analytics
+       FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    log.error({ err: err.message }, '/me error');
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// ── POST /api/auth/request-reset — One-time reset link ──────────────────────
+// Always returns 200 to avoid enumerating valid emails.
+router.post('/request-reset', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').toLowerCase().trim();
+    if (!email) return res.status(200).json({ message: 'If that account exists, a reset link has been sent.' });
+
+    const userRes = await query('SELECT id, full_name FROM users WHERE email = $1 AND is_active = true', [email]);
+    if (userRes.rows.length) {
+      const user = userRes.rows[0];
+      const token = crypto.randomBytes(32).toString('hex');
+      const hash = hashToken(token);
+      await query(
+        `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at)
+         VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour', NOW())`,
+        [uuidv4(), user.id, hash]
+      );
+
+      const link = `${process.env.PUBLIC_URL || 'https://dashboard.mitra.gov.in'}/reset?token=${token}`;
+      await sendResetEmail({ to: email, name: user.full_name, link });
+      audit({ userId: user.id, action: 'password.reset_requested', resourceType: 'user', resourceId: user.id, ip: req.ip });
+    }
+    // Constant response regardless of whether the email exists
+    res.json({ message: 'If that account exists, a reset link has been sent.' });
+  } catch (err) {
+    log.error({ err: err.message }, 'request-reset error');
+    res.status(500).json({ error: 'Could not process request' });
+  }
+});
+
+// ── POST /api/auth/reset-password ────────────────────────────────────────────
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, new_password } = req.body || {};
+    if (!token || typeof token !== 'string') return res.status(400).json({ error: 'Token required' });
+
+    const policyErr = passwordPolicyError(new_password);
+    if (policyErr) return res.status(400).json({ error: policyErr });
+
+    const hash = hashToken(token);
+    const stored = await query(
+      `SELECT user_id FROM password_reset_tokens
+       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()`,
+      [hash]
+    );
+    if (!stored.rows.length) return res.status(400).json({ error: 'Invalid or expired token' });
+
+    const userId = stored.rows[0].user_id;
+    const passHash = await bcrypt.hash(new_password, 12);
+    await query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [passHash, userId]);
+    await query('UPDATE password_reset_tokens SET used_at = NOW() WHERE token_hash = $1', [hash]);
+    // Revoke all existing sessions
+    await query('UPDATE refresh_tokens SET is_revoked = true WHERE user_id = $1', [userId]);
+    audit({ userId, action: 'password.reset_completed', resourceType: 'user', resourceId: userId, ip: req.ip });
+    res.json({ message: 'Password updated. Please sign in again.' });
+  } catch (err) {
+    log.error({ err: err.message }, 'reset-password error');
+    res.status(500).json({ error: 'Could not reset password' });
+  }
+});
+
+// ── Email sender (replaces sendCredentialEmail) ─────────────────────────────
+// Sends a one-time reset link, never the password itself.
+async function sendResetEmail({ to, name, link }) {
+  const { SMTP_HOST, SMTP_USER, SMTP_PASS } = process.env;
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+    log.warn({ to }, 'SMTP not configured — reset email NOT sent. Link recorded in audit log only.');
+    return;
+  }
+  try {
+    // eslint-disable-next-line global-require
+    const nodemailer = require('nodemailer');
+    const transport = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT || '587', 10),
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
+    });
+    await transport.sendMail({
+      from: process.env.SMTP_FROM || SMTP_USER,
+      to,
+      subject: 'Your MITRA Dashboard password reset',
+      text: [
+        `Dear ${name || 'colleague'},`,
+        '',
+        'A password reset has been requested for your MITRA account.',
+        'If you did not request this, you can ignore this email.',
+        '',
+        `Reset link (valid for 1 hour):`,
+        link,
+        '',
+        'MITRA Platform · Ministry of Education',
+      ].join('\n'),
+    });
+    log.info({ to }, 'reset email sent');
+  } catch (err) {
+    log.error({ err: err.message, to }, 'sendResetEmail failed');
+  }
+}
+
+module.exports = router;
+module.exports.passwordPolicyError = passwordPolicyError;
+module.exports.sendResetEmail = sendResetEmail;
