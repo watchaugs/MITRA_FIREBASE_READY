@@ -221,7 +221,7 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
         );
 
         const link = `${process.env.PUBLIC_URL || 'https://dashboard.mitra.gov.in'}/reset/index.html?token=${resetToken}`;
-        sendResetEmail({ to: email.toLowerCase().trim(), name: full_name, link })
+        await sendResetEmail({ to: email.toLowerCase().trim(), name: full_name, link })
           .catch(e => log.error({ err: e.message }, 'sendResetEmail failed'));
     }
 
