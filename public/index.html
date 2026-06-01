@@ -9022,6 +9022,12 @@ async function doLogin() {
     const overlay = document.getElementById('mitra-login-overlay');
     if (overlay) overlay.classList.add('hidden');
     
+    // FIX: Securely wipe out the sticky "Session Expired" toast upon successful login
+    const expireBanner = document.getElementById('session-expired-banner');
+    if (expireBanner) {
+      expireBanner.style.display = 'none';
+    }
+    
     // 2. WAKE UP THE DASHBOARD IMMEDIATELY (No reload required!)
     const dashboard = document.getElementById('mitra-dashboard-main'); 
     if (dashboard) dashboard.style.display = 'flex'; 
