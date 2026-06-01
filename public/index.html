@@ -1001,6 +1001,18 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 <script>
 // Load all home page data from live APIs
 async function loadHomeDashboard() {
+  // GUARD: If no auth token is saved yet, abort immediately.
+  // This prevents premature 401 calls from running while the user is on the login screen.
+  if (!localStorage.getItem('mitra_token')) {
+    return;
+  }
+
+  // CLEAR STALE TOASTS: Securely hide the session expiry banner on a valid dashboard initialization
+  const expireBanner = document.getElementById('session-expired-banner');
+  if (expireBanner) {
+    expireBanner.style.display = 'none';
+  }
+
   // KPI summary
   const summary = await safeFetch('/api/dashboard/summary');
   if (summary) {

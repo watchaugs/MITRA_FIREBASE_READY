@@ -522,23 +522,67 @@ router.post('/:id/reset-password', requirePerm('perm_create_users'), async (req,
 });
 
 
+// ── POST /api/users/bulk-import ─────────────────────────────────────────────
 router.post('/bulk-import', async (req, res) => {
   const users = req.body.users;
   if (!users || !Array.isArray(users) || users.length === 0) {
     return res.status(400).json({ error: 'No user data provided.' });
   }
+  
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const insertQuery = `INSERT INTO users (name, email, role, state, district, school_id) VALUES ($1, $2, $3, $4, $5, $6)`;
+    
+    // Fixed to match your exact database columns: full_name, assigned_state, assigned_district
+    // Removed the non-existent 'school_id' column to prevent database crashes
+    const insertQuery = `
+      INSERT INTO users (
+        id, full_name, email, role, 
+        assigned_state, assigned_district, 
+        password_hash, is_active
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+      ON CONFLICT (email) DO NOTHING`;
+
+    const crypto = require('crypto');
+    const bcrypt = require('bcryptjs');
+
     for (const user of users) {
-      await client.query(insertQuery, [user.name, user.email, user.role || 'student', user.state, user.district, user.school_id]);
+      // 1. Generate a secure, randomized temporary password hash so the field isn't empty
+      const tempPassword = crypto.randomBytes(24).toString('base64');
+      const hash = await bcrypt.hash(tempPassword, 12);
+      
+      // 2. Generate a fresh, unique tracking ID for the user
+      const id = uuidv4();
+
+      // 3. Clean up input properties and fall back to safe defaults if fields are blank
+      const userEmail = String(user.email || '').toLowerCase().trim();
+      const userFullName = user.name || user.full_name || 'Imported User';
+      
+      // Fallback to 'viewer' because 'student' is not an allowed system role
+      const userRole = user.role || 'viewer'; 
+      const userState = user.state || user.assigned_state || 'All India';
+      const userDistrict = user.district || user.assigned_district || null;
+
+      // Skip invalid entries safely without crashing the whole batch
+      if (!userEmail) continue;
+
+      await client.query(insertQuery, [
+        id,
+        userFullName,
+        userEmail,
+        userRole,
+        userState,
+        userDistrict,
+        hash
+      ]);
     }
+    
     await client.query('COMMIT');
     res.status(200).json({ message: 'Users imported successfully.' });
   } catch (error) {
-    await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Database error.' });
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    log.error({ err: error.message }, 'bulk import error');
+    res.status(500).json({ error: 'Database error during import.', details: error.message });
   } finally {
     client.release();
   }
