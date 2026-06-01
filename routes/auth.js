@@ -315,7 +315,7 @@ router.post('/request-reset', async (req, res) => {
         [uuidv4(), user.id, hash]
       );
 
-      const link = `${process.env.PUBLIC_URL || 'https://dashboard.mitra.gov.in'}/reset?token=${token}`;
+      const link = `watchaugs-mitra.web.app/reset/index.html?token=${token}`;
       await sendResetEmail({ to: email, name: user.full_name, link });
       audit({ userId: user.id, action: 'password.reset_requested', resourceType: 'user', resourceId: user.id, ip: req.ip });
     }
@@ -327,62 +327,31 @@ router.post('/request-reset', async (req, res) => {
   }
 });
 
-// ── POST /api/auth/reset-password ────────────────────────────────────────────
-router.post('/reset-password', async (req, res) => {
-  try {
-    const { token, new_password } = req.body || {};
-    if (!token || typeof token !== 'string') return res.status(400).json({ error: 'Token required' });
-
-    const policyErr = passwordPolicyError(new_password);
-    if (policyErr) return res.status(400).json({ error: policyErr });
-
-    const hash = hashToken(token);
-    const stored = await query(
-      `SELECT user_id FROM password_reset_tokens
-       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()`,
-      [hash]
-    );
-    if (!stored.rows.length) return res.status(400).json({ error: 'Invalid or expired token' });
-
-    const userId = stored.rows[0].user_id;
-    const passHash = await bcrypt.hash(new_password, 12);
-    await query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [passHash, userId]);
-    await query('UPDATE password_reset_tokens SET used_at = NOW() WHERE token_hash = $1', [hash]);
-    // Revoke all existing sessions
-    await query('UPDATE refresh_tokens SET is_revoked = true WHERE user_id = $1', [userId]);
-    audit({ userId, action: 'password.reset_completed', resourceType: 'user', resourceId: userId, ip: req.ip });
-    res.json({ message: 'Password updated. Please sign in again.' });
-  } catch (err) {
-    log.error({ err: err.message }, 'reset-password error');
-    res.status(500).json({ error: 'Could not reset password' });
-  }
-});
-
-// ── Email sender (replaces sendCredentialEmail) ─────────────────────────────
+// ── Email sender ────────────────────────────────────────────────────────────
 // Sends a one-time reset link, never the password itself.
 async function sendResetEmail({ to, name, link }) {
   console.log(`[MITRA EMAIL ENGINE] Preparing to send email to: ${to}`);
   
   try {
-    // 1. Initialize Nodemailer
     const nodemailer = require('nodemailer');
     
-    // 2. Build the transport using process.env safely
+    // Exact configuration used on May 30, 2026
     const transport = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT || '587', 10),
-      secure: process.env.SMTP_SECURE === 'true',
+      port: 587, 
+      secure: false, // TLS requires this to be false on port 587
       auth: { 
-        user: process.env.SMTP_USER, 
-        pass: process.env.SMTP_PASS 
+        user: process.env.SMTP_USER, // Your ceo@watchaugs.com email
+        pass: process.env.SMTP_PASS  // The 16-character App Password generated on May 30
       },
+      pool: true,
+      maxConnections: 1
     });
 
     console.log(`[MITRA EMAIL ENGINE] Transport built. Using sender: ${process.env.SMTP_USER}`);
 
-    // 3. Dispatch the email
     const info = await transport.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      from: `"MITRA Support" <${process.env.SMTP_USER}>`,
       to: to,
       subject: 'MITRA Dashboard - Account Setup & Password Reset',
       text: `Dear ${name || 'Colleague'},\n\nAn account setup or password reset has been requested for your MITRA Dashboard profile.\n\nIf you did not request this, please notify your administrator.\n\nSetup / Reset Link (valid for 48 hours):\n${link}\n\nMITRA Platform · Ministry of Education`,
@@ -392,10 +361,8 @@ async function sendResetEmail({ to, name, link }) {
     return info;
 
   } catch (err) {
-    // 4. Guaranteed Google Cloud Logging if it fails
     console.error(`[MITRA EMAIL ENGINE] CRITICAL FAILURE:`, err.message);
-    console.error(`[MITRA EMAIL ENGINE] Full Error Details:`, err);
-    throw err; // Throw it back so the router catches it too
+    throw err; 
   }
 }
 

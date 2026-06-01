@@ -580,11 +580,153 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 
 <div class="stars-bg" id="stars-bg"></div>
 
+<div class="modal-bg" id="modal-new-user" onclick="if(event.target===this)closeModal('modal-new-user')">
+  <div class="modal" style="max-width:700px; width:95%; background: #151b2b; border: 1px solid #253554; border-radius: 16px; padding: 24px;">
 
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px;">
+      <div>
+        <div class="modal-title" style="font-size: 20px; font-weight: 800; color: #fff; margin-bottom:4px;">Create Login Credential</div>
+        <div class="modal-sub" style="font-size: 13px; color: #94a3b8;">Set up access for a new dashboard user</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-new-user')" style="color: #94a3b8; background:none; border:none; cursor:pointer; font-size:18px;">✕</button>
+    </div>
 
+    <div style="display:flex; flex-direction:column; gap:16px; margin-bottom: 20px;">
+      
+      <div class="form-row"><label class="lbl" style="color:#94a3b8; font-size:12px; margin-bottom:4px; display:block;">Full Name</label><input class="inp" id="nu-name" placeholder="e.g. Priya Sharma" style="width:100%; background:#111827; border:1px solid #253554; color:#e2e8f0; padding:10px; border-radius:6px;"></div>
+      
+      <div class="form-row"><label class="lbl" style="color:#94a3b8; font-size:12px; margin-bottom:4px; display:block;">Email / Username</label><input class="inp" id="nu-email" placeholder="priya.sharma@school.gov.in" style="width:100%; background:#111827; border:1px solid #253554; color:#e2e8f0; padding:10px; border-radius:6px;"></div>
+      
+      <div class="form-row"><label class="lbl" style="color:#94a3b8; font-size:12px; margin-bottom:4px; display:block;">Password</label><input class="inp" type="password" id="nu-pass" placeholder="Min. 8 characters" style="width:100%; background:#111827; border:1px solid #253554; color:#e2e8f0; padding:10px; border-radius:6px;"></div>
 
+      <div class="form-row">
+        <label class="lbl" style="color:var(--accent1); font-size:12px; margin-bottom:4px; display:block;">Role *</label>
+        <div class="custom-dropdown" id="role-dropdown" style="position: relative; width: 100%; font-size: 13px;">
+          <div class="dropdown-selected" onclick="toggleRoleDropdown()" style="border: 1px solid var(--accent1); border-radius: 6px; padding: 10px; background: #111827; color: #e2e8f0; cursor: pointer; display: flex; justify-content: space-between; align-items: center; text-transform: uppercase;">
+            <span id="role-display-text">— Select Role —</span>
+            <span style="font-size: 10px; color: var(--accent1); pointer-events: none;">▼</span>
+          </div>
+          <div class="dropdown-options" id="role-options" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background-color: #111827; border: 1px solid #253554; border-radius: 8px; margin-top: 4px; z-index: 999; max-height: 220px; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+            <div class="opt" onclick="selectRole('master_admin', 'Master Admin')">Master Admin</div>
+            <div class="opt" onclick="selectRole('admin', 'Admin')">Admin</div>
+            <div class="opt" onclick="selectRole('education_secretary', 'Education Secretary')">Education Secretary</div>
+            <div class="opt" onclick="selectRole('dept_education', 'Dept. of Education')">Dept. of Education</div>
+            <div class="opt" onclick="selectRole('district_officer', 'District Officer')">District Officer</div>
+            <div class="opt" onclick="selectRole('developer', 'Developer')">Developer</div>
+            <div class="opt" onclick="selectRole('data_manager', 'Data Manager')">Data Manager</div>
+            <div class="opt" onclick="selectRole('view_only', 'View Only')">View Only</div>
+          </div>
+          <input type="hidden" id="nu-role" value="" onchange="applyRolePreset(this.value, 'cu')">
+        </div>
+      </div>
 
-<
+      <div class="form-row">
+        <label class="lbl" style="color:#94a3b8; font-size:12px; margin-bottom:4px; display:block;">Assign State / Region</label>
+        <select class="sel" id="nu-state" onchange="if(typeof updateLiveDistricts === 'function') updateLiveDistricts()" style="background-color: #111827; color: #e2e8f0; border: 1px solid #253554; border-radius: 6px; padding: 10px; width: 100%; outline: none;">
+          <option>All India</option>
+          <option>Andhra Pradesh</option><option>Arunachal Pradesh</option><option>Assam</option>
+          <option>Bihar</option><option>Chhattisgarh</option><option>Goa</option><option>Gujarat</option>
+          <option>Haryana</option><option>Himachal Pradesh</option><option>Jharkhand</option>
+          <option>Karnataka</option><option>Kerala</option><option>Madhya Pradesh</option>
+          <option>Maharashtra</option><option>Manipur</option><option>Meghalaya</option>
+          <option>Mizoram</option><option>Nagaland</option><option>Odisha</option>
+          <option>Punjab</option><option>Rajasthan</option><option>Sikkim</option>
+          <option>Tamil Nadu</option><option>Telangana</option><option>Tripura</option>
+          <option>Uttar Pradesh</option><option>Uttarakhand</option><option>West Bengal</option>
+          <option>Delhi (NCT)</option><option>Jammu &amp; Kashmir</option><option>Ladakh</option>
+          <option>Chandigarh</option><option>Puducherry</option>
+        </select>
+      </div>
+
+    </div>
+
+    <div style="padding:16px; background:#111827; border-radius:10px; border:1px solid #253554; margin-bottom:24px;">
+      <div style="font-size:13px; font-weight:700; color:#e2e8f0; margin-bottom:12px;">🔐 Permissions</div>
+      <div class="perm-grid" id="perm-grid" style="display:flex; flex-direction:column; gap:8px;">
+        
+        <div class="perm-item" style="border-color: #6366f1; background: rgba(99,102,241,0.08); padding:12px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; border: 1px solid #6366f1;">
+          <span style="color: #818cf8; font-weight: 800;">👁️ Global Read-Only (Guest Mode)</span>
+          <label class="toggle-wrap"><input type="checkbox" id="p-readonly"><span class="toggle-slider"></span></label>
+        </div>
+
+        <div class="perm-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid #253554; border-radius:8px; background:#151b2b;">
+          <span style="color:#e2e8f0;">📄 Dashboard Summary</span><label class="toggle-wrap"><input type="checkbox" id="p-page-dash" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="perm-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid #253554; border-radius:8px; background:#151b2b;">
+          <span style="color:#e2e8f0;">📄 AR Curriculum & Assets</span><label class="toggle-wrap"><input type="checkbox" id="p-page-ar" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="perm-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid #253554; border-radius:8px; background:#151b2b;">
+          <span style="color:#e2e8f0;">📄 Geofence Manager</span><label class="toggle-wrap"><input type="checkbox" id="p-page-geo"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="perm-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid #253554; border-radius:8px; background:#151b2b;">
+          <span style="color:#e2e8f0;">📄 Analytics & Telemetry</span><label class="toggle-wrap"><input type="checkbox" id="p-page-analytics" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="perm-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid #253554; border-radius:8px; background:#151b2b;">
+          <span style="color:#e2e8f0;">📄 User Management</span><label class="toggle-wrap"><input type="checkbox" id="p-page-users"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="perm-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid #253554; border-radius:8px; background:#151b2b;">
+          <span style="color:#e2e8f0;">📄 Notifications & Alerts</span><label class="toggle-wrap"><input type="checkbox" id="p-page-notif"><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button class="btn btn-s" style="background:#1e2d4a; border:none; color:#e2e8f0; padding:10px 20px; border-radius:8px; cursor:pointer;" onclick="closeModal('modal-new-user')">Cancel</button>
+      <button class="btn btn-p" style="background:#6366f1; border:none; color:#fff; padding:10px 20px; border-radius:8px; cursor:pointer; font-weight:bold;" onclick="if(typeof createUser === 'function') { createUser(); } else if(typeof saveNewUser === 'function') { saveNewUser(); }">Create Account</button>
+    </div>
+
+  </div>
+</div>
+
+<style>
+  /* Custom Dropdown Hover Effects */
+  .dropdown-options .opt {
+    padding: 10px 12px;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+    text-transform: uppercase;
+  }
+  .dropdown-options .opt:hover {
+    background-color: #1e2d4a; 
+    color: #ffffff;
+  }
+</style>
+
+<script>
+  // Opens and closes the custom dropdown
+  function toggleRoleDropdown() {
+    const options = document.getElementById('role-options');
+    if (options) {
+      options.style.display = options.style.display === 'block' ? 'none' : 'block';
+    }
+  }
+
+  // Handles the user's selection
+  function selectRole(value, text) {
+    document.getElementById('role-display-text').innerText = text;
+    const hiddenInput = document.getElementById('nu-role');
+    if (hiddenInput) {
+      hiddenInput.value = value;
+    }
+    if (typeof updateRolePerms === 'function') {
+      updateRolePerms();
+    }
+    const options = document.getElementById('role-options');
+    if (options) {
+      options.style.display = 'none';
+    }
+  }
+
+  // Closes the dropdown if the user clicks anywhere else
+  document.addEventListener('click', function(event) {
+    const dropdown = document.getElementById('role-dropdown');
+    const options = document.getElementById('role-options');
+    if (dropdown && options && !dropdown.contains(event.target)) {
+      options.style.display = 'none';
+    }
+  });
+</script>
 
 <!-- ════════════════ EDIT USER MODAL (Redesigned) ════════════════ -->
 <style>
@@ -3460,7 +3602,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="hero-title">👥 <span class="grad">User Management</span> — Access &amp; Credentials Center</div>
     <div style="font-size:13px;color:var(--text2);max-width:620px;line-height:1.6">Create dashboard users, assign roles, grant granular page/feature access, and manage bulk credentials for officers across all states and districts.</div>
     <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
-      <button class="btn btn-p" onclick="openModal('modal-create-user')">➕ Create User</button>
+      <button class="btn btn-p" onclick="openModal('modal-new-user')">➕ Create User</button>
       <button class="btn btn-s" onclick="document.getElementById('um-xlsx-input').click()">📥 Import XLSX</button>
       <a id="um-template-link" href="#" onclick="downloadUserTemplate(event)" class="btn btn-s" style="text-decoration:none">📄 Download Template</a>
       <input type="file" id="um-xlsx-input" accept=".xlsx,.xls" style="display:none" onchange="handleUserXlsxImport(this)">
@@ -3586,7 +3728,7 @@ document.addEventListener('DOMContentLoaded', () => {
 </div>
 
 <!-- ════════════════ CREATE USER MODAL ════════════════ -->
-<div class="modal-overlay" id="modal-create-user" onclick="if(event.target===this)closeModal('modal-create-user')">
+<div class="modal-overlay" id="modal-create-user" style="display:none" onclick="if(event.target===this)closeModal('modal-create-user')">
   <div class="modal" style="max-width:700px;width:95%;max-height:90vh;overflow-y:auto">
     <div class="modal-header">
       <div class="modal-title">➕ Create Dashboard User</div>
@@ -3610,17 +3752,17 @@ document.addEventListener('DOMContentLoaded', () => {
         
         <div class="form-row">
           <label class="lbl" style="color:var(--accent1)">Role *</label>
-          <div style="display: flex; align-items: center; gap: 4px; border: 1px solid var(--accent1); border-radius: 6px; padding: 8px; background: #111827;">
-            <select class="sel" id="cu-role" onchange="applyRolePreset(this.value, 'cu')" style="width: 100%; background: #111827; color: #e2e8f0; border: none; font-size: 13px; text-transform: uppercase; cursor: pointer; outline: none; -webkit-appearance: none; appearance: none; padding: 0;">
-              <option value="" style="background: #111827;">— Select Role —</option>
-              <option value="master_admin" style="background: #111827;">Master Admin</option>
-              <option value="admin" style="background: #111827;">Admin</option>
-              <option value="education_secretary" style="background: #111827;">Education Secretary</option>
-              <option value="dept_education" style="background: #111827;">Dept. of Education</option>
-              <option value="district_officer" style="background: #111827;">District Officer</option>
-              <option value="developer" style="background: #111827;">Developer</option>
-              <option value="data_manager" style="background: #111827;">Data Manager</option>
-              <option value="view_only" style="background: #111827;">View Only</option>
+          <div style="display: flex; align-items: center; gap: 4px; border: 1px solid var(--accent1); border-radius: 6px; padding: 8px; background: transparent;">
+            <select class="sel" id="cu-role" onchange="applyRolePreset(this.value, 'cu')" style="width: 100%; background: transparent; border: none; font-size: 13px; text-transform: uppercase; cursor: pointer; outline: none; -webkit-appearance: none; appearance: none; padding: 0;">
+              <option value="">— Select Role —</option>
+              <option value="master_admin">Master Admin</option>
+              <option value="admin">Admin</option>
+              <option value="education_secretary">Education Secretary</option>
+              <option value="dept_education">Dept. of Education</option>
+              <option value="district_officer">District Officer</option>
+              <option value="developer">Developer</option>
+              <option value="data_manager">Data Manager</option>
+              <option value="view_only">View Only</option>
             </select>
             <span style="font-size: 10px; pointer-events: none; color: var(--accent1);">▼</span>
           </div>
@@ -5423,7 +5565,7 @@ function updatePushBar() {
 }
 
 function updateRolePerms() {
-  const role = document.getElementById('cu-role')?.value || '';
+  const role = document.getElementById('nu-role').value;
   const setP = (id, val) => { const e = document.getElementById(id); if(e) e.checked = val; };
 
   // 1. Reset everything to OFF before applying a new role
@@ -9987,14 +10129,14 @@ async function saveUserEdit() {
 // ════════════════════════════════════════════════════════════════════════════
 
 async function createUser() {
-  // 1. Gather User Details from modal-create-user (the single, authoritative Create User modal)
-  const fullName = document.getElementById('cu-name')?.value?.trim();
-  const email    = document.getElementById('cu-email')?.value?.trim();
-  const phone    = document.getElementById('cu-phone')?.value?.trim();
-  const role     = document.getElementById('cu-role')?.value;
-  const password = document.getElementById('cu-password')?.value;
-  const state    = document.getElementById('cu-state')?.value;
-  const district = document.getElementById('cu-district')?.value;
+  // 1. Gather User Details using the correct 'cu-' HTML IDs from your new UI
+  const fullName = document.getElementById('nu-name')?.value?.trim();
+  const email    = document.getElementById('nu-email')?.value?.trim();
+  const phone    = document.getElementById('nu-phone')?.value?.trim();
+  const role     = document.getElementById('nu-role')?.value;
+  const password = document.getElementById('nu-pass')?.value;
+  const state    = document.getElementById('nu-state')?.value;
+  const district = document.getElementById('nu-district')?.value;
 
   // 2. Validate basics so the backend doesn't reject it (Prevents 400 Errors)
   if (!fullName || !email || !role) {
@@ -10037,10 +10179,10 @@ async function createUser() {
     if(typeof loadUserList === 'function') loadUserList(); 
     
     // Clear fields for the next time the modal opens
-    document.getElementById('cu-name').value = '';
-    document.getElementById('cu-email').value = '';
-    document.getElementById('cu-password').value = '';
-    document.getElementById('cu-role').value = '';
+    document.getElementById('nu-name').value = '';
+    document.getElementById('nu-email').value = '';
+    document.getElementById('nu-pass').value = '';
+    document.getElementById('nu-role').value = '';
   }
 }
 
@@ -10487,8 +10629,8 @@ async function loadQuizAnalyticsDeep() {
 // --- SECURE OFFLINE DISTRICT POPULATORS ---
 
 function updateLiveDistricts() {
-    const stateSelect = document.getElementById('cu-state');
-    const districtDropdown = document.getElementById('cu-district');
+    const stateSelect = document.getElementById('nu-state');
+    const districtDropdown = document.getElementById('nu-district');
     if (!districtDropdown || !stateSelect) return;
 
     // Get the selected text (e.g., "Gujarat")
