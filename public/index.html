@@ -10032,8 +10032,21 @@ async function createUser() {
 
   // 6. Handle UI Updates if successful
   if (data) {
-    closeModal('modal-create-user'); 
-    if(typeof showToast === 'function') showToast('✅ User created successfully');
+    // Trigger setup email for the newly created account.
+    // We call request-reset which generates a one-time link and emails it.
+    // This call is best-effort: a failure here must not block the UI update.
+    try {
+      await safeFetch('/api/auth/request-reset', {
+        method: 'POST',
+        body: JSON.stringify({ email: email })
+      });
+      if (typeof showToast === 'function') showToast('✅ User created — setup email sent to ' + email);
+    } catch (_) {
+      // safeFetch already shows a toast on network errors; this catch is a safety net.
+      if (typeof showToast === 'function') showToast('✅ User created — but setup email could not be sent. Use Reset Password from the user list.');
+    }
+
+    closeModal('modal-create-user');
     if(typeof loadUserList === 'function') loadUserList(); 
     
     // Clear fields for the next time the modal opens

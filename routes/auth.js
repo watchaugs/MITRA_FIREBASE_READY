@@ -55,23 +55,33 @@ const LOCKOUT_MINUTES = parseInt(process.env.LOCKOUT_MINUTES, 10) || 30;
 
 async function recordFailedLogin(email, ip) {
   try {
+    // 1. Look up the user's ID using their email
+    const userRes = await query('SELECT id FROM users WHERE email = $1', [email]);
+    const userId = userRes.rows[0]?.id || null;
+    
+    // 2. Insert using the correct database column names (user_id, ip_address)
     await query(
-      `INSERT INTO failed_logins (id, email, ip, created_at)
-       VALUES ($1, $2, $3, NOW())`,
-      [uuidv4(), email, ip]
+      `INSERT INTO failed_logins (user_id, ip_address, created_at)
+       VALUES ($1, $2, NOW())`,
+      [userId, ip]
     );
   } catch (err) {
-    // Table missing → first run before migration. Don't block login.
-    log.warn({ err: err.message }, 'failed_logins insert failed (run migration?)');
+    log.warn({ err: err.message }, 'failed_logins insert failed');
   }
 }
 
 async function isLockedOut(email) {
   try {
+    // 1. Look up the user's ID using their email
+    const userRes = await query('SELECT id FROM users WHERE email = $1', [email]);
+    if (!userRes.rows.length) return false;
+    const userId = userRes.rows[0].id;
+
+    // 2. Query using user_id instead of the non-existent email column
     const result = await query(
       `SELECT COUNT(*) AS c FROM failed_logins
-       WHERE email = $1 AND created_at > NOW() - INTERVAL '${LOCKOUT_MINUTES} minutes'`,
-      [email]
+       WHERE user_id = $1 AND created_at > NOW() - INTERVAL '${LOCKOUT_MINUTES} minutes'`,
+      [userId]
     );
     return parseInt(result.rows[0].c, 10) >= LOCKOUT_THRESHOLD;
   } catch (_) {
@@ -80,8 +90,14 @@ async function isLockedOut(email) {
 }
 
 async function clearFailedLogins(email) {
-  try { await query('DELETE FROM failed_logins WHERE email = $1', [email]); }
-  catch (_) {/* ignore */}
+  try {
+    // 1. Look up the user's ID using their email
+    const userRes = await query('SELECT id FROM users WHERE email = $1', [email]);
+    if (userRes.rows.length) {
+      // 2. Delete using user_id
+      await query('DELETE FROM failed_logins WHERE user_id = $1', [userRes.rows[0].id]);
+    }
+  } catch (_) {/* ignore */}
 }
 
 // ── JWT helpers ──────────────────────────────────────────────────────────────
@@ -311,11 +327,11 @@ router.post('/request-reset', async (req, res) => {
       const hash = hashToken(token);
       await query(
         `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at)
-         VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour', NOW())`,
+         VALUES ($1, $2, $3, NOW() + INTERVAL '48 hours', NOW())`,
         [uuidv4(), user.id, hash]
       );
 
-      const link = `watchaugs-mitra.web.app/reset/index.html?token=${token}`;
+      const link = `https://watchaugs-mitra.web.app/reset/index.html?token=${token}`;
       await sendResetEmail({ to: email, name: user.full_name, link });
       audit({ userId: user.id, action: 'password.reset_requested', resourceType: 'user', resourceId: user.id, ip: req.ip });
     }
@@ -331,6 +347,14 @@ router.post('/request-reset', async (req, res) => {
 // Sends a one-time reset link, never the password itself.
 async function sendResetEmail({ to, name, link }) {
   console.log(`[MITRA EMAIL ENGINE] Preparing to send email to: ${to}`);
+  
+  // Guard: fail fast with a clear message if SMTP credentials are missing
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    const missing = [!process.env.SMTP_USER && 'SMTP_USER', !process.env.SMTP_PASS && 'SMTP_PASS'].filter(Boolean).join(', ');
+    const err = new Error(`Email not sent — missing environment variable(s): ${missing}. Set them in Cloud Run → Edit & Deploy → Variables & Secrets.`);
+    console.error(`[MITRA EMAIL ENGINE] CONFIGURATION ERROR:`, err.message);
+    throw err;
+  }
   
   try {
     const nodemailer = require('nodemailer');
