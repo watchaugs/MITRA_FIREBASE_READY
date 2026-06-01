@@ -573,6 +573,33 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
       MITRA v4.1 · Ministry of Education · CERT-In Compliant
     </div>
   </div>
+
+  <div style="
+      position: absolute; 
+      bottom: 24px; 
+      left: 50%; 
+      transform: translateX(-50%); 
+      text-align: center;
+      opacity: 0.7;
+      pointer-events: none;
+  ">
+      <span style="
+          font-family: var(--font-family, 'Segoe UI', Roboto, sans-serif);
+          font-size: 8px;
+          color: rgba(255, 255, 255, 0.6); 
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          display: block;
+          margin-bottom: 4px;
+          font-weight: 500;
+      ">Powered by:</span>
+      <img src="Logo_White_Glow.png" alt="Company Logo" style="
+          height: 50px; 
+          width: auto;
+          display: inline-block;
+          filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.3));
+      ">
+  </div>
 </div>
 
 <!-- Session expired banner -->
@@ -11658,6 +11685,35 @@ function checkLoginState() {
 </script>
 
 </script>
+
+<div id="dashboard-global-footer" style="
+    position: fixed;
+    bottom: 15px;
+    right: 15px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    z-index: 10000;
+    pointer-events: none; 
+    opacity: 0.65; 
+    transition: opacity 0.2s ease;
+">
+    <span style="
+        font-family: var(--font-family, 'Segoe UI', Roboto, sans-serif);
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.6); 
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 2px;
+        font-weight: 500;
+    ">Powered by:</span>
+    <img src="Footer.png" alt="Company Logo" style="
+        height: 25px; 
+        width: auto;
+        display: block;
+        filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.3));
+    ">
+</div>
 
 </body>
 </html>
