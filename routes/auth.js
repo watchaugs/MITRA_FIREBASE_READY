@@ -16,6 +16,7 @@ const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
@@ -379,6 +380,52 @@ async function sendResetEmail({ to, name, link }) {
       to: to,
       subject: 'MITRA Dashboard - Account Setup & Password Reset',
       text: `Dear ${name || 'Colleague'},\n\nAn account setup or password reset has been requested for your MITRA Dashboard profile.\n\nIf you did not request this, please notify your administrator.\n\nSetup / Reset Link (valid for 48 hours):\n${link}\n\nMITRA Platform · Ministry of Education`,
+    attachments: [{
+        filename: 'logo.png',
+        path: path.join(__dirname, '../logo.png'), // Safely finds the file in any environment
+        cid: 'mitra_logo_secret_id'
+      }],
+
+      // 👇 THE UPDATED HTML WITH CID IMAGE 👇
+      html: `
+      <div style="background-color: #07090f; margin: 0; padding: 40px 20px; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #f1f5f9;">
+        <div style="max-width: 600px; margin: 0 auto; background-color: #111827; border: 1px solid #1e2d4a; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+          
+          <div style="background: linear-gradient(135deg, #1e2d4a, #0c1020); padding: 30px; text-align: center; border-bottom: 1px solid #1e2d4a;">
+            <img src="cid:mitra_logo_secret_id" alt="MITRA Logo" style="height: 50px; width: auto; display: block; margin: 0 auto;" />
+          </div>
+
+          <div style="padding: 40px 30px;">
+            <h2 style="margin-top: 0; color: #ffffff; font-size: 22px; font-weight: 700;">Account Setup Request</h2>
+            <p style="font-size: 15px; color: #94a3b8; line-height: 1.6;">
+              Dear ${name || 'Colleague'},
+            </p>
+            <p style="font-size: 15px; color: #94a3b8; line-height: 1.6;">
+              An account setup or password reset has been requested for your official dashboard profile. Please click the button below to establish your secure credentials.
+            </p>
+
+            <div style="text-align: center; margin: 40px 0;">
+              <a href="${link}" style="background: linear-gradient(135deg, #6366f1, #ec4899); color: #ffffff; text-decoration: none; padding: 14px 28px; font-size: 16px; font-weight: 600; border-radius: 8px; display: inline-block;">
+                Set Up My Password
+              </a>
+            </div>
+
+            <p style="font-size: 13px; color: #475569; line-height: 1.5; text-align: center; margin-bottom: 0;">
+              This link is secure and will expire in 48 hours.<br>If you did not request this, please notify your administrator immediately.
+            </p>
+          </div>
+
+          <div style="background-color: #0c1020; padding: 20px; text-align: center; border-top: 1px solid #1e2d4a;">
+            <p style="font-size: 12px; color: #475569; margin: 0;">
+              <strong>WatchAugs Technologies</strong><br>
+              MITRA Platform · Ministry of Education<br>
+              Anand, Gujarat
+            </p>
+          </div>
+          
+        </div>
+      </div>
+      `
     });
 
     console.log(`[MITRA EMAIL ENGINE] SUCCESS! Email sent. Message ID: ${info.messageId}`);

@@ -877,19 +877,17 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
     <button class="tn" id="ad-nav-btn" data-page="advertisements" data-permission="perm_view_ads" onclick="showPage('advertisements',this)">📣 Advertisements</button>
   </div>
   <div class="topbar-right">
-    <div class="avatar-btn" title="Admin" style="cursor:pointer;" onclick="toggleUserMenu(event)">AD</div>
+    <div class="avatar-btn" id="topbar-avatar" title="User" style="cursor:pointer;" onclick="toggleUserMenu(event)">—</div>
     
-    <!-- New Dropdown Menu -->
+    <!-- Dynamic User Dropdown -->
     <div id="user-dropdown" class="user-dropdown-menu">
       <div class="ud-header">
-        <div style="font-weight: 600; color: #fff; font-size: 14px;">Master Admin</div>
-        <div style="font-size: 11px; color: var(--text2);">admin@mitra.gov.in</div>
+        <div style="font-weight:600;color:#fff;font-size:14px;" id="ud-display-name">Loading...</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="ud-display-email">—</div>
+        <div style="font-size:10px;margin-top:4px;padding:2px 8px;background:rgba(99,102,241,0.2);border-radius:20px;display:inline-block;" id="ud-display-role">—</div>
       </div>
       <div class="ud-divider"></div>
-      
-      <!-- Settings moved here -->
       <button class="ud-item" onclick="showPage('settings'); closeUserMenu()">⚙️ Settings</button>
-      
       <div class="ud-divider"></div>
       <button class="ud-item logout" onclick="doLogout()">🚪 Sign Out</button>
     </div>
@@ -4663,7 +4661,69 @@ function showToast(msg) {
   setTimeout(() => { t.style.opacity = 0; }, 3000);
 }
 
-// --- USER DROPDOWN & LOGOUT LOGIC ---
+// ═══════════════════════════════════════════════════════════════════════════
+// DYNAMIC USER AVATAR & DROPDOWN - Updates with logged-in user info
+// ═══════════════════════════════════════════════════════════════════════════
+
+function updateUserUI() {
+  try {
+    // Get stored user info
+    const token = localStorage.getItem('mitra_token');
+    const role  = localStorage.getItem('mitra_role') || '';
+
+    if (!token) return;
+
+    // Decode JWT to get user info
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    const name    = payload.name  || payload.full_name  || payload.email?.split('@')[0] || 'User';
+    const email   = payload.email || '—';
+
+    // Generate initials (up to 2 chars from name)
+    const initials = name
+      .split(' ')
+      .map(w => w[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2) || '??';
+
+    // Role label (friendly display)
+    const ROLE_DISPLAY = {
+      master_admin:         '🔴 Master Admin',
+      admin:                '🟠 Admin',
+      district_officer:     '🟡 District Officer',
+      education_secretary:  '🟢 Edu. Secretary',
+      dept_education:       '🔵 Dept. Education',
+      developer:            '🟣 Developer',
+      data_manager:         '⚪ Data Manager',
+      view_only:            '⬜ View Only',
+      analytics_only:       '📊 Analytics Only',
+      upload_authority:     '📤 Upload Authority'
+    };
+    const roleLabel = ROLE_DISPLAY[role] || role || '—';
+
+    // Update avatar button
+    const avatarEl = document.getElementById('topbar-avatar');
+    if (avatarEl) {
+      avatarEl.textContent = initials;
+      avatarEl.title       = name;
+    }
+
+    // Update dropdown header
+    const nameEl  = document.getElementById('ud-display-name');
+    const emailEl = document.getElementById('ud-display-email');
+    const roleEl  = document.getElementById('ud-display-role');
+
+    if (nameEl)  nameEl.textContent  = name;
+    if (emailEl) emailEl.textContent = email;
+    if (roleEl)  roleEl.textContent  = roleLabel;
+
+    console.log(`✅ User UI updated: ${name} (${roleLabel})`);
+
+  } catch (err) {
+    console.warn('⚠️ updateUserUI error:', err.message);
+  }
+}
+
 function toggleUserMenu(event) {
   event.stopPropagation();
   document.getElementById('user-dropdown').classList.toggle('show');
@@ -5314,151 +5374,6 @@ function resetReplayFilters() {
   const lbl = document.getElementById('rp-filter-label');
   if(lbl) lbl.innerText = 'Showing: All States · All Districts · All Classes · All Subjects';
   showToast('Filters reset');
-}
-
-// ─── AD DASHBOARD FILTER & EXPORT ───
-function filterAdDashboard() {
-  showToast('Advertisement analytics filtered');
-}
-function resetAdFilters() {
-  ['adb-campaign','adb-state','adb-district','adb-class','adb-subject','adb-lang','adb-period'].forEach(id => {
-    const el = document.getElementById(id);
-    if(el) el.selectedIndex = 0;
-  });
-  showToast('Filters reset');
-}
-function toggleAdExport() {
-  const m = document.getElementById('ad-export-menu');
-  if(m) m.style.display = m.style.display === 'none' ? 'block' : 'none';
-}
-document.addEventListener('click', function(e) {
-  const m = document.getElementById('ad-export-menu');
-  if(m && m.style.display === 'block' && !m.contains(e.target)) m.style.display = 'none';
-});
-function exportAdData(fmt) {
-  const m = document.getElementById('ad-export-menu');
-  if(m) m.style.display = 'none';
-  showToast('Generating ' + fmt.toUpperCase() + ' export...');
-  const data = [
-    {Campaign:'Science Kit Launch',Media:'Video',State:'Maharashtra',District:'Mumbai, Pune',Class:'Class 9,10',Subject:'Science',Language:'Hindi, English',Published:'01 Apr 2026',Expiry:'30 Apr 2026',DailyPush:'5/day',Impressions:124500,UniqueViewers:54200,CompletionPct:72,RepeatViews:'2.3x',CTRPct:5.1,Status:'Live'},
-    {Campaign:'Maths Olympiad 2026',Media:'Image',State:'All India',District:'All Districts',Class:'Class 8-10',Subject:'Mathematics',Language:'All',Published:'05 Apr 2026',Expiry:'25 Apr 2026',DailyPush:'Before Topic',Impressions:88200,UniqueViewers:72100,CompletionPct:91,RepeatViews:'1.2x',CTRPct:6.8,Status:'Live'},
-    {Campaign:'History Book Fair',Media:'Video',State:'Uttar Pradesh',District:'Lucknow, Varanasi',Class:'Class 6-8',Subject:'History',Language:'Hindi',Published:'03 Apr 2026',Expiry:'15 Apr 2026',DailyPush:'10/day',Impressions:42100,UniqueViewers:28900,CompletionPct:58,RepeatViews:'1.5x',CTRPct:3.2,Status:'Expiring Soon'}
-  ];
-  const ws = XLSX.utils.json_to_sheet(data);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Ad_Campaigns');
-  XLSX.writeFile(wb, 'MITRA_Ad_Analytics_' + new Date().toISOString().slice(0,10) + '.' + fmt);
-}
-function exportAdGranular(fmt) {
-  showToast('Generating granular ' + fmt.toUpperCase() + ' export...');
-  const data = [
-    {State:'Maharashtra',District:'Mumbai',Class:'Class 10',AgeGroup:'15-16 yrs',Subject:'Science',Language:'Hindi',Impressions:28400,UniqueViewers:14200,AvgViewTime:'21s',CompletionPct:78,RepeatViews:'2.5x',SkipRatePct:12,CTRPct:5.8},
-    {State:'Maharashtra',District:'Pune',Class:'Class 9',AgeGroup:'14-15 yrs',Subject:'Science',Language:'Marathi',Impressions:18200,UniqueViewers:9800,AvgViewTime:'19s',CompletionPct:71,RepeatViews:'2.1x',SkipRatePct:18,CTRPct:4.9},
-    {State:'Uttar Pradesh',District:'Lucknow',Class:'Class 8',AgeGroup:'13-14 yrs',Subject:'History',Language:'Hindi',Impressions:14500,UniqueViewers:8100,AvgViewTime:'14s',CompletionPct:55,RepeatViews:'1.7x',SkipRatePct:28,CTRPct:3.1},
-    {State:'Uttar Pradesh',District:'Varanasi',Class:'Class 7',AgeGroup:'12-13 yrs',Subject:'History',Language:'Hindi',Impressions:11200,UniqueViewers:6400,AvgViewTime:'12s',CompletionPct:49,RepeatViews:'1.4x',SkipRatePct:34,CTRPct:2.8},
-    {State:'Gujarat',District:'Ahmedabad',Class:'Class 10',AgeGroup:'15-16 yrs',Subject:'Mathematics',Language:'Gujarati',Impressions:22100,UniqueViewers:16400,AvgViewTime:'24s',CompletionPct:88,RepeatViews:'1.3x',SkipRatePct:9,CTRPct:7.2},
-    {State:'Gujarat',District:'Surat',Class:'Class 9',AgeGroup:'14-15 yrs',Subject:'Science',Language:'Gujarati',Impressions:16800,UniqueViewers:11200,AvgViewTime:'22s',CompletionPct:82,RepeatViews:'1.1x',SkipRatePct:11,CTRPct:6.5},
-    {State:'Rajasthan',District:'Jaipur',Class:'Class 8',AgeGroup:'13-14 yrs',Subject:'Geography',Language:'Hindi',Impressions:9400,UniqueViewers:5900,AvgViewTime:'15s',CompletionPct:60,RepeatViews:'1.6x',SkipRatePct:25,CTRPct:3.8},
-    {State:'Tamil Nadu',District:'Chennai',Class:'Class 10',AgeGroup:'15-16 yrs',Subject:'Biology',Language:'Tamil',Impressions:18600,UniqueViewers:12100,AvgViewTime:'20s',CompletionPct:75,RepeatViews:'2.0x',SkipRatePct:15,CTRPct:5.4},
-    {State:'Karnataka',District:'Bengaluru',Class:'Class 11',AgeGroup:'16-17 yrs',Subject:'Physics',Language:'Kannada',Impressions:12300,UniqueViewers:8600,AvgViewTime:'18s',CompletionPct:68,RepeatViews:'1.8x',SkipRatePct:20,CTRPct:4.6},
-    {State:'Bihar',District:'Patna',Class:'Class 7',AgeGroup:'12-13 yrs',Subject:'Mathematics',Language:'Hindi',Impressions:8900,UniqueViewers:5200,AvgViewTime:'11s',CompletionPct:44,RepeatViews:'1.2x',SkipRatePct:38,CTRPct:2.1}
-  ];
-  const ws = XLSX.utils.json_to_sheet(data);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Ad_Granular_Data');
-  XLSX.writeFile(wb, 'MITRA_Ad_Granular_' + new Date().toISOString().slice(0,10) + '.' + fmt);
-}
-
-
-function switchAdTab(tabId, btn) {
-  document.querySelectorAll('.ad-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.ad-section').forEach(s => s.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('ad-' + tabId).classList.add('active');
-}
-function saveAdCampaign() { showToast('Campaign draft saved successfully'); }
-function publishAdCampaign() { showToast('🚀 Advertisement published to target apps!'); }
-async function scheduleAdCampaign() {
-  const id = document.getElementById('selected-campaign-id')?.value
-           || document.querySelector('[data-campaign-id]')?.dataset?.campaignId;
-  const schedAt = document.getElementById('ad-schedule-time')?.value;
-  if (!id) { showToast('⚠️ Select a campaign first'); return; }
-  if (!schedAt) { showToast('⚠️ Select a schedule date/time'); return; }
-  const data = await safeFetch(`/api/ads/${id}/schedule`, {
-    method: 'POST', body: JSON.stringify({ scheduled_at: schedAt })
-  });
-  if (data?.success) showToast('📅 Campaign scheduled successfully');
-}
-function saveFrequencyConfig() {
-  const val = document.getElementById('daily-push-counter').value;
-  showToast(`Frequency set to ${val} push(es)/day — saved`);
-}
-function loadCampaignFreq() { showToast('Frequency config loaded for selected campaign'); }
-function toggleBeforeTopic(cb) {
-  const counter = document.getElementById('daily-push-counter');
-  const bar = document.getElementById('push-freq-bar');
-  if(cb.checked) {
-    if(counter) counter.disabled = true;
-    if(bar) { bar.style.width = '100%'; bar.style.background = '#ec4899'; }
-    showToast('"Before Every Topic" mode enabled — daily counter paused');
-  } else {
-    if(counter) counter.disabled = false;
-    if(bar) { bar.style.background = 'var(--accent2)'; updatePushBar(); }
-    showToast('Daily counter mode restored');
-  }
-}
-function handleAdUpload(input) {
-  let file = input.files && input.files[0];
-  if(!file) return;
-  const maxMB = 5;
-  if(file.size > maxMB * 1024 * 1024) {
-    showToast('❌ File exceeds 5 MB limit. Please choose a smaller file.');
-    input.value = '';
-    return;
-  }
-  document.getElementById('ad-upload-status').style.display = 'block';
-  document.getElementById('ad-fname').innerText = file.name;
-  document.getElementById('ad-fsize').innerText = (file.size/1024/1024).toFixed(2) + ' MB';
-  let pct = 0;
-  const fill = document.getElementById('ad-upfill');
-  const iv = setInterval(() => {
-    pct += Math.random() * 20;
-    if(pct >= 100) { pct = 100; clearInterval(iv); showToast('✅ Advertisement file uploaded — configure targeting below'); }
-    fill.style.width = pct + '%';
-  }, 150);
-}
-
-// ─── UNITY TARGETING ───
-function toggleAllApps(cb) {
-  document.querySelectorAll('.uapp-cb').forEach(c => c.checked = cb.checked);
-}
-function toggleAllCheck(cls, cb) {
-  document.querySelectorAll('.' + cls).forEach(c => c.checked = cb.checked);
-}
-
-// ─── COUNTER ───
-function changeCounter(id, delta) {
-  const el = document.getElementById(id);
-  if(!el) return;
-  let v = parseInt(el.value) + delta;
-  v = Math.max(0, Math.min(50, v));
-  el.value = v;
-  updatePushBar();
-}
-function clampCounter(el, max) {
-  let v = parseInt(el.value);
-  if(isNaN(v)) v = 0;
-  el.value = Math.max(0, Math.min(max, v));
-  updatePushBar();
-}
-function updatePushBar() {
-  const el = document.getElementById('daily-push-counter');
-  const bar = document.getElementById('push-freq-bar');
-  const lbl = document.getElementById('push-freq-label');
-  if(!el || !bar) return;
-  const v = parseInt(el.value) || 0;
-  bar.style.width = (v/50*100) + '%';
-  if(lbl) lbl.innerText = `${v} / 50 maximum daily pushes`;
 }
 
 function updateRolePerms() {
@@ -9076,6 +8991,7 @@ async function doLogin() {
 
     // 👇 NEW LINE: Instantly run the "bouncer" to hide restricted sidebar buttons 👇
     if (typeof enforceRolePermissions === 'function') enforceRolePermissions();
+    updateUserUI();
 
     // 3. Trigger your exact MITRA data loaders
     if (typeof loadHomeDashboard === 'function') loadHomeDashboard();
@@ -9122,6 +9038,7 @@ document.addEventListener('DOMContentLoaded', async function mitraAuthInit() {
 
       // 👇 RBAC: Hide restricted sidebar & topbar buttons on every page refresh 👇
       if (typeof enforceRolePermissions === 'function') enforceRolePermissions();
+      updateUserUI();
       
     } else {
       // Expired or revoked — clear everything and show login
@@ -9606,9 +9523,11 @@ window.showPage = function showPage(pageId, topBtn, sbBtn) {
       chartsInitialized = true;
     }
   }
-  if (pageId === 'advertisements' && !window.adChartsInit) {
-    setTimeout(() => { initAllCharts && initAllCharts(); }, 100);
-    window.adChartsInit = true;
+  if (pageId === 'advertisements') {
+    setTimeout(function() {
+      if (typeof initAdCharts === 'function') initAdCharts();
+      if (typeof loadAdStats === 'function') loadAdStats();
+    }, 100);
   }
   if (pageId === 'notifications') {
     if (!window._notifInited) { window._notifInited = true; initNotificationsPage && initNotificationsPage(); }
@@ -9765,8 +9684,6 @@ async function loadNotifAnalyticsSubTab() {
   
 <script src="/ads-compliance.js"></script>
 
-</body>
-</html>
 <script>
 // ════════════════════════════════════════════════════════════════════════════
 // USER MANAGEMENT — Full JS Module
@@ -9788,6 +9705,8 @@ const UM_PAGE_PERMS = [
   { key:'perm_publish_apps',     label:'🚀 Publish Apps',  default_roles:['master_admin','admin','developer'] },
   { key:'perm_export_data',      label:'📥 Export Data',   default_roles:['master_admin','admin','analytics_only','data_manager'] },
   { key:'perm_manage_compliance',label:'🛡️ Compliance',    default_roles:['master_admin','admin','education_secretary'] },
+  { key:'perm_view_ads',         label:'📣 Advertisements', default_roles:['master_admin'] },
+  { key:'perm_manage_ads',       label:'📣 Manage Ads',     default_roles:['master_admin'] },
 ];
 
 const ROLE_PRESETS = {
@@ -10862,227 +10781,6 @@ function exportTelemetryXLSX() {
 
 <script>
 // ═══════════════════════════════════════════════════════════════════════════
-// DASHBOARD FIXES - Added 2026-05-23
-// Fixes for missing compliance export functions, grievance officer edit,
-// certificate modal, and quiz upload button
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ────────────────────────────────────────────────────────────────────────────
-// FIX 1: COMPLIANCE EXPORT FUNCTIONS
-// ────────────────────────────────────────────────────────────────────────────
-
-async function downloadComplianceSummary() {
-  try {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      alert('Please log in first');
-      return;
-    }
-    window.open('/api/compliance/summary/export?token=' + token, '_blank');
-  } catch (err) {
-    console.error('Export failed:', err);
-    alert('Failed to download compliance summary. Please try again.');
-  }
-}
-
-async function exportComplianceCSV() {
-  try {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      alert('Please log in first');
-      return;
-    }
-    const link = document.createElement('a');
-    link.href = '/api/compliance/export?format=csv&token=' + token;
-    link.download = 'compliance_export_' + new Date().toISOString().slice(0,10) + '.csv';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  } catch (err) {
-    console.error('Export failed:', err);
-    alert('Failed to export CSV. Please try again.');
-  }
-}
-
-async function exportComplianceXLSX() {
-  try {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      alert('Please log in first');
-      return;
-    }
-    const link = document.createElement('a');
-    link.href = '/api/compliance/export?format=xlsx&token=' + token;
-    link.download = 'compliance_export_' + new Date().toISOString().slice(0,10) + '.xlsx';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  } catch (err) {
-    console.error('Export failed:', err);
-    alert('Failed to export XLSX. Please try again.');
-  }
-}
-
-async function exportConsentLog() {
-  try {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      alert('Please log in first');
-      return;
-    }
-    const link = document.createElement('a');
-    link.href = '/api/consent/export?format=csv&token=' + token;
-    link.download = 'consent_log_' + new Date().toISOString().slice(0,10) + '.csv';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  } catch (err) {
-    console.error('Export failed:', err);
-    alert('Failed to export consent log. Please try again.');
-  }
-}
-
-async function exportDPDPAReport() {
-  try {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      alert('Please log in first');
-      return;
-    }
-    window.open('/api/compliance/dpdpa-report?token=' + token, '_blank');
-  } catch (err) {
-    console.error('Export failed:', err);
-    alert('Failed to generate DPDPA report. Please try again.');
-  }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// FIX 2: GRIEVANCE OFFICER MANAGEMENT
-// ────────────────────────────────────────────────────────────────────────────
-
-let grievanceOfficerEditMode = false;
-
-function editGrievanceOfficer() {
-  grievanceOfficerEditMode = true;
-  const nameInput = document.getElementById('go-name');
-  const emailInput = document.getElementById('go-email');
-  const phoneInput = document.getElementById('go-phone');
-  if (nameInput) nameInput.disabled = false;
-  if (emailInput) emailInput.disabled = false;
-  if (phoneInput) phoneInput.disabled = false;
-  const editBtn = document.getElementById('btn-edit-go');
-  const saveBtn = document.getElementById('btn-save-go');
-  const cancelBtn = document.getElementById('btn-cancel-go');
-  if (editBtn) editBtn.style.display = 'none';
-  if (saveBtn) saveBtn.style.display = 'inline-block';
-  if (cancelBtn) cancelBtn.style.display = 'inline-block';
-}
-
-function cancelEditGrievanceOfficer() {
-  grievanceOfficerEditMode = false;
-  const nameInput = document.getElementById('go-name');
-  const emailInput = document.getElementById('go-email');
-  const phoneInput = document.getElementById('go-phone');
-  if (nameInput) nameInput.disabled = true;
-  if (emailInput) emailInput.disabled = true;
-  if (phoneInput) phoneInput.disabled = true;
-  const editBtn = document.getElementById('btn-edit-go');
-  const saveBtn = document.getElementById('btn-save-go');
-  const cancelBtn = document.getElementById('btn-cancel-go');
-  if (editBtn) editBtn.style.display = 'inline-block';
-  if (saveBtn) saveBtn.style.display = 'none';
-  if (cancelBtn) cancelBtn.style.display = 'none';
-  if (typeof loadGrievanceOfficer === 'function') {
-    loadGrievanceOfficer();
-  }
-}
-
-async function saveGrievanceOfficer() {
-  const nameInput = document.getElementById('go-name');
-  const emailInput = document.getElementById('go-email');
-  const phoneInput = document.getElementById('go-phone');
-  
-  const data = {
-    name: nameInput ? nameInput.value : '',
-    email: emailInput ? emailInput.value : '',
-    phone: phoneInput ? phoneInput.value : ''
-  };
-  
-  // Validation
-  if (!data.name || !data.email) {
-    alert('❌ Name and email are required');
-    return;
-  }
-  
-  try {
-    const res = await fetch('/api/compliance/grievance-officer', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + (localStorage.getItem('mitra_token') || localStorage.getItem('token'))
-      },
-      body: JSON.stringify(data)
-    });
-    
-    if (res.ok) {
-      alert('✅ Grievance Officer details updated successfully');
-      cancelEditGrievanceOfficer();
-      
-      // ✅ AUTO-REFRESH COMPLIANCE TRACKERS
-      setTimeout(function() {
-        if (typeof refreshComplianceTrackers === 'function') {
-          refreshComplianceTrackers();
-        } else if (typeof renderDPDPATracker === 'function') {
-          renderDPDPATracker();
-        }
-      }, 500);
-      
-    } else {
-      const error = await res.json();
-      alert('❌ Failed to update: ' + (error.error || 'Unknown error'));
-    }
-  } catch (err) {
-    console.error('Save error:', err);
-    alert('❌ Error updating Grievance Officer. Please try again.');
-  }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// FIX 3: CERTIFICATE MODAL CLOSE
-// ────────────────────────────────────────────────────────────────────────────
-
-function closeCertificateModal() {
-  const modal = document.getElementById('modal-certificate');
-  if (modal) modal.style.display = 'none';
-  const altModal = document.getElementById('certificate-modal');
-  if (altModal) altModal.style.display = 'none';
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// FIX 4: QUIZ BULK UPLOAD AUTO-ENABLE
-// ────────────────────────────────────────────────────────────────────────────
-
-setTimeout(function() {
-  const quizFileInput = document.getElementById('quiz-file-input');
-  const quizUploadBtn = document.getElementById('quiz-upload-btn');
-  if (quizFileInput && quizUploadBtn) {
-    quizFileInput.addEventListener('change', function(e) {
-      if (e.target.files && e.target.files.length > 0) {
-        quizUploadBtn.disabled = false;
-        quizUploadBtn.style.opacity = '1';
-      } else {
-        quizUploadBtn.disabled = true;
-        quizUploadBtn.style.opacity = '0.5';
-      }
-    });
-  }
-}, 1000);
-
-// ═══════════════════════════════════════════════════════════════════════════
-// END OF FIXES
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════════
 // NEP 2020 AD CONSENT - Frontend Logic
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -11531,10 +11229,19 @@ document.addEventListener('DOMContentLoaded', function() {
     originalShowPage(pageId, btn);
 
     // Page-specific actions
-    if (pageId === 'compliance') {
-      setTimeout(renderDPDPATracker, 300);
+    if (pageId === 'advertisements') {
+      setTimeout(function() {
+        if (typeof initAdCharts === 'function') initAdCharts();
+        if (typeof loadAdStats === 'function') loadAdStats();
+      }, 100);
     }
-    
+
+    if (pageId === 'compliance') {
+      setTimeout(function() {
+        if (typeof initCompliancePage === 'function') initCompliancePage();
+      }, 100);
+    }
+
     if (pageId === 'dashboard') {
       setTimeout(loadHomeDashboard, 300);
     }
@@ -11731,6 +11438,7 @@ function checkLoginState() {
     if (dashboardElement) dashboardElement.style.display = 'block';
     // 👇 NEW: WAKE UP THE SECURITY UI HIDER ON EVERY PAGE REFRESH 👇
     if (typeof enforceRolePermissions === 'function') enforceRolePermissions();
+    updateUserUI();
     return true;
   }
 }

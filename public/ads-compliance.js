@@ -341,19 +341,11 @@ function initAdCharts() {
 
 // Auto-init ad charts when ad page becomes active
 document.addEventListener('DOMContentLoaded', () => {
-  const origShow = window.showPage;
-  if (typeof origShow === 'function' && !window._adsPagePatched) {
-    window._adsPagePatched = true;
-    window.showPage = function(pageId, ...args) {
-      origShow(pageId, ...args);
-      if (pageId === 'advertisements') {
-        setTimeout(initAdCharts, 100);
-        setTimeout(loadAdStats, 200);
-      }
-      if (pageId === 'compliance') {
-        setTimeout(initCompliancePage, 100);
-      }
-    };
+  // If page loads directly on advertisements tab
+  const adsPage = document.getElementById('page-advertisements');
+  if (adsPage && adsPage.classList.contains('on')) {
+    setTimeout(initAdCharts, 100);
+    setTimeout(loadAdStats, 200);
   }
 });
 
