@@ -865,16 +865,16 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
     <div><div class="logo-name">MITRA</div><div class="logo-tag">Gov School Platform · v4.0</div></div>
   </div>
   <div class="topbar-nav">
-    <button class="tn on" data-page="dashboard" onclick="showPage('dashboard',this)">🏠 Dashboard</button>
-    <button class="tn" data-page="curriculum" onclick="showPage('curriculum',this)">📚 Curriculum Map</button>
-    <button class="tn" data-page="analytics" onclick="showPage('analytics',this)">📊 Analytics</button>
-    <button class="tn" data-page="app-builder" onclick="showPage('app-builder',this)">🛠️ App Manager</button>
-    <button class="tn" data-page="controls" onclick="showPage('controls',this)">🎛️ Other Controls</button>
-    <button class="tn" data-page="ar-assets" onclick="showPage('ar-assets',this)">🎮 AR Assets</button>
-    <button class="tn" data-page="notifications" onclick="showPage('notifications',this)">🔔 Notifications</button>
-    <button class="tn" data-page="users" onclick="showPage('users',this)">👥 User Management</button>
-    <button class="tn" data-page="compliance" onclick="showPage('compliance',this)">⚖️ Legal & Compliance</button>
-    <button class="tn" id="ad-nav-btn" data-page="advertisements" onclick="showPage('advertisements',this)">📣 Advertisements</button>
+    <button class="tn on" data-page="dashboard" data-permission="perm_view_dashboard" onclick="showPage('dashboard',this)">🏠 Dashboard</button>
+    <button class="tn" data-page="curriculum" data-permission="perm_view_curriculum" onclick="showPage('curriculum',this)">📚 Curriculum Map</button>
+    <button class="tn" data-page="analytics" data-permission="perm_view_analytics" onclick="showPage('analytics',this)">📊 Analytics</button>
+    <button class="tn" data-page="app-builder" data-permission="perm_view_app_builder" onclick="showPage('app-builder',this)">🛠️ App Manager</button>
+    <button class="tn" data-page="controls" data-permission="perm_view_controls" onclick="showPage('controls',this)">🎛️ Other Controls</button>
+    <button class="tn" data-page="ar-assets" data-permission="perm_view_ar_assets" onclick="showPage('ar-assets',this)">🎮 AR Assets</button>
+    <button class="tn" data-page="notifications" data-permission="perm_view_notif" onclick="showPage('notifications',this)">🔔 Notifications</button>
+    <button class="tn" data-page="users" data-permission="perm_view_users" onclick="showPage('users',this)">👥 User Management</button>
+    <button class="tn" data-page="compliance" data-permission="perm_view_legal" onclick="showPage('compliance',this)">⚖️ Legal & Compliance</button>
+    <button class="tn" id="ad-nav-btn" data-page="advertisements" data-permission="perm_view_ads" onclick="showPage('advertisements',this)">📣 Advertisements</button>
   </div>
   <div class="topbar-right">
     <div class="avatar-btn" title="Admin" style="cursor:pointer;" onclick="toggleUserMenu(event)">AD</div>
@@ -898,18 +898,18 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 
 <div class="body-wrap">
 <div class="sidebar">
-  <div class="sb-btn on" title="Dashboard" aria-label="Dashboard" onclick="showPage('dashboard',null,this)">🏠</div>
-  <div class="sb-btn" title="Curriculum Map" aria-label="Curriculum Map" onclick="showPage('curriculum',null,this)">📚</div>
-  <div class="sb-btn" title="Analytics" aria-label="Analytics" onclick="showPage('analytics',null,this)">📊</div>
-  <div class="sb-btn" title="App Manager" aria-label="App Manager" onclick="showPage('app-builder',null,this)">🛠️</div>
-  <div class="sb-btn" title="Other Controls" aria-label="Other Controls" onclick="showPage('controls',null,this)">🎛️</div>
+  <div class="sb-btn on" data-permission="perm_view_dashboard" title="Dashboard" aria-label="Dashboard" onclick="showPage('dashboard',null,this)">🏠</div>
+  <div class="sb-btn" data-permission="perm_view_curriculum" title="Curriculum Map" aria-label="Curriculum Map" onclick="showPage('curriculum',null,this)">📚</div>
+  <div class="sb-btn" data-permission="perm_view_analytics" title="Analytics" aria-label="Analytics" onclick="showPage('analytics',null,this)">📊</div>
+  <div class="sb-btn" data-permission="perm_view_app_builder" title="App Manager" aria-label="App Manager" onclick="showPage('app-builder',null,this)">🛠️</div>
+  <div class="sb-btn" data-permission="perm_view_controls" title="Other Controls" aria-label="Other Controls" onclick="showPage('controls',null,this)">🎛️</div>
   <div class="sb-divider"></div>
-  <div class="sb-btn" title="AR Assets" aria-label="AR Assets" onclick="showPage('ar-assets',null,this)">🎮</div>
-  <div class="sb-btn" title="Notifications" aria-label="Notifications" onclick="showPage('notifications',null,this)">🔔</div>
-  <div class="sb-btn" title="Legal & Compliance" aria-label="Legal & Compliance" onclick="showPage('compliance',null,this)">⚖️</div>
-  <div class="sb-btn" title="Advertisement Manager" aria-label="Advertisement Manager" onclick="showPage('advertisements',null,this)">📣</div>
+  <div class="sb-btn" data-permission="perm_view_ar_assets" title="AR Assets" aria-label="AR Assets" onclick="showPage('ar-assets',null,this)">🎮</div>
+  <div class="sb-btn" data-permission="perm_view_notif" title="Notifications" aria-label="Notifications" onclick="showPage('notifications',null,this)">🔔</div>
+  <div class="sb-btn" data-permission="perm_view_legal" title="Legal & Compliance" aria-label="Legal & Compliance" onclick="showPage('compliance',null,this)">⚖️</div>
+  <div class="sb-btn" data-permission="perm_view_ads" title="Advertisement Manager" aria-label="Advertisement Manager" onclick="showPage('advertisements',null,this)">📣</div>
   <div class="sb-divider"></div>
-  <div class="sb-btn" title="User Management" aria-label="User Management" onclick="showPage('users',null,this)">👥</div>
+  <div class="sb-btn" data-permission="perm_view_users" title="User Management" aria-label="User Management" onclick="showPage('users',null,this)">👥</div>
 </div>
 
 <div class="main" id="main">
@@ -9027,6 +9027,21 @@ async function doLogin() {
     localStorage.setItem('mitra_token', data.token || data.access_token || '');
     if (data.refresh_token) localStorage.setItem('mitra_refresh_token', data.refresh_token);
     
+    // 👇 THE BULLETPROOF ROLE TRANSLATOR 👇
+    // Safely extract the user's role from the auth.js response
+    const userRole = (data.user && data.user.role) ? data.user.role : 'viewer';
+    
+    // Look up the correct tags from your frontend ROLE_PRESETS dictionary
+    let myPerms = [];
+    if (typeof ROLE_PRESETS !== 'undefined' && ROLE_PRESETS[userRole]) {
+        myPerms = ROLE_PRESETS[userRole];
+    }
+    
+    // Save the correctly formatted array so the bouncer can read it
+    localStorage.setItem('mitra_permissions', JSON.stringify(myPerms));
+    localStorage.setItem('mitra_role', userRole); 
+    // 👆 END TRANSLATOR 👆
+
     // Store userId - extract from token payload or response
     if (data.user && data.user.id) {
       localStorage.setItem('userId', data.user.id);
@@ -9057,7 +9072,10 @@ async function doLogin() {
     
     // 2. WAKE UP THE DASHBOARD IMMEDIATELY (No reload required!)
     const dashboard = document.getElementById('mitra-dashboard-main'); 
-    if (dashboard) dashboard.style.display = 'flex'; 
+    if (dashboard) dashboard.style.display = 'flex';
+
+    // 👇 NEW LINE: Instantly run the "bouncer" to hide restricted sidebar buttons 👇
+    if (typeof enforceRolePermissions === 'function') enforceRolePermissions();
 
     // 3. Trigger your exact MITRA data loaders
     if (typeof loadHomeDashboard === 'function') loadHomeDashboard();
@@ -9100,7 +9118,10 @@ document.addEventListener('DOMContentLoaded', async function mitraAuthInit() {
       if (overlay) overlay.classList.add('hidden');
       
       const dashboard = document.getElementById('mitra-dashboard-main'); 
-      if (dashboard) dashboard.style.display = 'flex'; 
+      if (dashboard) dashboard.style.display = 'flex';
+
+      // 👇 RBAC: Hide restricted sidebar & topbar buttons on every page refresh 👇
+      if (typeof enforceRolePermissions === 'function') enforceRolePermissions();
       
     } else {
       // Expired or revoked — clear everything and show login
@@ -9540,6 +9561,35 @@ function initGeofenceLeaflet() {
 // showPage — single canonical navigation function (all hooks merged)
 // ════════════════════════════════════════════════════════════════
 window.showPage = function showPage(pageId, topBtn, sbBtn) {
+  // ── RBAC PAGE GUARD ──────────────────────────────────────────
+  // Map each page ID to the permission required to view it
+  const PAGE_PERMISSION_MAP = {
+    'dashboard':      'perm_view_dashboard',
+    'curriculum':     'perm_view_curriculum',
+    'analytics':      'perm_view_analytics',
+    'app-builder':    'perm_view_app_builder',
+    'controls':       'perm_view_controls',
+    'ar-assets':      'perm_view_ar_assets',
+    'notifications':  'perm_view_notif',
+    'users':          'perm_view_users',
+    'compliance':     'perm_view_legal',
+    'advertisements': 'perm_view_ads',
+  };
+  const requiredPerm = PAGE_PERMISSION_MAP[pageId];
+  if (requiredPerm) {
+    const activePermissions = JSON.parse(localStorage.getItem('mitra_permissions') || '[]');
+    if (!activePermissions.includes(requiredPerm)) {
+      const errBanner = document.getElementById('session-expired-banner');
+      if (errBanner) {
+        errBanner.textContent = '🚫 Access Denied: You do not have permission to view this section.';
+        errBanner.style.display = 'block';
+        setTimeout(() => { errBanner.style.display = 'none'; }, 3000);
+      }
+      return; // Block navigation entirely
+    }
+  }
+  // ── END RBAC PAGE GUARD ──────────────────────────────────────
+
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   document.querySelectorAll('.tn').forEach(b => b.classList.remove('on'));
   document.querySelectorAll('.sb-btn').forEach(b => b.classList.remove('on'));
@@ -11667,23 +11717,54 @@ async function downloadBulkTemplate() {
 // The Front Door Bouncer
 function checkLoginState() {
   const token = localStorage.getItem('mitra_token');
-  const dashboardElement = document.getElementById('mitra-dashboard-main'); // Change to your actual dashboard container ID
-  const loginElement = document.getElementById('mitra-login-screen'); // Change to your actual login container ID
+  const dashboardElement = document.getElementById('mitra-dashboard-main'); 
+  const loginElement = document.getElementById('mitra-login-screen'); 
 
   if (!token) {
     // No token found? Lock them out immediately.
     if (dashboardElement) dashboardElement.style.display = 'none';
     if (loginElement) loginElement.style.display = 'block';
-    return false; // Stop the rest of the page from loading data
+    return false; 
   } else {
     // Token exists? Let them in.
     if (loginElement) loginElement.style.display = 'none';
     if (dashboardElement) dashboardElement.style.display = 'block';
+    // 👇 NEW: WAKE UP THE SECURITY UI HIDER ON EVERY PAGE REFRESH 👇
+    if (typeof enforceRolePermissions === 'function') enforceRolePermissions();
     return true;
   }
 }
-</script>
 
+// --- Role-Based Permission Guard ---
+function hasPageAccess(requiredPermission) {
+    const activePermissions = JSON.parse(localStorage.getItem('mitra_permissions') || '[]');
+    
+    if (!activePermissions.includes(requiredPermission)) {
+        const errBanner = document.getElementById('session-expired-banner');
+        if (errBanner) {
+            errBanner.textContent = "Access Denied: You do not have permission to view this section.";
+            errBanner.style.display = 'block';
+            setTimeout(() => { errBanner.style.display = 'none'; }, 3000);
+        }
+        return false; 
+    }
+    return true; 
+}
+
+// --- Dynamic UI Hider ---
+function enforceRolePermissions() {
+    const activePermissions = JSON.parse(localStorage.getItem('mitra_permissions') || '[]');
+    const restrictedElements = document.querySelectorAll('[data-permission]');
+
+    restrictedElements.forEach(element => {
+        const requiredPermission = element.getAttribute('data-permission');
+        if (!activePermissions.includes(requiredPermission)) {
+            element.style.display = 'none';
+        } else {
+            element.style.display = ''; 
+        }
+    });
+}
 </script>
 
 <div id="dashboard-global-footer" style="
