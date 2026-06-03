@@ -2325,7 +2325,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="db-instance-row">
         <div style="display:flex;align-items:center">
           <div class="db-dot active"></div>
-          <div><div style="font-size:13px;font-weight:600">mitra_dashboard (Primary)</div><div style="font-size:11px;color:var(--text2)">PostgreSQL · localhost:5432</div></div>
+          <div><div style="font-size:13px;font-weight:600">mitra (Primary)</div><div style="font-size:11px;color:var(--text2)">PostgreSQL · Cloud SQL · asia-south1</div></div>
         </div>
         <span class="tag tag-g">Connected</span>
       </div>
@@ -2339,7 +2339,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="card-title">➕ New Isolated DB Instance</div>
       <div class="card-sub">Spin up a sandbox database for a specific state app.</div>
       <div class="form-row"><label class="lbl">Instance Name</label><input class="inp" id="db-new-name" placeholder="e.g. mitra_gujarat_sandbox"></div>
-      <div class="form-row"><label class="lbl">Host</label><input class="inp" id="db-new-host" value="localhost"></div>
+      <div class="form-row"><label class="lbl">Host</label><input class="inp" id="db-new-host" value="Cloud SQL · asia-south1"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px" class="form-row">
         <div><label class="lbl">Port</label><input class="inp" id="db-new-port" value="5432" type="number"></div>
         <div><label class="lbl">DB Name</label><input class="inp" id="db-new-dbname" value="mitra_app"></div>
@@ -2351,7 +2351,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="card-title" style="margin-bottom:10px">🗄️ Linked DB Instances</div>
     <div id="am-db-list">
       <div class="db-instance-row">
-        <div style="display:flex;align-items:center"><div class="db-dot active"></div><div><div style="font-size:13px;font-weight:600">mitra_dashboard</div><div style="font-size:11px;color:var(--text2)">Primary · localhost:5432 · shared</div></div></div>
+        <div style="display:flex;align-items:center"><div class="db-dot active"></div><div><div style="font-size:13px;font-weight:600">mitra</div><div style="font-size:11px;color:var(--text2)">Primary · Cloud SQL · asia-south1 · shared</div></div></div>
         <div style="display:flex;gap:6px"><span class="tag tag-g">Active</span><button class="btn btn-s btn-sm" onclick="showToast('Connection test: OK — 3ms')">Ping</button></div>
       </div>
     </div>

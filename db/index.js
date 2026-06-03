@@ -54,7 +54,7 @@ async function buildCloudSqlPool() {
     ...clientOpts,
     user:     process.env.DB_USER,
     password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME || 'mitra_dashboard',
+    database: process.env.DB_NAME || 'mitra',
     
     // Serverless Throttling Protections
     max:                     parseInt(process.env.DB_POOL_MAX, 10) || 10,
@@ -87,7 +87,7 @@ function buildStandardPool() {
     cfg = {
       host:     process.env.DB_HOST     || 'localhost',
       port:     parseInt(process.env.DB_PORT, 10) || 5432,
-      database: process.env.DB_NAME     || 'mitra_dashboard',
+      database: process.env.DB_NAME     || 'mitra',
       user:     process.env.DB_USER     || 'mitra_admin',
       password: process.env.DB_PASSWORD || '',
     };

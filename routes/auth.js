@@ -17,6 +17,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const path = require('path');
+const fs   = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
@@ -332,7 +333,7 @@ router.post('/request-reset', async (req, res) => {
         [uuidv4(), user.id, hash]
       );
 
-      const link = `https://watchaugs-mitra.web.app/reset/index.html?token=${token}`;
+      const link = `${process.env.PUBLIC_URL || 'https://watchaugs-mitra.web.app'}/reset/?token=${token}`;
       await sendResetEmail({ to: email, name: user.full_name, link });
       audit({ userId: user.id, action: 'password.reset_requested', resourceType: 'user', resourceId: user.id, ip: req.ip });
     }
@@ -380,11 +381,9 @@ async function sendResetEmail({ to, name, link }) {
       to: to,
       subject: 'MITRA Dashboard - Account Setup & Password Reset',
       text: `Dear ${name || 'Colleague'},\n\nAn account setup or password reset has been requested for your MITRA Dashboard profile.\n\nIf you did not request this, please notify your administrator.\n\nSetup / Reset Link (valid for 48 hours):\n${link}\n\nMITRA Platform · Ministry of Education`,
-    attachments: [{
-        filename: 'logo.png',
-        path: path.join(__dirname, '../logo.png'), // Safely finds the file in any environment
-        cid: 'mitra_logo_secret_id'
-      }],
+    attachments: fs.existsSync(path.join(__dirname, '../logo.png'))
+      ? [{ filename: 'logo.png', path: path.join(__dirname, '../logo.png'), cid: 'mitra_logo_secret_id' }]
+      : [],
 
       // 👇 THE UPDATED HTML WITH CID IMAGE 👇
       html: `

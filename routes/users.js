@@ -235,7 +235,7 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
           [uuidv4(), id, resetHash]
         );
 
-        const link = `${process.env.PUBLIC_URL || 'https://dashboard.mitra.gov.in'}/reset/index.html?token=${resetToken}`;
+        const link = `${process.env.PUBLIC_URL || 'https://watchaugs-mitra.web.app'}/reset/?token=${resetToken}`;
         await sendResetEmail({ to: email.toLowerCase().trim(), name: full_name, link })
           .catch(e => log.error({ err: e.message }, 'sendResetEmail failed'));
     }
@@ -507,7 +507,7 @@ router.post('/:id/reset-password', requirePerm('perm_create_users'), async (req,
       [uuidv4(), req.params.id, resetHash]
     );
 
-    const link = `${process.env.PUBLIC_URL || 'https://dashboard.mitra.gov.in'}/reset/index.html?token=${resetToken}`;
+    const link = `${process.env.PUBLIC_URL || 'https://watchaugs-mitra.web.app'}/reset/?token=${resetToken}`;
     
     // ADDED AWAIT HERE to prevent the serverless freeze
     await sendResetEmail({ to: userRes.rows[0].email, name: userRes.rows[0].full_name, link })
