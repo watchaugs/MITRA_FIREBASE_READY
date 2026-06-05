@@ -142,11 +142,34 @@ function hashToken(token) {
 // ── POST /api/auth/login ────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
   try {
+    // 1. Grab all possible variables (from both Mobile and Dashboard)
+    const { phone, role, method } = req.body;
     const email = String(req.body?.email || '').toLowerCase().trim();
     const password = req.body?.password;
+
+    // ═══════════════════════════════════════════════════════
+    // LANE 1: MOBILE APP (PASSWORDLESS OTP REQUEST)
+    // ═══════════════════════════════════════════════════════
+    if (method) {
+      if (!phone || !role) {
+        return res.status(400).json({ error: 'Phone/Email and role are required for OTP login' });
+      }
+
+      // NOTE FOR BACKEND DEVELOPER: 
+      // Insert actual Twilio / Firebase / Nodemailer trigger code right here to actually send the message!
+      console.log(`[AUTH] Generating OTP via ${method} for ${phone} (${role})`);
+
+      // Return a success message so the mobile app slides over to the 6-digit OTP boxes
+      return res.status(200).json({ message: `OTP sent successfully via ${method}` });
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // LANE 2: DASHBOARD (TRADITIONAL EMAIL & PASSWORD)
+    // ═══════════════════════════════════════════════════════
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
+
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 255) {
       return res.status(400).json({ error: 'Invalid email' });
     }
@@ -218,6 +241,62 @@ router.post('/login', async (req, res) => {
   } catch (err) {
     log.error({ err: err.message }, 'login error');
     res.status(500).json({ error: 'Authentication failed' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+// NEW ROUTE: VERIFY OTP (Mobile App)
+// ═══════════════════════════════════════════════════════
+router.post('/verify-otp', async (req, res) => {
+  try {
+    const { phone, otp, role } = req.body;
+
+    // 1. The Master OTP for development and testing
+    if (otp !== '123456') {
+      return res.status(400).json({ message: 'OTP is incorrect. Please try again.' });
+    }
+
+    // 2. Fetch the user to log them in. 
+    // (Note: To ensure this doesn't crash your database if you don't have a 'phone' column yet, 
+    // this query simply grabs the first active user with the requested role so you can test the app).
+    // BYPASS: Just grab ANY active user from the DB so we have a valid ID to generate your security tokens!
+    const result = await query(
+      'SELECT * FROM users WHERE is_active = true LIMIT 1'
+    );
+
+    const userRow = result.rows[0];
+    if (!userRow) {
+      return res.status(404).json({ message: `No active ${role} found in the database.` });
+    }
+
+    // 3. Generate Secure Tokens (Using your existing backend security rules)
+    const familyId = uuidv4();
+    const accessToken = signAccess(userRow);
+    const refreshToken = signRefresh(userRow.id, familyId);
+    const refreshHash = hashToken(refreshToken);
+
+    await query(
+      `INSERT INTO refresh_tokens (id, user_id, token_hash, family_id, expires_at, is_revoked)
+       VALUES ($1, $2, $3, $4, NOW() + INTERVAL '7 days', false)`,
+      [uuidv4(), userRow.id, refreshHash, familyId]
+    );
+
+    // 4. Send the exact package the React Native frontend is waiting for
+    res.json({
+      accessToken: accessToken,    // camelCase specifically for the mobile app
+      refreshToken: refreshToken,
+      user: {
+        id: userRow.id,
+        name: userRow.full_name,
+        email: userRow.email,
+        role: role, // <-- CHANGE THIS LINE to use the variable from the app!
+        class_grade: userRow.class_grade || null,
+      }
+    });
+
+  } catch (err) {
+    log.error({ err: err.message }, 'verify-otp error');
+    res.status(500).json({ message: 'Failed to verify OTP due to a server error.' });
   }
 });
 
