@@ -19,7 +19,7 @@ const crypto = require('crypto');
 const path = require('path');
 const fs   = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const { query } = require('../db');
+const { getFirestore } = require('../lib/firebase');
 const { authenticate } = require('../middleware/auth');
 const { audit } = require('../lib/auditLogger');
 const log = require('../lib/logger');
@@ -55,18 +55,14 @@ function passwordPolicyError(password, { email } = {}) {
 const LOCKOUT_THRESHOLD = parseInt(process.env.LOCKOUT_THRESHOLD, 10) || 10;
 const LOCKOUT_MINUTES = parseInt(process.env.LOCKOUT_MINUTES, 10) || 30;
 
-async function recordFailedLogin(email, ip) {
+// Lockout tracking via Firestore instead of Postgres
+async function recordFailedLogin(email) {
   try {
-    // 1. Look up the user's ID using their email
-    const userRes = await query('SELECT id FROM users WHERE email = $1', [email]);
-    const userId = userRes.rows[0]?.id || null;
-    
-    // 2. Insert using the correct database column names (user_id, ip_address)
-    await query(
-      `INSERT INTO failed_logins (user_id, ip_address, created_at)
-       VALUES ($1, $2, NOW())`,
-      [userId, ip]
-    );
+    const db = getFirestore();
+    await db.collection('login_attempts').add({
+      email,
+      created_at: new Date(),
+    });
   } catch (err) {
     log.warn({ err: err.message }, 'failed_logins insert failed');
   }
@@ -74,18 +70,13 @@ async function recordFailedLogin(email, ip) {
 
 async function isLockedOut(email) {
   try {
-    // 1. Look up the user's ID using their email
-    const userRes = await query('SELECT id FROM users WHERE email = $1', [email]);
-    if (!userRes.rows.length) return false;
-    const userId = userRes.rows[0].id;
-
-    // 2. Query using user_id instead of the non-existent email column
-    const result = await query(
-      `SELECT COUNT(*) AS c FROM failed_logins
-       WHERE user_id = $1 AND created_at > NOW() - INTERVAL '${LOCKOUT_MINUTES} minutes'`,
-      [userId]
-    );
-    return parseInt(result.rows[0].c, 10) >= LOCKOUT_THRESHOLD;
+    const db = getFirestore();
+    const cutoff = new Date(Date.now() - LOCKOUT_MINUTES * 60 * 1000);
+    const snap = await db.collection('login_attempts')
+      .where('email', '==', email)
+      .where('created_at', '>=', cutoff)
+      .get();
+    return snap.size >= LOCKOUT_THRESHOLD;
   } catch (_) {
     return false;
   }
@@ -93,12 +84,13 @@ async function isLockedOut(email) {
 
 async function clearFailedLogins(email) {
   try {
-    // 1. Look up the user's ID using their email
-    const userRes = await query('SELECT id FROM users WHERE email = $1', [email]);
-    if (userRes.rows.length) {
-      // 2. Delete using user_id
-      await query('DELETE FROM failed_logins WHERE user_id = $1', [userRes.rows[0].id]);
-    }
+    const db = getFirestore();
+    const snap = await db.collection('login_attempts')
+      .where('email', '==', email)
+      .get();
+    const batch = db.batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
   } catch (_) {/* ignore */}
 }
 
@@ -175,46 +167,38 @@ router.post('/login', async (req, res) => {
     }
 
     if (await isLockedOut(email)) {
-      audit({ userId: null, action: 'login.locked_out', resourceType: 'auth', ip: req.ip, details: { email } });
       return res.status(429).json({ error: 'Account temporarily locked. Try again later.' });
     }
 
-    const result = await query(
-      'SELECT * FROM users WHERE email = $1 AND is_active = true',
-      [email]
-    );
+    // Look up user in Firestore dashboard_users collection
+    const db = getFirestore();
+    const snapshot = await db.collection('dashboard_users')
+      .where('email', '==', email)
+      .limit(1)
+      .get();
 
-    // Constant-ish-time response: always run bcrypt even if user not found
     const fakeHash = '$2a$12$0000000000000000000000000000000000000000000000000000.';
-    const userRow = result.rows[0];
+    const userDoc = snapshot.empty ? null : snapshot.docs[0];
+    const userRow = userDoc ? userDoc.data() : null;
     const hashToCheck = userRow ? userRow.password_hash : fakeHash;
     const match = await bcrypt.compare(password, hashToCheck);
 
-    if (!userRow || !match) {
-      await recordFailedLogin(email, req.ip);
-      audit({ userId: userRow?.id || null, action: 'login.failure', resourceType: 'auth', ip: req.ip, details: { email } });
+    if (!userRow || !match || !userRow.is_active) {
+      await recordFailedLogin(email);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     await clearFailedLogins(email);
-    await query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [userRow.id]);
 
-    // Generate tokens with a family id (for refresh-token rotation tracking)
+    const userId = userDoc.id;
     const familyId = uuidv4();
-    const accessToken = signAccess(userRow);
-    const refreshToken = signRefresh(userRow.id, familyId);
-    const refreshHash = hashToken(refreshToken);
+    const accessToken = signAccess({ ...userRow, id: userId });
+    const refreshToken = signRefresh(userId, familyId);
 
-    await query(
-      `INSERT INTO refresh_tokens (id, user_id, token_hash, family_id, expires_at, is_revoked)
-       VALUES ($1, $2, $3, $4, NOW() + INTERVAL '7 days', false)`,
-      [uuidv4(), userRow.id, refreshHash, familyId]
-    );
-
-    audit({ userId: userRow.id, action: 'login.success', resourceType: 'auth', ip: req.ip });
+    log.info({ userId, email, role: userRow.role }, 'Login successful');
 
     res.json({
-      token: accessToken,          // legacy field name; the dashboard reads this
+      token: accessToken,
       access_token: accessToken,
       refresh_token: refreshToken,
       expires_in: 28800,

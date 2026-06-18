@@ -36,12 +36,13 @@ const path = require('path');
 async function boot() {
   await secrets.init();
 
-  const db = require('./db');
-  await db.testConnection();
+  const firebase = require('./lib/firebase');
+  await firebase.init();
 
-  // Wire up the lazy-init dependencies
-  require('./middleware/auth').setDbQuery(db.query);
-  require('./lib/auditLogger').setDbQuery(db.query);
+  // Database connection removed — this repo now uses Firebase/Firestore
+  // as the primary data store. Postgres connection is not required.
+  // require('./middleware/auth').setDbQuery(db.query);
+  // require('./lib/auditLogger').setDbQuery(db.query);
 
   // Route modules
   const authRoutes          = require('./routes/auth');
