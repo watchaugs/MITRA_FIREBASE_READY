@@ -4090,22 +4090,23 @@ document.addEventListener('DOMContentLoaded', () => {
     <div style="text-align:center;min-width:80px">
       <div id="compliance-score" style="font-family:'Syne',sans-serif;font-size:42px;font-weight:800;color:var(--accent3)">68%</div>
       <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Compliance Score</div>
+      <div id="compliance-score-detail" style="font-size:10px;color:var(--text2);margin-top:2px"></div>
     </div>
     <div style="flex:1;min-width:200px">
       <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-        <span class="tag" style="background:rgba(239,68,68,.15);color:#fca5a5">4 Critical</span>
-        <span class="tag" style="background:rgba(245,158,11,.15);color:#fcd34d">6 High</span>
-        <span class="tag" style="background:rgba(99,102,241,.15);color:#a5b4fc">8 Medium</span>
-        <span class="tag tag-g">6 Resolved</span>
+        <span class="tag" id="compliance-tag-critical" style="background:rgba(239,68,68,.15);color:#fca5a5">4 Critical</span>
+        <span class="tag" id="compliance-tag-high" style="background:rgba(245,158,11,.15);color:#fcd34d">6 High</span>
+        <span class="tag" id="compliance-tag-medium" style="background:rgba(99,102,241,.15);color:#a5b4fc">8 Medium</span>
+        <span class="tag tag-g" id="compliance-tag-resolved">6 Resolved</span>
       </div>
       <div style="background:var(--bg3);border-radius:6px;height:10px;overflow:hidden">
-        <div style="width:68%;height:100%;background:linear-gradient(90deg,var(--accent3),var(--accent));border-radius:6px"></div>
+        <div id="compliance-score-bar" style="width:68%;height:100%;background:linear-gradient(90deg,var(--accent3),var(--accent));border-radius:6px"></div>
       </div>
       <div style="font-size:11px;color:var(--text2);margin-top:6px">Based on DPDPA 2023 · IT Act 2000 · CERT-In 2022 · SPDI Rules 2011</div>
     </div>
     <div style="display:flex;flex-direction:column;gap:4px;font-size:11px">
-      <div style="color:var(--text2)">Last audited: <span style="color:var(--text)">April 2026</span></div>
-      <div style="color:var(--text2)">Next review: <span style="color:var(--yellow)">July 2026</span></div>
+      <div style="color:var(--text2)">Last audited: <span id="compliance-last-audited" style="color:var(--text)">April 2026</span></div>
+      <div style="color:var(--text2)">Next review: <span id="compliance-next-review" style="color:var(--yellow)">July 2026</span></div>
       <button class="btn btn-s btn-sm" onclick="refreshComplianceStatus()">↺ Refresh</button>
     </div>
   </div>
@@ -10192,6 +10193,60 @@ function renderComplianceChecklist() {
     </div>`).join('');
 }
 
+async function loadComplianceScore() {
+  const data = await safeFetch('/api/compliance/score');
+  if (!data) return; // safeFetch already shows an error toast on failure
+
+  const scoreEl = document.getElementById('compliance-score');
+  if (scoreEl) scoreEl.textContent = `${data.score}%`;
+
+  const detailEl = document.getElementById('compliance-score-detail');
+  if (detailEl) {
+    detailEl.textContent = `${data.passed}/${data.total} checks passed`;
+    if (data.is_fallback) detailEl.textContent += ' · estimated, live check unavailable';
+  }
+
+  const barEl = document.getElementById('compliance-score-bar');
+  if (barEl) barEl.style.width = `${data.score}%`;
+
+  // Count open (failed) checks by severity, and how many are resolved (passed)
+  const checks = data.checks || [];
+  const openBySeverity = { critical: 0, high: 0, medium: 0 };
+  let resolved = 0;
+  checks.forEach(c => {
+    if (c.pass) resolved++;
+    else if (openBySeverity[c.severity] !== undefined) openBySeverity[c.severity]++;
+  });
+
+  const setTag = (id, count, label) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = `${count} ${label}`;
+  };
+  setTag('compliance-tag-critical', openBySeverity.critical, 'Critical');
+  setTag('compliance-tag-high',     openBySeverity.high,     'High');
+  setTag('compliance-tag-medium',   openBySeverity.medium,   'Medium');
+  setTag('compliance-tag-resolved', resolved,                'Resolved');
+
+  // Last audited / next review (next review = 90 days after the audit date)
+  if (data.audited_at) {
+    const auditedDate = new Date(data.audited_at);
+    const lastEl = document.getElementById('compliance-last-audited');
+    if (lastEl) lastEl.textContent = auditedDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+    const nextEl = document.getElementById('compliance-next-review');
+    if (nextEl) {
+      const nextDate = new Date(auditedDate);
+      nextDate.setDate(nextDate.getDate() + 90);
+      nextEl.textContent = nextDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    }
+  }
+}
+
+function refreshComplianceStatus() {
+  showToast('🔄 Refreshing compliance status…');
+  loadComplianceScore();
+}
+
 // Certificate of Compliance
 function generateComplianceReport() {
   const compliant = COMPLIANCE_ITEMS.filter(i=>i.status==='ok').length;
@@ -11239,6 +11294,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (pageId === 'compliance') {
       setTimeout(function() {
         if (typeof initCompliancePage === 'function') initCompliancePage();
+        loadComplianceScore();
       }, 100);
     }
 

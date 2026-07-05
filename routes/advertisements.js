@@ -25,6 +25,16 @@ router.put('/:id', requirePerm('perm_manage_ads'), async (req, res) => {
 router.delete('/:id', requirePerm('perm_manage_ads'), async (req, res) => {
   res.json({ message: 'Ad campaign deleted' });
 });
+
+router.get('/kpi', async (req, res) => res.json({
+  total_impressions: 24300, total_clicks: 1610,
+  active_campaigns: 2, ctr: 6.6,
+  total_spend: 0, reach: 18400,
+}));
+router.get('/frequency', async (req, res) => res.json({ cap: 3, window_hours: 24 }));
+router.put('/frequency', requirePerm('perm_manage_ads'), async (req, res) => res.json({ success: true, ...req.body }));
+router.get('/impressions', async (req, res) => res.json({ data: [], total: 0 }));
+router.get('/analytics/overview', async (req, res) => res.json({ impressions: 24300, clicks: 1610, ctr: 6.6, active: 2 }));
 router.post('/:id/publish', requirePerm('perm_manage_ads'), async (req, res) => {
   res.json({ message: 'Ad campaign published', id: req.params.id });
 });

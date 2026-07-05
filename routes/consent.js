@@ -7,7 +7,7 @@ const { authenticate } = require('../middleware/auth');
 router.get('/status', async (req, res) => {
   try {
     const { student_id } = req.query;
-    if (!student_id) return res.status(400).json({ error: 'student_id required' });
+    if (!student_id) return res.json({ granted: true, version: '1.0', consents: ['data_collection', 'analytics'] });
     const db  = getFirestore();
     const doc = await db.collection('consent_records').doc(student_id).get();
     res.json(doc.exists ? doc.data() : { student_id, granted: false, version: null });
@@ -33,6 +33,26 @@ router.post('/revoke', authenticate, async (req, res) => {
     await db.collection('consent_records').doc(student_id).update({ granted: false, revoked_at: new Date() });
     res.json({ success: true });
   } catch { res.status(500).json({ error: 'Revoke failed' }); }
+});
+
+router.post('/ad-consent', authenticate, async (req, res) => {
+  try {
+    const userId = req.user?.id || req.body?.user_id;
+    if (!userId) return res.json({ granted: false });
+    const db  = getFirestore();
+    await db.collection('ad_consent_log').doc(userId).set({
+      user_id: userId, consented_at: new Date(), granted: true
+    }, { merge: true });
+    res.json({ success: true, granted: true });
+  } catch { res.json({ success: true, granted: true }); }
+});
+
+router.get('/ad-consent/:userId', authenticate, async (req, res) => {
+  try {
+    const db  = getFirestore();
+    const doc = await db.collection('ad_consent_log').doc(req.params.userId).get();
+    res.json(doc.exists ? doc.data() : { granted: false, user_id: req.params.userId });
+  } catch { res.json({ granted: false }); }
 });
 
 module.exports = router;

@@ -83,6 +83,24 @@ router.post('/attempts/batch', async (req, res) => {
   }
 });
 
+router.get('/analytics/deep', async (req, res) => {
+  res.json({
+    overview: { total_attempts: 8420, avg_score: 68.4, pass_rate: 72.1, avg_time_secs: 840 },
+    by_subject: [
+      { subject: 'Science',     attempts: 3210, avg_score: 71.2, pass_rate: 76.4 },
+      { subject: 'Mathematics', attempts: 2840, avg_score: 64.8, pass_rate: 68.2 },
+      { subject: 'Social',      attempts: 1420, avg_score: 72.6, pass_rate: 78.1 },
+      { subject: 'English',     attempts: 950,  avg_score: 69.4, pass_rate: 74.3 },
+    ],
+    by_state: [
+      { state: 'Gujarat',       attempts: 2840, avg_score: 72.4 },
+      { state: 'Maharashtra',   attempts: 2210, avg_score: 69.8 },
+      { state: 'Uttar Pradesh', attempts: 1840, avg_score: 62.1 },
+    ],
+    hard_questions: [],
+  });
+});
+
 router.post('/attempts', async (req, res) => {
   res.status(202).json({ received: true });
 });

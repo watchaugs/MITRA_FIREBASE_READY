@@ -9,6 +9,18 @@ const mockBuilds = [
   { id: 'build-2', state: 'Maharashtra', language: 'Marathi', version: 'v2.1.4', status: 'live', created_at: new Date().toISOString() },
 ];
 
+router.get('/state-config', async (req, res) => {
+  const { State } = require('country-state-city');
+  const states = State.getStatesOfCountry('IN');
+  res.json({
+    apps: mockBuilds,
+    states: states.map(s => ({ code: s.isoCode, name: s.name })),
+    default_config: { theme_color: '#6366f1', version: 'v1.0.0', status: 'building' }
+  });
+});
+router.get('/settings', async (req, res) => res.json({ apps: mockBuilds, total: mockBuilds.length }));
+router.put('/settings', requirePerm('perm_publish_apps'), async (req, res) => res.json({ success: true, ...req.body }));
+
 router.get('/builds', async (req, res) => res.json({ data: mockBuilds, total: mockBuilds.length }));
 router.post('/builds', requirePerm('perm_publish_apps'), async (req, res) => {
   res.status(201).json({ id: uuidv4(), ...req.body, status: 'building', created_at: new Date().toISOString() });
