@@ -8,6 +8,8 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
+const { sendWelcomeEmail } = require('../lib/mailer');
+const log = require('../lib/logger');
 router.use(authenticate);
 
 router.get('/', requirePerm('perm_create_users'), async (req, res) => {
@@ -27,15 +29,16 @@ router.get('/', requirePerm('perm_create_users'), async (req, res) => {
 router.post('/', requirePerm('perm_create_users'), async (req, res) => {
   try {
     const {
-      full_name, email, role = 'viewer', password,
+      full_name, email, role = 'viewer',
       assigned_state = 'All India', assigned_district,
       permissions = {}
     } = req.body || {};
     if (!full_name) return res.status(400).json({ error: 'full_name required' });
     if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'valid email required' });
-    const password_hash = password
-      ? await bcrypt.hash(password, 12)
-      : await bcrypt.hash(require('uuid').v4(), 12); // random hash if no password (reset-link flow)
+
+    // Always use a random placeholder hash — user sets their real password via the emailed link
+    const password_hash = await bcrypt.hash(uuidv4(), 12);
+
     const db = getFirestore();
     const id = uuidv4();
     const userData = {
@@ -54,9 +57,25 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
       perm_replay_analytics: false,
     };
     await db.collection('dashboard_users').doc(id).set(userData);
+
+    // Generate setup token and fire welcome email — non-blocking
+    const crypto = require('crypto');
+    const setupToken   = crypto.randomBytes(32).toString('hex');
+    const setupExpires = Date.now() + 1000 * 60 * 60 * 24; // 24 hours
+    const setupUrl     = `${process.env.APP_BASE_URL}/reset?token=${setupToken}`;
+    await db.collection('password_reset_tokens').doc(setupToken).set({
+      userId: id, email, expiresAt: setupExpires, used: false,
+    });
+    sendWelcomeEmail({ to: email, full_name, role, setupUrl })
+      .then(() => log.info({ userId: id, email }, 'Welcome/setup email sent'))
+      .catch(err => log.error({ err: err.message, userId: id }, 'Welcome email failed — account still created'));
+
     const { password_hash: _, ...safeUser } = userData;
-    res.status(201).json({ id, ...safeUser });
-  } catch { res.status(500).json({ error: 'Failed to create user' }); }
+    res.status(201).json({ id, ...safeUser, _emailQueued: true });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to create user');
+    res.status(500).json({ error: 'Failed to create user' });
+  }
 });
 
 router.get('/:id', requirePerm('perm_create_users'), async (req, res) => {
@@ -92,11 +111,38 @@ router.delete('/:id', requirePerm('perm_create_users'), async (req, res) => {
 });
 
 router.post('/bulk-update', requirePerm('perm_create_users'), async (req, res) => {
-  res.json({ message: 'Bulk update queued', count: (req.body.ids || []).length });
+  try {
+    const { ids = [], updates = {} } = req.body || {};
+    if (!ids.length) return res.status(400).json({ error: 'No user ids provided' });
+    const allowed = ['role', 'is_active', 'assigned_state', 'assigned_district'];
+    const safeUpdates = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)));
+    if (!Object.keys(safeUpdates).length) return res.status(400).json({ error: 'No valid fields to update' });
+    const db = getFirestore();
+    const batch = db.batch();
+    ids.forEach(id => batch.update(db.collection('dashboard_users').doc(id), safeUpdates));
+    await batch.commit();
+    res.json({ success: true, message: 'Users updated', count: ids.length });
+  } catch (err) {
+    log.error({ err: err.message }, 'bulk-update error');
+    res.status(500).json({ error: 'Bulk update failed' });
+  }
 });
 
 router.post('/bulk-delete', requirePerm('perm_create_users'), async (req, res) => {
-  res.json({ message: 'Bulk delete queued', count: (req.body.ids || []).length });
+  try {
+    const ids = req.body.ids || [];
+    if (!ids.length) return res.status(400).json({ error: 'No user ids provided' });
+    const db = getFirestore();
+    const batch = db.batch();
+    ids.forEach(id => {
+      batch.update(db.collection('dashboard_users').doc(id), { is_active: false });
+    });
+    await batch.commit();
+    res.json({ success: true, message: 'Users deactivated', count: ids.length });
+  } catch (err) {
+    log.error({ err: err.message }, 'bulk-delete error');
+    res.status(500).json({ error: 'Bulk delete failed' });
+  }
 });
 
 module.exports = router;

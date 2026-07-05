@@ -9837,11 +9837,12 @@ async function bulkDelete() {
   const ids = [...umSelected];
   if (!ids.length) return;
   if (!confirm(`Permanently delete ${ids.length} user(s)? This cannot be undone.`)) return;
-  const data = await safeFetch('/api/users/bulk-delete', { method:'DELETE', body:JSON.stringify({ ids }) }, true);
-  if (data?.success || !data) {
-    umSeedUsers = getSeedUsers().filter(u=>!ids.includes(u.id));
-    showToast(`🗑️ ${ids.length} users deleted`);
+  const data = await safeFetch('/api/users/bulk-delete', { method:'POST', body:JSON.stringify({ ids }) }, true);
+  if (data?.success) {
+    showToast(`🗑️ ${data.count} users deactivated`);
     clearUmSelection(); loadUserList();
+  } else {
+    showToast('⚠️ Bulk delete failed');
   }
 }
 

@@ -17,6 +17,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate } = require('../middleware/auth');
 const log = require('../lib/logger');
+const { sendResetEmail } = require('../lib/mailer');
 
 const LOCKOUT_THRESHOLD = parseInt(process.env.LOCKOUT_THRESHOLD, 10) || 10;
 const LOCKOUT_MINUTES   = parseInt(process.env.LOCKOUT_MINUTES, 10)   || 30;
@@ -266,13 +267,56 @@ router.get('/me', authenticate, async (req, res) => {
 
 // ── POST /api/auth/request-reset ─────────────────────────────────────────────
 router.post('/request-reset', async (req, res) => {
-  // Always return 200 to avoid email enumeration
+  // Always return 200 to avoid email enumeration — never reveal if email exists
+  try {
+    const email = String(req.body?.email || '').toLowerCase().trim();
+    if (email) {
+      const db   = getFirestore();
+      const snap = await db.collection('dashboard_users').where('email', '==', email).limit(1).get();
+      if (!snap.empty) {
+        const userDoc    = snap.docs[0];
+        const token      = crypto.randomBytes(32).toString('hex');
+        const expiresAt  = Date.now() + 1000 * 60 * 60; // 1 hour
+        const resetUrl   = `${process.env.APP_BASE_URL}/reset?token=${token}`;
+        await db.collection('password_reset_tokens').doc(token).set({
+          userId: userDoc.id, email, expiresAt, used: false,
+        });
+        sendResetEmail({ to: email, resetUrl })
+          .catch(err => log.error({ err: err.message, email }, 'reset email send failed'));
+      }
+    }
+  } catch (err) {
+    log.error({ err: err.message }, 'request-reset error');
+  }
   res.json({ message: 'If that account exists, a reset link has been sent.' });
 });
 
 // ── POST /api/auth/reset-password ────────────────────────────────────────────
 router.post('/reset-password', async (req, res) => {
-  res.status(501).json({ error: 'Password reset via email not yet configured.' });
+  try {
+    const { token, newPassword } = req.body || {};
+    if (!token || !newPassword) return res.status(400).json({ error: 'Token and password are required.' });
+    if (newPassword.length < 12) return res.status(400).json({ error: 'Password must be at least 12 characters.' });
+
+    const db       = getFirestore();
+    const tokenDoc = await db.collection('password_reset_tokens').doc(token).get();
+
+    if (!tokenDoc.exists)             return res.status(400).json({ error: 'Invalid or expired reset link.' });
+    const data = tokenDoc.data();
+    if (data.used)                    return res.status(400).json({ error: 'This reset link has already been used.' });
+    if (Date.now() > data.expiresAt)  return res.status(400).json({ error: 'Reset link has expired. Please request a new one.' });
+
+    const bcrypt      = require('bcryptjs');
+    const password_hash = await bcrypt.hash(newPassword, 12);
+
+    await db.collection('dashboard_users').doc(data.userId).update({ password_hash });
+    await tokenDoc.ref.update({ used: true });
+
+    res.json({ message: 'Password updated successfully. You can now log in.' });
+  } catch (err) {
+    log.error({ err: err.message }, 'reset-password error');
+    res.status(500).json({ error: 'Password reset failed. Please try again.' });
+  }
 });
 
 module.exports = router;
