@@ -2825,88 +2825,55 @@ document.addEventListener('DOMContentLoaded', () => {
 <div class="page" id="page-controls">
   <div class="hero" style="background:linear-gradient(135deg,rgba(245,158,11,.10),rgba(239,68,68,.06),rgba(99,102,241,.07));border-color:rgba(245,158,11,.25);margin-bottom:20px">
     <div class="hero-title">🎛️ <span class="grad" style="background:linear-gradient(135deg,#f59e0b,#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">Other Settings</span> — Platform Controls</div>
-    <div style="font-size:13px;color:var(--text2);max-width:600px;line-height:1.6">Remote configuration, feature-flag management and background service controls for the MITRA platform.</div>
+    <div style="font-size:13px;color:var(--text2);max-width:600px;line-height:1.6">State-level remote configuration for the MITRA platform.</div>
   </div>
 
-  <!-- ── 1. FEATURE FLAGS ── -->
+  <!-- ── STATE CONFIG (real — backed by /api/app-builder/state-config) ── -->
   <div class="g2">
     <div class="card">
-      <div class="card-title">Feature Flags</div>
-      <div class="card-sub">Enable or disable API capabilities globally</div>
-      <div class="form-row" style="margin-bottom:16px;padding:12px;background:rgba(99,102,241,.05);border:1px solid rgba(99,102,241,.2);border-radius:10px">
-        <label class="lbl">🎯 Target Deployment (State-Level Config)</label>
+      <div class="card-title">🎯 State Deployment Config</div>
+      <div class="card-sub">Select a state app and edit its remote JSON configuration</div>
+      <div class="form-row" style="margin-bottom:16px">
+        <label class="lbl">Target State App</label>
         <select class="sel" id="config-target-app" style="margin-top:6px" onchange="loadStateConfig(this.value)">
           <option value="">— Select Target State App —</option>
           <option value="all">🌐 All States (Global)</option>
         </select>
-        <div style="font-size:11px;color:var(--text2);margin-top:6px">Feature flags below apply to the selected state app only</div>
       </div>
-      <div class="form-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
-        <div><div style="font-size:13px;font-weight:500">Offline Content Sync</div><div style="font-size:11px;color:var(--text2)">Allow devices to cache AR models</div></div>
-        <label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label>
-      </div>
-      <div class="form-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
-        <div><div style="font-size:13px;font-weight:500">Beta Analytics</div><div style="font-size:11px;color:var(--text2)">Opt-in for experimental telemetry tracking</div></div>
-        <label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label>
-      </div>
-      <div class="form-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
-        <div><div style="font-size:13px;font-weight:500">Auto-Update Check</div><div style="font-size:11px;color:var(--text2)">Ping the application API on startup for updates</div></div>
-        <label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label>
-      </div>
-    </div>
-
-    <!-- ── 2. ENVIRONMENT VARIABLES ── -->
-    <div class="card">
-      <div class="card-title">Environment Variables</div>
-      <div class="card-sub">Global constants for API mappings</div>
-      <div class="form-row"><label class="lbl">Production API Base URL</label><input class="inp" id="cfg-api-url" value="https://api.mitra.gov.in/v1"></div>
-      <div class="form-row"><label class="lbl">Asset CDN Endpoint</label><input class="inp" id="cfg-cdn-url" value="https://cdn.mitra.gov.in/assets"></div>
       <div class="form-row">
-        <label class="lbl">Live JSON Config Payload</label>
-        <textarea readonly class="inp" id="cfg-json-preview" rows="6" style="font-family:'Fira Code',monospace;font-size:11px;background:#020408;color:#a0f090;resize:vertical;margin-top:4px">{}</textarea>
+        <label class="lbl">Live JSON Config</label>
+        <textarea class="inp" id="cfg-json-preview" rows="10" style="font-family:'Fira Code',monospace;font-size:11px;background:#020408;color:#a0f090;resize:vertical;margin-top:4px">{}</textarea>
       </div>
-      <button class="btn btn-p" style="width:100%;justify-content:center;" onclick="saveStateConfig()">💾 Save Configuration</button>
+      <button class="btn btn-p" style="width:100%;justify-content:center;margin-top:12px" onclick="saveStateConfig()">💾 Save Configuration</button>
     </div>
-  </div>
 
-  <!-- ── 3. BACKGROUND SERVICES ── -->
-  <div class="sh" style="margin-top:24px">
-    <div>
-      <div class="sh-title">⚡ Background Services</div>
-      <div class="sh-sub">Control automated data pipeline jobs — enable, schedule, or manually trigger server-side background processing.</div>
-    </div>
-  </div>
-  <div class="card" style="margin-bottom:24px">
-    <div class="card-title" style="font-size:13px">Telemetry → BigQuery Sync</div>
-    <div style="font-size:11px;color:var(--text2);margin-bottom:12px">Processes student telemetry from Firestore into BigQuery for analytics. Runs as a bounded Cloud Run Job — keep off until ready to incur real costs.</div>
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:var(--bg3);border-radius:8px;border:1px solid var(--border);margin-bottom:10px">
-      <div>
-        <div style="font-size:12px;font-weight:500">Enabled</div>
-        <div style="font-size:11px;color:var(--text2)" id="tp-status-line">Loading…</div>
+    <!-- ── PLATFORM INFO (read-only, no fake controls) ── -->
+    <div class="card">
+      <div class="card-title">ℹ️ Platform Info</div>
+      <div class="card-sub">Current runtime environment</div>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:4px">
+        <div style="display:flex;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
+          <div style="font-size:13px;color:var(--text2)">Backend</div>
+          <div style="font-size:13px;font-weight:500">Cloud Run (Node 20)</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
+          <div style="font-size:13px;color:var(--text2)">Database</div>
+          <div style="font-size:13px;font-weight:500">Firestore</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
+          <div style="font-size:13px;color:var(--text2)">Storage</div>
+          <div style="font-size:13px;font-weight:500">Cloud Storage</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
+          <div style="font-size:13px;color:var(--text2)">Push</div>
+          <div style="font-size:13px;font-weight:500">Firebase Cloud Messaging</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
+          <div style="font-size:13px;color:var(--text2)">Analytics Pipeline</div>
+          <div style="font-size:13px;font-weight:500" id="tp-status-line">BigQuery (not yet enabled)</div>
+        </div>
       </div>
-      <label class="toggle-wrap"><input type="checkbox" id="tp-enabled-toggle" onchange="saveTelemetryProcessorConfig()"><span class="toggle-slider"></span></label>
     </div>
-    <div class="form-row" style="margin-bottom:12px">
-      <label class="lbl">Run frequency</label>
-      <select class="inp" id="tp-frequency-select" onchange="saveTelemetryProcessorConfig()">
-        <option value="1440">Once a day</option>
-        <option value="720">Every 12 hours</option>
-        <option value="360">Every 6 hours</option>
-        <option value="180">Every 3 hours</option>
-        <option value="4320">Every 3 days</option>
-        <option value="10080" selected>Once a week</option>
-      </select>
-    </div>
-    <button class="btn btn-s btn-sm" onclick="runTelemetryProcessorNow()">▶️ Run now (next check-in, ~15 min)</button>
-  </div>
-
-  <!-- ── 4. DATA MANAGEMENT ── -->
-  <div class="sh" style="margin-top:24px">
-    <div>
-      <div class="sh-title">Data Management</div>
-      <div class="sh-sub">Manage API pipelines, dataset ingestion, and synchronized storage for Student Apps.</div>
-    </div>
-    <button class="btn btn-p btn-sm" onclick="showToast('Database sync triggered')">Sync Database</button>
   </div>
 
 </div>
@@ -9248,17 +9215,12 @@ async function loadStateConfig(state) {
 
 async function saveStateConfig() {
   const state   = document.getElementById('config-target-app')?.value;
-  const apiUrl  = document.getElementById('cfg-api-url')?.value;
-  const cdnUrl  = document.getElementById('cfg-cdn-url')?.value;
   const rawJson = document.getElementById('cfg-json-preview')?.value;
   let parsed = {};
-  try { parsed = JSON.parse(rawJson || '{}'); } catch (_) {}
-
-  // Merge in UI values
-  parsed.api_base_url = apiUrl;
-  parsed.cdn_base_url = cdnUrl;
+  try { parsed = JSON.parse(rawJson || '{}'); } catch (_) {
+    showToast('⚠️ Invalid JSON — fix before saving'); return;
+  }
   if (state) parsed.target_state = state;
-
   const data = await safeFetch('/api/app-builder/state-config', {
     method: 'POST',
     body: JSON.stringify({ state: state || 'global', config: parsed })
@@ -9836,13 +9798,13 @@ async function bulkToggleStatus(active) {
 async function bulkDelete() {
   const ids = [...umSelected];
   if (!ids.length) return;
-  if (!confirm(`Permanently delete ${ids.length} user(s)? This cannot be undone.`)) return;
+  if (!confirm(`Deactivate ${ids.length} user(s)? They will lose dashboard access immediately.`)) return;
   const data = await safeFetch('/api/users/bulk-delete', { method:'POST', body:JSON.stringify({ ids }) }, true);
   if (data?.success) {
     showToast(`🗑️ ${data.count} users deactivated`);
     clearUmSelection(); loadUserList();
   } else {
-    showToast('⚠️ Bulk delete failed');
+    showToast('⚠️ Bulk deactivate failed — check console');
   }
 }
 

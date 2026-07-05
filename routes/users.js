@@ -105,9 +105,12 @@ router.put('/:id', requirePerm('perm_create_users'), async (req, res) => {
 router.delete('/:id', requirePerm('perm_create_users'), async (req, res) => {
   try {
     const db = getFirestore();
-    await db.collection('dashboard_users').doc(req.params.id).update({ is_active: false });
-    res.json({ message: 'User deactivated' });
-  } catch { res.status(500).json({ error: 'Failed to deactivate user' }); }
+    const docRef = db.collection('dashboard_users').doc(req.params.id);
+    const doc = await docRef.get();
+    if (!doc.exists) return res.status(404).json({ error: 'User not found' });
+    await docRef.delete();
+    res.json({ message: 'User deleted' });
+  } catch { res.status(500).json({ error: 'Failed to delete user' }); }
 });
 
 router.post('/bulk-update', requirePerm('perm_create_users'), async (req, res) => {
@@ -135,10 +138,10 @@ router.post('/bulk-delete', requirePerm('perm_create_users'), async (req, res) =
     const db = getFirestore();
     const batch = db.batch();
     ids.forEach(id => {
-      batch.update(db.collection('dashboard_users').doc(id), { is_active: false });
+      batch.delete(db.collection('dashboard_users').doc(id));
     });
     await batch.commit();
-    res.json({ success: true, message: 'Users deactivated', count: ids.length });
+    res.json({ success: true, message: 'Users deleted', count: ids.length });
   } catch (err) {
     log.error({ err: err.message }, 'bulk-delete error');
     res.status(500).json({ error: 'Bulk delete failed' });
