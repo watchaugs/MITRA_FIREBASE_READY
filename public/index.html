@@ -2822,45 +2822,40 @@ document.addEventListener('DOMContentLoaded', () => {
 </div><!-- end page-app-builder -->
 
 
-
-
-
-
-
 <div class="page" id="page-controls">
   <div class="hero" style="background:linear-gradient(135deg,rgba(245,158,11,.10),rgba(239,68,68,.06),rgba(99,102,241,.07));border-color:rgba(245,158,11,.25);margin-bottom:20px">
     <div class="hero-title">🎛️ <span class="grad" style="background:linear-gradient(135deg,#f59e0b,#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">Other Settings</span> — Platform Controls</div>
-    <div style="font-size:13px;color:var(--text2);max-width:600px;line-height:1.6">Remote configuration, feature-flag management and permission matrix for the MITRA platform.</div>
+    <div style="font-size:13px;color:var(--text2);max-width:600px;line-height:1.6">Remote configuration, feature-flag management and background service controls for the MITRA platform.</div>
   </div>
+
+  <!-- ── 1. FEATURE FLAGS ── -->
   <div class="g2">
     <div class="card">
-       <div class="card-title">Feature Flags</div>
-       <div class="card-sub">Enable or disable API capabilities globally</div>
-       <div class="form-row" style="margin-bottom:16px;padding:12px;background:rgba(99,102,241,.05);border:1px solid rgba(99,102,241,.2);border-radius:10px">
-         <label class="lbl">🎯 Target Deployment (State-Level Config)</label>
-         <select class="sel" id="config-target-app" style="margin-top:6px" onchange="loadStateConfig(this.value)">
-           <option value="">— Select Target State App —</option>
-           <option value="all">🌐 All States (Global)</option>
-         </select>
-         <div style="font-size:11px;color:var(--text2);margin-top:6px">Feature flags below apply to the selected state app only</div>
-       </div>
-       
-       <div class="form-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
-         <div><div style="font-size:13px;font-weight:500">Offline Content Sync</div><div style="font-size:11px;color:var(--text2)">Allow devices to cache AR models</div></div>
-         <label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label>
-       </div>
-       
-       <div class="form-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
-         <div><div style="font-size:13px;font-weight:500">Beta Analytics</div><div style="font-size:11px;color:var(--text2)">Opt-in for experimental telemetry tracking</div></div>
-         <label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label>
-       </div>
-       
-       <div class="form-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
-         <div><div style="font-size:13px;font-weight:500">Auto-Update Check</div><div style="font-size:11px;color:var(--text2)">Ping the application API on startup for updates</div></div>
-         <label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label>
-       </div>
+      <div class="card-title">Feature Flags</div>
+      <div class="card-sub">Enable or disable API capabilities globally</div>
+      <div class="form-row" style="margin-bottom:16px;padding:12px;background:rgba(99,102,241,.05);border:1px solid rgba(99,102,241,.2);border-radius:10px">
+        <label class="lbl">🎯 Target Deployment (State-Level Config)</label>
+        <select class="sel" id="config-target-app" style="margin-top:6px" onchange="loadStateConfig(this.value)">
+          <option value="">— Select Target State App —</option>
+          <option value="all">🌐 All States (Global)</option>
+        </select>
+        <div style="font-size:11px;color:var(--text2);margin-top:6px">Feature flags below apply to the selected state app only</div>
+      </div>
+      <div class="form-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
+        <div><div style="font-size:13px;font-weight:500">Offline Content Sync</div><div style="font-size:11px;color:var(--text2)">Allow devices to cache AR models</div></div>
+        <label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+      </div>
+      <div class="form-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
+        <div><div style="font-size:13px;font-weight:500">Beta Analytics</div><div style="font-size:11px;color:var(--text2)">Opt-in for experimental telemetry tracking</div></div>
+        <label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label>
+      </div>
+      <div class="form-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:9px;border:1px solid var(--border)">
+        <div><div style="font-size:13px;font-weight:500">Auto-Update Check</div><div style="font-size:11px;color:var(--text2)">Ping the application API on startup for updates</div></div>
+        <label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+      </div>
     </div>
-    
+
+    <!-- ── 2. ENVIRONMENT VARIABLES ── -->
     <div class="card">
       <div class="card-title">Environment Variables</div>
       <div class="card-sub">Global constants for API mappings</div>
@@ -2870,197 +2865,48 @@ document.addEventListener('DOMContentLoaded', () => {
         <label class="lbl">Live JSON Config Payload</label>
         <textarea readonly class="inp" id="cfg-json-preview" rows="6" style="font-family:'Fira Code',monospace;font-size:11px;background:#020408;color:#a0f090;resize:vertical;margin-top:4px">{}</textarea>
       </div>
-      <button class="btn btn-p" style="width:100%; justify-content:center;" onclick="saveStateConfig()">💾 Save Configuration</button>
+      <button class="btn btn-p" style="width:100%;justify-content:center;" onclick="saveStateConfig()">💾 Save Configuration</button>
     </div>
   </div>
 
-  <!-- Data Management (moved from Data Management page) -->
+  <!-- ── 3. BACKGROUND SERVICES ── -->
+  <div class="sh" style="margin-top:24px">
+    <div>
+      <div class="sh-title">⚡ Background Services</div>
+      <div class="sh-sub">Control automated data pipeline jobs — enable, schedule, or manually trigger server-side background processing.</div>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:24px">
+    <div class="card-title" style="font-size:13px">Telemetry → BigQuery Sync</div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:12px">Processes student telemetry from Firestore into BigQuery for analytics. Runs as a bounded Cloud Run Job — keep off until ready to incur real costs.</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:var(--bg3);border-radius:8px;border:1px solid var(--border);margin-bottom:10px">
+      <div>
+        <div style="font-size:12px;font-weight:500">Enabled</div>
+        <div style="font-size:11px;color:var(--text2)" id="tp-status-line">Loading…</div>
+      </div>
+      <label class="toggle-wrap"><input type="checkbox" id="tp-enabled-toggle" onchange="saveTelemetryProcessorConfig()"><span class="toggle-slider"></span></label>
+    </div>
+    <div class="form-row" style="margin-bottom:12px">
+      <label class="lbl">Run frequency</label>
+      <select class="inp" id="tp-frequency-select" onchange="saveTelemetryProcessorConfig()">
+        <option value="1440">Once a day</option>
+        <option value="720">Every 12 hours</option>
+        <option value="360">Every 6 hours</option>
+        <option value="180">Every 3 hours</option>
+        <option value="4320">Every 3 days</option>
+        <option value="10080" selected>Once a week</option>
+      </select>
+    </div>
+    <button class="btn btn-s btn-sm" onclick="runTelemetryProcessorNow()">▶️ Run now (next check-in, ~15 min)</button>
+  </div>
+
+  <!-- ── 4. DATA MANAGEMENT ── -->
   <div class="sh" style="margin-top:24px">
     <div>
       <div class="sh-title">Data Management</div>
       <div class="sh-sub">Manage API pipelines, dataset ingestion, and synchronized storage for Student Apps.</div>
     </div>
     <button class="btn btn-p btn-sm" onclick="showToast('Database sync triggered')">Sync Database</button>
-  </div>
-  <div class="g2">
-    <div class="card">
-      <div class="card-title">Associated App Data Sources</div>
-      <div class="card-sub">Link active endpoints (automatically consumed by generated State Apps)</div>
-      <table class="tbl" style="margin-bottom:16px">
-        <thead><tr><th>Endpoint Name</th><th>URL</th><th>Status</th><th>Last Sync</th></tr></thead>
-        <tbody>
-          <tr><td>User Telemetry</td><td>/api/v1/mitra/users</td><td><span class="sdot green"></span>Healthy</td><td>2 mins ago</td></tr>
-          <tr><td>School Mappings</td><td>/api/v1/mitra/schools</td><td><span class="sdot green"></span>Healthy</td><td>1 hr ago</td></tr>
-          <tr><td>AR Asset DB</td><td>/api/v1/mitra/assets</td><td><span class="sdot yellow"></span>Syncing</td><td>In Progress</td></tr>
-          <tr><td>Quiz Engine</td><td>/api/quiz</td><td><span class="sdot green"></span>Healthy</td><td>5 mins ago</td></tr>
-          <tr><td>Geofence Service</td><td>/api/geofence</td><td><span class="sdot green"></span>Healthy</td><td>12 mins ago</td></tr>
-        </tbody>
-      </table>
-      <div class="lbl" style="margin-bottom:6px">Asset Synchronization Progress</div>
-      <div class="pbar"><div class="pbar-fill" style="width:75%"></div></div>
-    </div>
-    <div class="card">
-      <div class="card-title">Database Operations</div>
-      <div class="card-sub">Manual data management tools</div>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <button class="btn btn-s" onclick="showToast('Full backup started')">📦 Full DB Backup</button>
-        <button class="btn btn-s" onclick="showToast('Cache cleared')">🗑️ Clear Asset Cache</button>
-        <button class="btn btn-s" onclick="showToast('Reindex started')">🔄 Reindex Search</button>
-        <button class="btn btn-p" onclick="showToast('Sync complete')">⚡ Force Full Sync</button>
-      </div>
-    </div>
-  </div>
-
-
-  <!-- DEVELOPER API KEYS -->
-  <div class="sh" style="margin-top:28px">
-    <div><div class="sh-title">&#128273; Developer API Keys</div><div class="sh-sub">Store tokens for Play Console, App Store Connect, Figma, and CI/CD platforms.</div></div>
-    <div style="display:flex;gap:8px">
-      <button class="btn btn-s btn-sm" onclick="ctrlValidateTokens()">&#128269; Validate Tokens</button>
-      <button class="btn btn-p btn-sm" onclick="ctrlSaveApiKeys()">&#128190; Save Keys</button>
-    </div>
-  </div>
-  <div class="g2">
-    <div class="card">
-      <div class="card-title" style="margin-bottom:12px">App Store Credentials</div>
-      <div class="form-row"><label class="lbl">Google Play Console API Key</label><input class="inp" id="key-play" type="password" placeholder="AIza..."></div>
-      <div class="form-row"><label class="lbl">Apple App Store Connect Key ID</label><input class="inp" id="key-appstore" type="password" placeholder="AAAA..."></div>
-      <div class="form-row"><label class="lbl">App Store Issuer ID</label><input class="inp" id="key-issuer" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
-      <div class="form-row"><label class="lbl">Apple P8 Key</label><textarea class="inp" id="key-p8" rows="3" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></div>
-    </div>
-    <div class="card">
-      <div class="card-title" style="margin-bottom:12px">Design and CICD Tokens</div>
-      <div class="form-row"><label class="lbl">Figma API Token</label><input class="inp" id="key-figma" type="password" placeholder="figd_..."></div>
-      <div class="form-row"><label class="lbl">GitHub / GitLab Token</label><input class="inp" id="key-git" type="password" placeholder="ghp_..."></div>
-      <div class="form-row"><label class="lbl">Firebase Admin SDK Key</label><input class="inp" id="key-firebase" placeholder="Paste base64 or path"></div>
-      <div class="form-row"><label class="lbl">Sentry DSN</label><input class="inp" id="key-sentry" placeholder="https://xxxx@sentry.io/xxxxx"></div>
-    </div>
-  </div>
-
-  <!-- CICD CONFIG -->
-  <div class="sh" style="margin-top:28px">
-    <div><div class="sh-title">&#9881; CI/CD Configuration</div><div class="sh-sub">Webhooks, pipeline secrets, and build environment settings.</div></div>
-    <button class="btn btn-p btn-sm" onclick="ctrlSaveCicd()">&#128190; Save Config</button>
-  </div>
-  <div class="g2">
-    <div class="card">
-      <div class="card-title" style="margin-bottom:12px">Webhook Endpoints</div>
-      <div class="form-row"><label class="lbl">Build Trigger Webhook URL</label><input class="inp" id="cicd-webhook" placeholder="https://ci.mitra.gov.in/hooks/build-trigger"></div>
-      <div class="form-row"><label class="lbl">Status Callback URL</label><input class="inp" id="cicd-callback" placeholder="https://api.mitra.gov.in/api/app-builder/build/callback"></div>
-      <div class="form-row"><label class="lbl">Webhook Secret</label><input class="inp" id="cicd-secret" type="password" placeholder="whsec_..."></div>
-      <div class="form-row"><label class="lbl">Pipeline Provider</label>
-        <select class="sel" id="cicd-provider">
-          <option>GitHub Actions</option><option>GitLab CI</option><option>Jenkins</option>
-          <option>Fastlane</option><option>Bitrise</option><option>CircleCI</option><option>Custom</option>
-        </select>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title" style="margin-bottom:12px">Build Environment</div>
-      <div class="form-row"><label class="lbl">Flutter SDK Version</label><input class="inp" id="cicd-flutter" value="3.22.0"></div>
-      <div class="form-row"><label class="lbl">Dart SDK Version</label><input class="inp" id="cicd-dart" value="3.4.0"></div>
-      <div class="form-row"><label class="lbl">Android Build Tools</label><input class="inp" id="cicd-android" value="34.0.0"></div>
-      <div class="form-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:9px">
-        <div><div style="font-size:13px;font-weight:500">Verbose Build Logs</div><div style="font-size:11px;color:var(--text2)">Include detailed compiler output</div></div>
-        <label class="toggle-wrap"><input type="checkbox" id="cicd-verbose"><span class="toggle-slider"></span></label>
-      </div>
-    </div>
-  </div>
-
-  <!-- STORAGE -->
-  <div class="sh" style="margin-top:28px">
-    <div><div class="sh-title">&#128230; Storage Allocation Manager</div><div class="sh-sub">Monitor server storage used by UI/UX assets, AR bundles, and generated builds.</div></div>
-    <div style="display:flex;gap:8px">
-      <button class="btn btn-s btn-sm" onclick="ctrlClearCache()">&#128465; Clear Cache</button>
-      <button class="btn btn-r btn-sm" onclick="ctrlPurgeOldBuilds()">&#128293; Purge Old Builds</button>
-    </div>
-  </div>
-  <div class="g2">
-    <div class="card" style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
-      <div style="position:relative;width:140px;height:140px;flex-shrink:0">
-        <svg width="140" height="140" viewBox="0 0 140 140" style="transform:rotate(-90deg)">
-          <circle cx="70" cy="70" r="58" fill="none" stroke="var(--bg3)" stroke-width="12"/>
-          <circle cx="70" cy="70" r="58" fill="none" stroke="var(--accent)" stroke-width="12"
-            stroke-dasharray="364" stroke-dashoffset="290" stroke-linecap="round" id="ctrl-gauge-circle"/>
-        </svg>
-        <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Syne,sans-serif">
-          <div style="font-size:24px;font-weight:800" id="ctrl-gauge-pct">21%</div>
-          <div style="font-size:10px;color:var(--text2)">of 10 GB</div>
-        </div>
-      </div>
-      <div style="flex:1;min-width:180px">
-        <div style="margin-bottom:12px">
-          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>UI/UX Assets</span><span id="ctrl-st-uiux">—</span></div>
-          <div class="pbar"><div class="pbar-fill" id="ctrl-st-uiux-bar" style="width:35%;background:var(--accent5)"></div></div>
-        </div>
-        <div style="margin-bottom:12px">
-          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>Code Files</span><span id="ctrl-st-code">—</span></div>
-          <div class="pbar"><div class="pbar-fill" id="ctrl-st-code-bar" style="width:15%;background:var(--accent)"></div></div>
-        </div>
-        <div>
-          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>Build Artifacts</span><span id="ctrl-st-builds">—</span></div>
-          <div class="pbar"><div class="pbar-fill" id="ctrl-st-builds-bar" style="width:50%;background:var(--accent2)"></div></div>
-        </div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title" style="margin-bottom:12px">Quick Storage Actions</div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <button class="btn btn-s" onclick="ctrlClearCache()">&#128465; Clear Temporary Cache</button>
-        <button class="btn btn-s" onclick="ctrlPurgeOldBuilds()">&#128293; Purge Failed Builds</button>
-        <button class="btn btn-s" onclick="showToast('Optimizing assets...')">&#128290; Re-run Asset Optimization</button>
-        <button class="btn btn-s" onclick="showToast('Backup started')">&#128230; Full Storage Backup</button>
-        <button class="btn btn-p" onclick="ctrlLoadStorageStats()">&#8635; Refresh Stats</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- RBAC -->
-  <div class="sh" style="margin-top:28px">
-    <div><div class="sh-title">&#128737; Publishing Access Control (RBAC)</div><div class="sh-sub">Restrict which roles can build, publish, upload code, and manage databases.</div></div>
-    <button class="btn btn-p btn-sm" onclick="ctrlSaveRoles()">&#128190; Save Roles</button>
-  </div>
-  <div class="card" style="padding:0;overflow:hidden">
-    <table class="tbl">
-      <thead><tr><th>Role</th><th>Build Apps</th><th>Publish</th><th>Upload Code</th><th>Upload Assets</th><th>Manage DB</th></tr></thead>
-      <tbody id="ctrl-rbac-tbody">
-        <tr><td><strong>superadmin</strong></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-        </tr>
-        <tr><td><strong>admin</strong></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-        </tr>
-        <tr><td><strong>developer</strong></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-        </tr>
-        <tr><td><strong>designer</strong></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox" checked><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-        </tr>
-        <tr><td><strong>viewer</strong></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-          <td><label class="toggle-wrap"><input type="checkbox"><span class="toggle-slider"></span></label></td>
-        </tr>
-      </tbody>
-    </table>
   </div>
 
 </div>
@@ -9546,7 +9392,72 @@ window.showPage = function showPage(pageId, topBtn, sbBtn) {
     const norm  = { 'milky-way': 'milkyway', 'deep-void': 'deepvoid' };
     typeof applyDashTheme === 'function' && applyDashTheme(norm[saved] || saved);
   }
+  if (pageId === 'controls') {
+    loadTelemetryProcessorConfig();
+  }
+  if (pageId === 'compliance') {
+    loadComplianceScore();
+  }
 };
+
+// ── Telemetry processor toggle ────────────────────────────────────────────────
+async function loadTelemetryProcessorConfig() {
+  try {
+    const res = await MitraAPI.api('/api/system/services/telemetry_processor');
+    const cfg = await res.json();
+    const toggle = document.getElementById('tp-enabled-toggle');
+    const select = document.getElementById('tp-frequency-select');
+    const status = document.getElementById('tp-status-line');
+    if (toggle) toggle.checked = cfg.enabled;
+    if (select) select.value = String(cfg.frequency_minutes);
+    if (status) {
+      const lastRun = cfg.last_run_at ? new Date(cfg.last_run_at).toLocaleString() : 'Never run';
+      status.textContent = `Last run: ${lastRun}${cfg.last_run_processed != null ? ` · ${cfg.last_run_processed} records processed` : ''}`;
+    }
+  } catch (e) {
+    const status = document.getElementById('tp-status-line');
+    if (status) status.textContent = 'Could not load status';
+  }
+}
+
+async function saveTelemetryProcessorConfig() {
+  const enabled = document.getElementById('tp-enabled-toggle')?.checked;
+  const frequency_minutes = parseInt(document.getElementById('tp-frequency-select')?.value, 10);
+  try {
+    await MitraAPI.api('/api/system/services/telemetry_processor', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled, frequency_minutes })
+    });
+    showToast(enabled ? '✅ Telemetry sync enabled' : '⏸️ Telemetry sync disabled');
+    loadTelemetryProcessorConfig();
+  } catch (e) {
+    showToast('❌ Failed to save — try again');
+  }
+}
+
+async function runTelemetryProcessorNow() {
+  try {
+    await MitraAPI.api('/api/system/services/telemetry_processor/run-now', { method: 'POST' });
+    showToast('⏳ Will run within ~15 minutes');
+  } catch (e) {
+    showToast('❌ Failed to trigger');
+  }
+}
+
+// ── Compliance score ──────────────────────────────────────────────────────────
+async function loadComplianceScore() {
+  try {
+    const res  = await MitraAPI.api('/api/compliance/score');
+    const data = await res.json();
+    const scoreEl  = document.getElementById('compliance-score-value');
+    const detailEl = document.getElementById('compliance-score-detail');
+    if (scoreEl)  scoreEl.textContent  = `${data.score}%`;
+    if (detailEl) detailEl.textContent = `${data.passed}/${data.total} compliant`;
+  } catch (e) {
+    console.warn('Compliance score load failed:', e.message);
+  }
+}
 
 // ════════════════════════════════════════════════════════════════
 // TENANT DATABASE LINKS — Part 2.3
