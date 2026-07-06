@@ -19,13 +19,22 @@ router.post('/telemetry', async (req, res) => {
 
 // ── Overview KPIs ─────────────────────────────────────────────────────────────
 router.get('/overview', requirePerm('perm_view_analytics'), async (req, res) => {
-  res.json({
-    active_users:     24731,
-    avg_session_mins: 18.4,
-    dropoff_pct:      12.3,
-    offline_pct:      34.7,
-    avg_replays:       2.1,
-  });
+  try {
+    const db   = require('../lib/firebase').getFirestore();
+    const snap = await db.collection('telemetry_sessions').limit(2000).get();
+    if (snap.empty) throw new Error('no data');
+    const sessions = snap.docs.map(d => d.data());
+    const total    = sessions.length;
+    res.json({
+      active_users:     new Set(sessions.map(s => s.student_id)).size,
+      avg_session_mins: parseFloat((sessions.reduce((s, a) => s + (a.session_minutes || 0), 0) / total).toFixed(1)),
+      dropoff_pct:      parseFloat(((sessions.filter(s => s.dropped_off).length / total) * 100).toFixed(1)),
+      offline_pct:      parseFloat(((sessions.filter(s => s.offline).length    / total) * 100).toFixed(1)),
+      avg_replays:      parseFloat((sessions.reduce((s, a) => s + (a.replay_count || 0), 0) / total).toFixed(1)),
+    });
+  } catch (_) {
+    res.json({ active_users: 0, avg_session_mins: 0, dropoff_pct: 0, offline_pct: 0, avg_replays: 0 });
+  }
 });
 
 // ── Replay & Repeat Analytics ─────────────────────────────────────────────────
@@ -61,55 +70,112 @@ router.get('/replay', requirePerm('perm_view_analytics'), async (req, res) => {
 
 // ── Location breakdown ────────────────────────────────────────────────────────
 router.get('/location', async (req, res) => {
-  res.json([
-    { state: 'Gujarat',       district: 'Anand',       active_users: 4218, avg_session: 19.2 },
-    { state: 'Gujarat',       district: 'Ahmedabad',   active_users: 3841, avg_session: 17.8 },
-    { state: 'Maharashtra',   district: 'Pune',        active_users: 3120, avg_session: 18.4 },
-    { state: 'Uttar Pradesh', district: 'Lucknow',     active_users: 2940, avg_session: 16.2 },
-    { state: 'Karnataka',     district: 'Bangalore',   active_users: 2710, avg_session: 20.1 },
-    { state: 'Tamil Nadu',    district: 'Chennai',     active_users: 2480, avg_session: 17.6 },
-    { state: 'Rajasthan',     district: 'Jaipur',      active_users: 1940, avg_session: 15.8 },
-    { state: 'Madhya Pradesh', district: 'Bhopal',     active_users: 1620, avg_session: 14.9 },
-  ]);
+  try {
+    const db   = require('../lib/firebase').getFirestore();
+    const snap = await db.collection('telemetry_sessions').limit(2000).get();
+    if (snap.empty) throw new Error('no data');
+    const map = {};
+    snap.docs.forEach(d => {
+      const s   = d.data();
+      const key = `${s.state}|${s.district}`;
+      if (!map[key]) map[key] = { state: s.state, district: s.district, users: new Set(), total_mins: 0, count: 0 };
+      map[key].users.add(s.student_id);
+      map[key].total_mins += (s.session_minutes || 0);
+      map[key].count++;
+    });
+    return res.json(Object.values(map).map(r => ({
+      state:        r.state,
+      district:     r.district,
+      active_users: r.users.size,
+      avg_session:  parseFloat((r.total_mins / r.count).toFixed(1)),
+    })).sort((a, b) => b.active_users - a.active_users));
+  } catch (_) {
+    res.json([]);
+  }
 });
 
 // ── Classroom analytics ───────────────────────────────────────────────────────
 router.get('/classroom', async (req, res) => {
-  res.json([
-    { class_grade: 'Class 6',  subject: 'Science',     avg_session: 17.2, total_students: 4120 },
-    { class_grade: 'Class 6',  subject: 'Mathematics',  avg_session: 14.8, total_students: 3980 },
-    { class_grade: 'Class 7',  subject: 'Science',     avg_session: 18.4, total_students: 4310 },
-    { class_grade: 'Class 7',  subject: 'Mathematics',  avg_session: 15.9, total_students: 4080 },
-    { class_grade: 'Class 8',  subject: 'Science',     avg_session: 19.8, total_students: 4540 },
-    { class_grade: 'Class 8',  subject: 'Mathematics',  avg_session: 16.4, total_students: 4210 },
-    { class_grade: 'Class 9',  subject: 'Science',     avg_session: 21.2, total_students: 4720 },
-    { class_grade: 'Class 10', subject: 'Science',     avg_session: 22.6, total_students: 4890 },
-  ]);
+  try {
+    const db   = require('../lib/firebase').getFirestore();
+    const snap = await db.collection('telemetry_sessions').limit(2000).get();
+    if (snap.empty) throw new Error('no data');
+    const map = {};
+    snap.docs.forEach(d => {
+      const s   = d.data();
+      const key = `${s.class_grade}|${s.subject}`;
+      if (!map[key]) map[key] = { class_grade: s.class_grade, subject: s.subject, students: new Set(), total_mins: 0, count: 0 };
+      map[key].students.add(s.student_id);
+      map[key].total_mins += (s.session_minutes || 0);
+      map[key].count++;
+    });
+    return res.json(Object.values(map).map(r => ({
+      class_grade:    r.class_grade,
+      subject:        r.subject,
+      total_students: r.students.size,
+      avg_session:    parseFloat((r.total_mins / r.count).toFixed(1)),
+    })).sort((a, b) => b.total_students - a.total_students));
+  } catch (_) {
+    res.json([]);
+  }
 });
 
 // ── Predictive analytics ──────────────────────────────────────────────────────
 router.get('/predictive', async (req, res) => {
-  res.json([
-    { topic_id: null, drop_offs: 842, time_spent: 4.2,  topic: 'Algebra — Linear Equations' },
-    { topic_id: null, drop_offs: 718, time_spent: 3.8,  topic: 'Organic Chemistry Basics' },
-    { topic_id: null, drop_offs: 694, time_spent: 5.1,  topic: 'Grammar — Tenses' },
-    { topic_id: null, drop_offs: 621, time_spent: 4.7,  topic: 'Trigonometry' },
-    { topic_id: null, drop_offs: 580, time_spent: 3.2,  topic: 'World War II History' },
-  ]);
+  try {
+    const db   = require('../lib/firebase').getFirestore();
+    const snap = await db.collection('telemetry_sessions')
+                         .where('dropped_off', '==', true).limit(1000).get();
+    if (snap.empty) throw new Error('no data');
+    const map = {};
+    snap.docs.forEach(d => {
+      const s   = d.data();
+      const key = s.topic || 'Unknown';
+      if (!map[key]) map[key] = { topic: key, drop_offs: 0, total_time: 0 };
+      map[key].drop_offs++;
+      map[key].total_time += (s.session_minutes || 0);
+    });
+    return res.json(Object.values(map).map(r => ({
+      topic:      r.topic,
+      drop_offs:  r.drop_offs,
+      time_spent: parseFloat((r.total_time / r.drop_offs).toFixed(1)),
+    })).sort((a, b) => b.drop_offs - a.drop_offs).slice(0, 10));
+  } catch (_) {
+    res.json([]);
+  }
 });
 
 // ── Telemetry summary ─────────────────────────────────────────────────────────
 router.get('/telemetry/summary', async (req, res) => {
-  res.json({
-    success: true,
-    data: [
-      { region: 'Gujarat',       state: 'GJ', district: 'All', users: 8241, avg_module_seconds: 1104, drop: 11.2, offline: 38.4, subject: 'Science' },
-      { region: 'Maharashtra',   state: 'MH', district: 'All', users: 7318, avg_module_seconds: 984,  drop: 13.8, offline: 29.6, subject: 'Science' },
-      { region: 'Uttar Pradesh', state: 'UP', district: 'All', users: 4920, avg_module_seconds: 912,  drop: 16.4, offline: 42.1, subject: 'Mathematics' },
-      { region: 'Karnataka',     state: 'KA', district: 'All', users: 3840, avg_module_seconds: 1188, drop: 9.7,  offline: 22.8, subject: 'Science' },
-      { region: 'Tamil Nadu',    state: 'TN', district: 'All', users: 3412, avg_module_seconds: 1056, drop: 10.4, offline: 18.3, subject: 'Mathematics' },
-    ],
-  });
+  try {
+    const db   = require('../lib/firebase').getFirestore();
+    const snap = await db.collection('telemetry_sessions').limit(2000).get();
+    if (snap.empty) throw new Error('no data');
+    const map = {};
+    snap.docs.forEach(d => {
+      const s = d.data();
+      if (!s.state) return;
+      if (!map[s.state]) map[s.state] = { region: s.state, state: s.state, users: new Set(), total_secs: 0, drops: 0, offlines: 0, count: 0 };
+      map[s.state].users.add(s.student_id);
+      map[s.state].total_secs += (s.session_minutes || 0) * 60;
+      if (s.dropped_off) map[s.state].drops++;
+      if (s.offline)     map[s.state].offlines++;
+      map[s.state].count++;
+    });
+    return res.json({
+      success: true,
+      data: Object.values(map).map(r => ({
+        region:             r.region,
+        state:              r.state,
+        users:              r.users.size,
+        avg_module_seconds: Math.round(r.total_secs / r.count),
+        drop:               parseFloat(((r.drops    / r.count) * 100).toFixed(1)),
+        offline:            parseFloat(((r.offlines / r.count) * 100).toFixed(1)),
+      })).sort((a, b) => b.users - a.users),
+    });
+  } catch (_) {
+    res.json({ success: true, data: [] });
+  }
 });
 
 // ── Export ────────────────────────────────────────────────────────────────────
