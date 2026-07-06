@@ -59,8 +59,14 @@ router.post('/upload', requirePerm('perm_upload_unity'),
 
     try {
       const db = getFirestore();
-      await db.collection('ar_assets').doc(id).set(doc);
-    } catch (_) {}
+      // Strip undefined fields — Firestore rejects them
+      const cleanDoc = Object.fromEntries(
+        Object.entries(doc).filter(([, v]) => v !== undefined)
+      );
+      await db.collection('ar_assets').doc(id).set(cleanDoc);
+    } catch (err) {
+      console.error('Firestore write failed:', err.message);
+    }
     res.status(201).json({ message: 'AR Asset uploaded', asset: doc });
   }
 );
