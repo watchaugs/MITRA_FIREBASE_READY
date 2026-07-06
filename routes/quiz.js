@@ -35,6 +35,15 @@ router.get('/:id', async (req, res) => {
 });
 
 router.get('/:id/questions', async (req, res) => {
+  try {
+    const db   = getFirestore();
+    const snap = await db.collection('quizzes').doc(req.params.id)
+                         .collection('questions').orderBy('sort_order').get();
+    if (!snap.empty) {
+      return res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }
+  } catch (_) {}
+  // Fallback until real questions are added via dashboard
   res.json([
     { id: uuidv4(), question_text: 'What is the powerhouse of the cell?', options: ['Nucleus', 'Mitochondria', 'Ribosome', 'Golgi Apparatus'], correct_answer_index: 1, explanation: 'Mitochondria produces ATP energy.' },
     { id: uuidv4(), question_text: 'Which process makes food in plants?', options: ['Respiration', 'Digestion', 'Photosynthesis', 'Absorption'], correct_answer_index: 2, explanation: 'Photosynthesis uses sunlight to make food.' },
@@ -84,21 +93,70 @@ router.post('/attempts/batch', async (req, res) => {
 });
 
 router.get('/analytics/deep', async (req, res) => {
-  res.json({
-    overview: { total_attempts: 8420, avg_score: 68.4, pass_rate: 72.1, avg_time_secs: 840 },
-    by_subject: [
-      { subject: 'Science',     attempts: 3210, avg_score: 71.2, pass_rate: 76.4 },
-      { subject: 'Mathematics', attempts: 2840, avg_score: 64.8, pass_rate: 68.2 },
-      { subject: 'Social',      attempts: 1420, avg_score: 72.6, pass_rate: 78.1 },
-      { subject: 'English',     attempts: 950,  avg_score: 69.4, pass_rate: 74.3 },
-    ],
-    by_state: [
-      { state: 'Gujarat',       attempts: 2840, avg_score: 72.4 },
-      { state: 'Maharashtra',   attempts: 2210, avg_score: 69.8 },
-      { state: 'Uttar Pradesh', attempts: 1840, avg_score: 62.1 },
-    ],
-    hard_questions: [],
-  });
+  try {
+    const db   = getFirestore();
+    const snap = await db.collection('quiz_attempts').limit(1000).get();
+
+    if (snap.empty) throw new Error('no data');
+
+    const attempts = snap.docs.map(d => d.data());
+
+    // Overview
+    const total     = attempts.length;
+    const avg_score = attempts.reduce((s, a) => s + (a.score || 0), 0) / total;
+    const pass_rate = (attempts.filter(a => (a.score || 0) >= 40).length / total) * 100;
+    const avg_time  = attempts.reduce((s, a) => s + (a.time_secs || 0), 0) / total;
+
+    // By subject
+    const subjectMap = {};
+    attempts.forEach(a => {
+      if (!a.subject) return;
+      if (!subjectMap[a.subject]) subjectMap[a.subject] = { attempts: 0, total_score: 0, passed: 0 };
+      subjectMap[a.subject].attempts++;
+      subjectMap[a.subject].total_score += (a.score || 0);
+      if ((a.score || 0) >= 40) subjectMap[a.subject].passed++;
+    });
+    const by_subject = Object.entries(subjectMap).map(([subject, d]) => ({
+      subject,
+      attempts:  d.attempts,
+      avg_score: parseFloat((d.total_score / d.attempts).toFixed(1)),
+      pass_rate: parseFloat(((d.passed / d.attempts) * 100).toFixed(1)),
+    }));
+
+    // By state
+    const stateMap = {};
+    attempts.forEach(a => {
+      if (!a.state) return;
+      if (!stateMap[a.state]) stateMap[a.state] = { attempts: 0, total_score: 0 };
+      stateMap[a.state].attempts++;
+      stateMap[a.state].total_score += (a.score || 0);
+    });
+    const by_state = Object.entries(stateMap).map(([state, d]) => ({
+      state,
+      attempts:  d.attempts,
+      avg_score: parseFloat((d.total_score / d.attempts).toFixed(1)),
+    }));
+
+    return res.json({
+      overview: {
+        total_attempts: total,
+        avg_score:      parseFloat(avg_score.toFixed(1)),
+        pass_rate:      parseFloat(pass_rate.toFixed(1)),
+        avg_time_secs:  Math.round(avg_time),
+      },
+      by_subject,
+      by_state,
+      hard_questions: [],
+    });
+  } catch (_) {
+    // Fallback until real attempts exist
+    res.json({
+      overview: { total_attempts: 0, avg_score: 0, pass_rate: 0, avg_time_secs: 0 },
+      by_subject: [],
+      by_state:   [],
+      hard_questions: [],
+    });
+  }
 });
 
 router.post('/attempts', async (req, res) => {
