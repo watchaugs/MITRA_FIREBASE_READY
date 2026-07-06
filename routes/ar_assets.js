@@ -60,9 +60,9 @@ router.post('/upload', requirePerm('perm_upload_unity'),
         unity_mb:    compression.unityMb,
         flutter_mb:  compression.flutterMb,
         ratio:       ((1 - compression.unity.length / req.file.size) * 100).toFixed(1) + '%',
-        unity_url:   `/api/ar/file/${id}_draco.glb`,
-        flutter_url: `/api/ar/file/${id}_lite.glb`,
       } : null,
+      unity_url:   compression ? `/api/ar/file/${id}_draco.glb`  : null,
+      flutter_url: compression ? `/api/ar/file/${id}_lite.glb`   : null,
     };
 
     try {
