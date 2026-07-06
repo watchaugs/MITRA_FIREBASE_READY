@@ -4,6 +4,7 @@ const multer  = require('multer');
 const path    = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
+const { compressGlb }  = require('../lib/draco');
 const { authenticate, requirePerm } = require('../middleware/auth');
 
 const ALLOWED_EXTENSIONS = new Set(['.unitypackage','.assetbundle','.unity','.glb','.gltf','.fbx','.obj','.zip','.png','.jpg']);
@@ -22,9 +23,40 @@ router.post('/upload', requirePerm('perm_upload_unity'),
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const { class_name, subject, topic, language, title } = req.body;
     const id  = uuidv4();
-    const doc = { id, title: title || req.file.originalname, class_name, subject, topic, language, original_name: req.file.originalname,
-      file_format: path.extname(req.file.originalname).replace('.',''), file_size_mb: (req.file.size/1024/1024).toFixed(2),
-      status: 'uploaded', uploaded_by: req.user.id, created_at: new Date() };
+    const ext = path.extname(req.file.originalname).toLowerCase();
+
+    // ── Draco compression for GLB/GLTF uploads ────────────────────────────
+    let compression = null;
+    if (ext === '.glb' || ext === '.gltf') {
+      try {
+        compression = await compressGlb(req.file.buffer);
+      } catch (compressionErr) {
+        return res.status(422).json({ error: 'GLB compression failed', detail: compressionErr.message });
+      }
+    }
+
+    const doc = {
+      id,
+      title:         title || req.file.originalname,
+      class_name,
+      subject,
+      topic,
+      language,
+      original_name: req.file.originalname,
+      file_format:   ext.replace('.', ''),
+      file_size_mb:  (req.file.size / 1024 / 1024).toFixed(2),
+      status:        'uploaded',
+      uploaded_by:   req.user.id,
+      created_at:    new Date(),
+      // compression stats — null for non-GLB uploads
+      compression: compression ? {
+        original_mb: compression.originalMb,
+        unity_mb:    compression.unityMb,
+        flutter_mb:  compression.flutterMb,
+        ratio:       ((1 - compression.unity.length / req.file.size) * 100).toFixed(1) + '%',
+      } : null,
+    };
+
     try {
       const db = getFirestore();
       await db.collection('ar_assets').doc(id).set(doc);

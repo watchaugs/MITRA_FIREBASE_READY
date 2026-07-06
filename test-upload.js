@@ -1,0 +1,10 @@
+﻿const fs=require('fs');
+const http=require('http');
+const token=process.argv[2];
+const boundary='----MITRABoundary';
+const file=fs.readFileSync('./test.glb');
+const pre=Buffer.from('--'+boundary+'\r\nContent-Disposition: form-data; name="file"; filename="test.glb"\r\nContent-Type: model/gltf-binary\r\n\r\n');
+const post=Buffer.from('\r\n--'+boundary+'--\r\n');
+const body=Buffer.concat([pre,file,post]);
+const req=http.request({hostname:'localhost',port:3000,path:'/api/ar/upload',method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'multipart/form-data; boundary='+boundary,'Content-Length':body.length}},res=>{let d='';res.on('data',c=>d+=c);res.on('end',()=>console.log(d))});
+req.write(body);req.end();
