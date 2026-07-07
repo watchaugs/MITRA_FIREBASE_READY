@@ -5,9 +5,11 @@ const path    = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { compressGlb }  = require('../lib/draco');
-const fs               = require('fs');
-const UPLOAD_DIR       = process.env.LOCAL_UPLOAD_DIR || './uploads';
+const storage          = require('../lib/storage');
 const { authenticate, requirePerm } = require('../middleware/auth');
+// NOTE: fs and UPLOAD_DIR removed — all file I/O now goes through lib/storage.js
+// In dev (no STORAGE_BUCKET set): files save to ./uploads/ on local disk
+// In prod (STORAGE_BUCKET set):   files save to GCS bucket → later swapped to R2
 
 const ALLOWED_EXTENSIONS = new Set(['.unitypackage','.assetbundle','.unity','.glb','.gltf','.fbx','.obj','.zip','.png','.jpg']);
 const arUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 },
@@ -27,15 +29,33 @@ router.post('/upload', requirePerm('perm_upload_unity'),
     const id  = uuidv4();
     const ext = path.extname(req.file.originalname).toLowerCase();
 
-    // ── Draco compression for GLB/GLTF uploads ────────────────────────────
-    let compression = null;
+    // ── Draco compression + persistent storage ────────────────────────────
+    // Files go through lib/storage.js:
+    //   dev  → local ./uploads/ar_assets/
+    //   prod → GCS bucket (or R2 once wired into storage.js)
+    let compression   = null;
+    let unity_url     = null;
+    let flutter_url   = null;
+
     if (ext === '.glb' || ext === '.gltf') {
       try {
         compression = await compressGlb(req.file.buffer);
-        // Save both tiers to local filesystem
-        fs.mkdirSync(`${UPLOAD_DIR}/ar`, { recursive: true });
-        fs.writeFileSync(`${UPLOAD_DIR}/ar/${id}_draco.glb`,  compression.unity);
-        fs.writeFileSync(`${UPLOAD_DIR}/ar/${id}_lite.glb`,   compression.flutter);
+
+        // Save Unity-tier (Draco-heavy) to persistent storage
+        const unityKey   = `ar_assets/${id}_draco.glb`;
+        const flutterKey = `ar_assets/${id}_lite.glb`;
+
+        await storage.putRaw(compression.unity,   unityKey,   { contentType: 'model/gltf-binary' });
+        await storage.putRaw(compression.flutter, flutterKey, { contentType: 'model/gltf-binary' });
+
+        // Build public URLs — storage.js returns CDN-routed paths in prod
+        unity_url   = process.env.R2_PUBLIC_URL
+          ? `${process.env.R2_PUBLIC_URL}/${unityKey}`
+          : `/api/ar/file/${id}_draco.glb`;
+        flutter_url = process.env.R2_PUBLIC_URL
+          ? `${process.env.R2_PUBLIC_URL}/${flutterKey}`
+          : `/api/ar/file/${id}_lite.glb`;
+
       } catch (compressionErr) {
         return res.status(422).json({ error: 'GLB compression failed', detail: compressionErr.message });
       }
@@ -61,8 +81,8 @@ router.post('/upload', requirePerm('perm_upload_unity'),
         flutter_mb:  compression.flutterMb,
         ratio:       ((1 - compression.unity.length / req.file.size) * 100).toFixed(1) + '%',
       } : null,
-      unity_url:   compression ? `/api/ar/file/${id}_draco.glb`  : null,
-      flutter_url: compression ? `/api/ar/file/${id}_lite.glb`   : null,
+      unity_url,
+      flutter_url,
     };
 
     try {
@@ -89,10 +109,23 @@ router.get('/assets', async (req, res) => {
 });
 
 router.get('/topics', async (req, res) => {
-  res.json([
-    { id: uuidv4(), topic: 'Cell Division', class_name: 'Class 9', subject: 'Science', language: 'English', status: 'live' },
-    { id: uuidv4(), topic: 'Photosynthesis', class_name: 'Class 8', subject: 'Science', language: 'English', status: 'live' },
-  ]);
+  try {
+    const db   = getFirestore();
+    const snap = await db.collection('ar_assets').where('status', '==', 'published').limit(200).get();
+    if (!snap.empty) {
+      return res.json(snap.docs.map(d => ({
+        id:          d.id,
+        topic:       d.data().topic       || '',
+        class_name:  d.data().class_name  || '',
+        subject:     d.data().subject     || '',
+        language:    d.data().language    || 'English',
+        status:      d.data().status      || 'live',
+        unity_url:   d.data().unity_url   || null,
+        flutter_url: d.data().flutter_url || null,
+      })));
+    }
+  } catch (_) {}
+  res.json([]);
 });
 
 router.get('/assets/:id', async (req, res) => {

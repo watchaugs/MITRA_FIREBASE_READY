@@ -25,6 +25,9 @@
           
           const loginOverlay = document.getElementById('mitra-login-overlay');
           if (loginOverlay) loginOverlay.classList.remove('hidden');
+
+          const dashboardEl = document.getElementById('mitra-dashboard-main');
+          if (dashboardEl) dashboardEl.style.display = 'none';
       }
   }, 60000); 
 </script>

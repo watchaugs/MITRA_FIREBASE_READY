@@ -160,7 +160,15 @@ router.get('/analytics/deep', async (req, res) => {
 });
 
 router.post('/attempts', async (req, res) => {
-  res.status(202).json({ received: true });
+  try {
+    const db  = getFirestore();
+    const doc = { ...req.body, synced_at: new Date() };
+    await db.collection('quiz_attempts').add(doc);
+    res.status(202).json({ received: true });
+  } catch (_) {
+    // Never fail the student app
+    res.status(202).json({ received: true, queued: true });
+  }
 });
 
 module.exports = router;

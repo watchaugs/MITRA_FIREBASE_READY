@@ -38,6 +38,8 @@ async function boot() {
 
   const firebase = require('./lib/firebase');
   await firebase.init();
+  // Make firebase available to the shutdown handler declared later in this scope
+  // (replaces the removed `db` reference — see shutdown function below)
 
   // Database connection removed — this repo now uses Firebase/Firestore
   // as the primary data store. Postgres connection is not required.
@@ -236,7 +238,7 @@ async function boot() {
   function shutdown(signal) {
     log.info({ signal }, 'Shutting down');
     server.close(async () => {
-      try { await db.close(); } catch (_) { /* */ }
+      try { await firebase.shutdown(); } catch (_) { /* */ }
       process.exit(0);
     });
     setTimeout(() => process.exit(1), 10_000).unref();

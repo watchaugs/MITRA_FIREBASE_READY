@@ -16,13 +16,21 @@ router.get('/summary', async (req, res) => {
       db.collection('quizzes').where('status', '==', 'published').get(),
       db.collection('ad_campaigns').where('status', '==', 'active').get(),
     ]);
+    // Count unique student_ids from telemetry_sessions
+    let active_students = 0;
+    try {
+      const studentSnap = await db.collection('telemetry_sessions')
+        .select('student_id').limit(5000).get();
+      active_students = new Set(studentSnap.docs.map(d => d.data().student_id)).size;
+    } catch (_) {}
+
     res.json({
       live_apps:         apps.size,
       user_accounts:     users.size,
       published_assets:  assets.size,
       published_quizzes: quizzes.size,
       live_ad_campaigns: campaigns.size,
-      active_students:   24731, // replaced when telemetry pipeline is live
+      active_students,
     });
   } catch (err) {
     // Firestore unavailable — return zeros rather than crash
