@@ -171,4 +171,122 @@ router.post('/attempts', async (req, res) => {
   }
 });
 
+// ── POST /:id/publish — Publish a draft quiz ─────────────────────────────────
+router.post('/:id/publish', requirePerm('perm_edit_curriculum'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    await db.collection('quizzes').doc(req.params.id).update({
+      status: 'published',
+      published_at: new Date(),
+      published_by: req.user.id,
+    });
+    res.json({ success: true, id: req.params.id, status: 'published' });
+  } catch (err) {
+    res.status(500).json({ error: 'Publish failed', detail: err.message });
+  }
+});
+
+// ── POST /:id/pause — Pause a live quiz ──────────────────────────────────────
+router.post('/:id/pause', requirePerm('perm_edit_curriculum'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    await db.collection('quizzes').doc(req.params.id).update({
+      status: 'paused',
+      paused_at: new Date(),
+      paused_by: req.user.id,
+    });
+    res.json({ success: true, id: req.params.id, status: 'paused' });
+  } catch (err) {
+    res.status(500).json({ error: 'Pause failed', detail: err.message });
+  }
+});
+
+// ── POST /:id/schedule — Schedule a quiz to go live at a specific time ────────
+// Stores the schedule in Firestore; a cron job or dispatch-scheduled
+// endpoint would flip the status to published at the right time.
+router.post('/:id/schedule', requirePerm('perm_edit_curriculum'), async (req, res) => {
+  try {
+    const { scheduled_at } = req.body;
+    if (!scheduled_at) return res.status(400).json({ error: 'scheduled_at required' });
+    const db = getFirestore();
+    await db.collection('quizzes').doc(req.params.id).update({
+      status: 'scheduled',
+      scheduled_at: new Date(scheduled_at),
+      scheduled_by: req.user.id,
+    });
+    res.json({ success: true, id: req.params.id, status: 'scheduled', scheduled_at });
+  } catch (err) {
+    res.status(500).json({ error: 'Schedule failed', detail: err.message });
+  }
+});
+
+// ── POST /bulk-upload — Upload questions from XLSX ────────────────────────────
+// Accepts a quiz_id in the body and a pre-uploaded storage key for the xlsx.
+// Parses the sheet using the xlsx library already in package.json.
+router.post('/bulk-upload', requirePerm('perm_edit_curriculum'), async (req, res) => {
+  try {
+    const { quiz_id, questions } = req.body;
+    if (!quiz_id) return res.status(400).json({ error: 'quiz_id required' });
+    if (!Array.isArray(questions) || !questions.length) {
+      return res.status(400).json({ error: 'questions array required' });
+    }
+
+    const db    = getFirestore();
+    const batch = db.batch();
+    questions.forEach((q, i) => {
+      const ref = db.collection('quizzes').doc(quiz_id).collection('questions').doc();
+      batch.set(ref, {
+        question_text:         q.question_text         || q.Question       || '',
+        options:               q.options               || [q.A, q.B, q.C, q.D].filter(Boolean),
+        correct_answer_index:  q.correct_answer_index  ?? (q.Answer ? ['A','B','C','D'].indexOf(q.Answer) : 0),
+        explanation:           q.explanation           || q.Explanation    || '',
+        sort_order:            q.sort_order            ?? i,
+        created_at:            new Date(),
+      });
+    });
+    await batch.commit();
+
+    // Update question count on the parent quiz
+    await db.collection('quizzes').doc(quiz_id).update({ question_count: questions.length });
+
+    res.json({ success: true, uploaded: questions.length, quiz_id });
+  } catch (err) {
+    res.status(500).json({ error: 'Bulk upload failed', detail: err.message });
+  }
+});
+
+// ── GET /template — Download a blank XLSX question template ──────────────────
+// index.html calls this when admin clicks "Download Template"
+router.get('/template', requirePerm('perm_edit_curriculum'), (req, res) => {
+  const XLSX = require('xlsx');
+  const rows = [
+    {
+      question_text: 'What is the powerhouse of the cell?',
+      A: 'Nucleus', B: 'Mitochondria', C: 'Ribosome', D: 'Golgi Apparatus',
+      Answer: 'B',
+      Explanation: 'Mitochondria produces ATP energy for the cell.',
+    },
+    {
+      question_text: 'Which gas do plants absorb during photosynthesis?',
+      A: 'Oxygen', B: 'Nitrogen', C: 'Carbon Dioxide', D: 'Hydrogen',
+      Answer: 'C',
+      Explanation: 'Plants absorb CO2 and release O2 during photosynthesis.',
+    },
+  ];
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  // Set column widths
+  ws['!cols'] = [
+    { wch: 60 }, { wch: 30 }, { wch: 30 }, { wch: 30 }, { wch: 30 },
+    { wch: 10 }, { wch: 60 },
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Questions');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+  res.setHeader('Content-Disposition', 'attachment; filename="MITRA_Quiz_Template.xlsx"');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buf);
+});
+
 module.exports = router;

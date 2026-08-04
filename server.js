@@ -73,7 +73,9 @@ async function boot() {
       origin: [
           'https://watchaugs-mitra.web.app', 
           'https://watchaugs-mitra.firebaseapp.com',
-          'http://localhost:3000' 
+          'http://localhost:3000',
+          'http://localhost:5000',
+          'http://127.0.0.1:3000',
       ],
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       credentials: true
