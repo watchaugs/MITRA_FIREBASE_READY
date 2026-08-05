@@ -2,6 +2,8 @@
 const router = require('express').Router();
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
+const XLSX = require('xlsx');
+const log = require('../lib/logger');
 router.use(authenticate);
 
 // ── Compliance score calculation ───────────────────────────────────────────
@@ -32,7 +34,9 @@ async function calculateComplianceScore(db) {
         checks.find(c => c.key === 'grievance_officer').pass = true;
       }
     });
-  } catch (_) {}
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to read compliance settings — score may be understated');
+  }
 
   const passed = checks.filter(c => c.pass).length;
   const score  = Math.round((passed / checks.length) * 100);
@@ -452,6 +456,74 @@ router.put('/findings/:id/resolve', requirePerm('perm_manage_compliance'), async
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Resolve failed' });
+  }
+});
+
+// ── Change #29: Consent log export ────────────────────────────────────────
+router.get('/consent-log/export', requirePerm('perm_export_data'), async (req, res) => {
+  try {
+    const db   = getFirestore();
+    const snap = await db.collection('consent_records').limit(5000).get();
+    const rows = snap.docs.map(d => {
+      const c = d.data();
+      return {
+        'Student ID':      c.student_id || d.id,
+        'Consent Version': c.version || '',
+        'Granted':         c.granted ? 'Yes' : 'No',
+        'Granted At':      c.granted_at && c.granted_at.toDate ? c.granted_at.toDate().toISOString() : '',
+        'Consents':        c.consents ? JSON.stringify(c.consents) : '',
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Consent Log');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="Consent_Log_Export.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) {
+    log.error({ err: err.message }, 'Consent log export failed');
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// ── Change #30: Generic compliance checklist export ───────────────────────
+router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
+  try {
+    const db     = getFirestore();
+    const result = await calculateComplianceScore(db);
+    const format = (req.query.format || 'xlsx').toLowerCase();
+    const rows = result.checks.map(c => ({
+      'Check': c.label, 'Severity': c.severity, 'Status': c.pass ? 'Pass' : 'Fail',
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    if (format === 'csv') {
+      const csv = XLSX.utils.sheet_to_csv(ws);
+      res.setHeader('Content-Disposition', 'attachment; filename="Compliance_Export.csv"');
+      res.setHeader('Content-Type', 'text/csv');
+      return res.send(csv);
+    }
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Compliance');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="Compliance_Export.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) {
+    log.error({ err: err.message }, 'Compliance export failed');
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// ── GET /api/compliance/status ─── LIVE tracker (real checks, no caching) ────
+const { evaluateCompliance } = require('../lib/complianceEngine');
+router.get('/status', requirePerm('perm_view_legal'), async (req, res) => {
+  try {
+    const result = await evaluateCompliance();
+    res.json(result);
+  } catch (err) {
+    log.error({ err: err.message }, 'live compliance status failed');
+    res.status(500).json({ error: 'Could not evaluate compliance status' });
   }
 });
 

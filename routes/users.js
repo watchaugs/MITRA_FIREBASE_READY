@@ -7,7 +7,7 @@ const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
-const { authenticate, requirePerm } = require('../middleware/auth');
+const { authenticate, requirePerm, canGrantRole } = require('../middleware/auth');
 const { sendWelcomeEmail } = require('../lib/mailer');
 const log = require('../lib/logger');
 router.use(authenticate);
@@ -35,6 +35,9 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
     } = req.body || {};
     if (!full_name) return res.status(400).json({ error: 'full_name required' });
     if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'valid email required' });
+    if (!canGrantRole(req.user.role, role)) {
+      return res.status(403).json({ error: 'You cannot grant a role higher than your own' });
+    }
 
     // Always use a random placeholder hash — user sets their real password via the emailed link
     const password_hash = await bcrypt.hash(uuidv4(), 12);
@@ -92,6 +95,9 @@ router.get('/:id', requirePerm('perm_create_users'), async (req, res) => {
 router.put('/:id', requirePerm('perm_create_users'), async (req, res) => {
   try {
     const { full_name, role, is_active } = req.body;
+    if (role !== undefined && !canGrantRole(req.user.role, role)) {
+      return res.status(403).json({ error: 'You cannot grant a role higher than your own' });
+    }
     const db = getFirestore();
     const updates = {};
     if (full_name !== undefined) updates.full_name = full_name;
@@ -120,6 +126,9 @@ router.post('/bulk-update', requirePerm('perm_create_users'), async (req, res) =
     const allowed = ['role', 'is_active', 'assigned_state', 'assigned_district'];
     const safeUpdates = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)));
     if (!Object.keys(safeUpdates).length) return res.status(400).json({ error: 'No valid fields to update' });
+    if (safeUpdates.role && !canGrantRole(req.user.role, safeUpdates.role)) {
+      return res.status(403).json({ error: 'You cannot grant a role higher than your own' });
+    }
     const db = getFirestore();
     const batch = db.batch();
     ids.forEach(id => batch.update(db.collection('dashboard_users').doc(id), safeUpdates));

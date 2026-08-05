@@ -12,26 +12,23 @@
 
 const jwt = require('jsonwebtoken');
 const log = require('../lib/logger');
+const { getFirestore } = require('../lib/firebase');
 
 // 60-second in-memory cache: userId → { active, role, perms, fetchedAt }
 const userStatusCache = new Map();
 const CACHE_TTL_MS = 60_000;
-let _query;
-function setDbQuery(q) { _query = q; }
+function setDbQuery() { /* no-op — kept so old callers don't break; Firestore lookup below needs no injection */ }
 
 function invalidateUserCache(userId) { userStatusCache.delete(userId); }
 
 async function loadUserStatus(userId) {
   const cached = userStatusCache.get(userId);
   if (cached && (Date.now() - cached.fetchedAt) < CACHE_TTL_MS) return cached;
-  if (!_query) return null;
   try {
-    const result = await _query(
-      'SELECT is_active, role FROM users WHERE id = $1',
-      [userId]
-    );
-    if (!result.rows.length) return { active: false };
-    const status = { active: result.rows[0].is_active, role: result.rows[0].role, fetchedAt: Date.now() };
+    const doc = await getFirestore().collection('dashboard_users').doc(userId).get();
+    if (!doc.exists) return { active: false };
+    const data = doc.data();
+    const status = { active: data.is_active !== false, role: data.role, fetchedAt: Date.now() };
     userStatusCache.set(userId, status);
     return status;
   } catch (err) {

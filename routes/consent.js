@@ -2,6 +2,8 @@
 const router = require('express').Router();
 const { getFirestore } = require('../lib/firebase');
 const { authenticate } = require('../middleware/auth');
+const { encryptFields, decryptFields } = require('../lib/fieldCrypto');
+const SENSITIVE_CONSENT_FIELDS = ['guardian_name', 'guardian_email', 'guardian_phone', 'student_name'];
 
 // Consent endpoints are called by the Flutter app before authentication
 router.get('/status', async (req, res) => {

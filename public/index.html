@@ -1565,7 +1565,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div style="font-size:13px;color:var(--text2);max-width:620px;line-height:1.6">Student usage, classroom engagement, location heatmaps, quiz performance and predictive insights — streamed live from deployed student apps across India.</div>
     <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;position:relative">
       <button class="btn btn-p" onclick="toggleExportMenu()">📥 Export Data</button>
-      <div id="export-menu" style="display:none; position:absolute; left:0; top:44px; background:var(--card2); border:1px solid var(--border); border-radius:8px; padding:8px; z-index:100; min-width:140px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+      <div id="export-menu" style="display:none; position:absolute; left:0; top:44px; background:var(--card2); border:1px solid var(--border); border-radius:8px; padding:8px; z-index:9999; min-width:140px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
         <button class="btn btn-s" style="width:100%; justify-content:flex-start; border:none; margin-bottom:4px;" onclick="exportData('csv')">Export as .CSV</button>
         <button class="btn btn-s" style="width:100%; justify-content:flex-start; border:none;" onclick="exportData('xlsx')">Export as .XLSX</button>
       </div>
@@ -2355,7 +2355,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div id="am-db-list">
       <div class="db-instance-row">
         <div style="display:flex;align-items:center"><div class="db-dot active"></div><div><div style="font-size:13px;font-weight:600">mitra</div><div style="font-size:11px;color:var(--text2)">Primary · Cloud SQL · asia-south1 · shared</div></div></div>
-        <div style="display:flex;gap:6px"><span class="tag tag-g">Active</span><button class="btn btn-s btn-sm" onclick="showToast('Connection test: OK — 3ms')">Ping</button></div>
+        <div style="display:flex;gap:6px"><span class="tag tag-g">Active</span><button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">Ping</button></div>
       </div>
     </div>
   </div>
@@ -2605,8 +2605,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <td><span class="sdot green"></span><span style="font-size:12px">Live</span></td>
             <td style="font-size:11px">15 Jan 2025</td>
             <td><div style="display:flex;gap:4px">
-              <button class="btn btn-s btn-sm" onclick="showToast('OTA pushed')">OTA</button>
-              <button class="btn btn-r btn-sm" onclick="showToast('Rollback initiated')">⟲</button>
+              <button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">OTA</button>
+              <button class="btn btn-r btn-sm" onclick="showToast('Not available yet')">⟲</button>
             </div></td>
           </tr>
           <tr>
@@ -2617,8 +2617,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <td><span class="sdot green"></span><span style="font-size:12px">Live</span></td>
             <td style="font-size:11px">18 Jan 2025</td>
             <td><div style="display:flex;gap:4px">
-              <button class="btn btn-s btn-sm" onclick="showToast('OTA pushed')">OTA</button>
-              <button class="btn btn-r btn-sm" onclick="showToast('Rollback initiated')">⟲</button>
+              <button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">OTA</button>
+              <button class="btn btn-r btn-sm" onclick="showToast('Not available yet')">⟲</button>
             </div></td>
           </tr>
           <tr>
@@ -2630,7 +2630,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <td style="font-size:11px">02 Dec 2024</td>
             <td><div style="display:flex;gap:4px">
               <button class="btn btn-p btn-sm" onclick="switchAmTab('db',document.querySelectorAll('.am-tab')[4])">Rebuild</button>
-              <button class="btn btn-r btn-sm" onclick="showToast('Rollback initiated')">⟲</button>
+              <button class="btn btn-r btn-sm" onclick="showToast('Not available yet')">⟲</button>
             </div></td>
           </tr>
         </tbody>
@@ -2705,7 +2705,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="commit-msg">Initial commit — main.dart scaffold</div>
           <div class="commit-meta"><span class="commit-hash">a1b2c3d4</span> &nbsp;·&nbsp; Admin &nbsp;·&nbsp; Just now</div>
         </div>
-        <button class="btn btn-s btn-sm" onclick="showToast('Rolled back to a1b2c3d4')">⟲ Rollback</button>
+        <button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">⟲ Rollback</button>
       </div>
     </div>
   </div>
@@ -2790,8 +2790,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <td><span class="sdot green"></span>Live (Play Store)</td>
           <td>
             <div style="display:flex;gap:4px">
-              <button class="btn btn-s btn-sm" onclick="showToast('OTA Update pushed to MITRA UP')">OTA Update</button>
-              <button class="btn btn-r btn-sm" onclick="showToast('App rollback initiated')">Rollback</button>
+              <button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">OTA Update</button>
+              <button class="btn btn-r btn-sm" onclick="showToast('Not available yet')">Rollback</button>
             </div>
           </td>
         </tr>
@@ -2801,8 +2801,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <td><span class="sdot green"></span>Live (Play Store)</td>
           <td>
             <div style="display:flex;gap:4px">
-              <button class="btn btn-s btn-sm" onclick="showToast('OTA Update pushed to MITRA Maha')">OTA Update</button>
-              <button class="btn btn-r btn-sm" onclick="showToast('App rollback initiated')">Rollback</button>
+              <button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">OTA Update</button>
+              <button class="btn btn-r btn-sm" onclick="showToast('Not available yet')">Rollback</button>
             </div>
           </td>
         </tr>
@@ -2813,7 +2813,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <td>
             <div style="display:flex;gap:4px">
               <button class="btn btn-p btn-sm" onclick="switchAmTab('db',document.querySelectorAll('.am-tab')[5])">Rebuild</button>
-              <button class="btn btn-r btn-sm" onclick="showToast('App rollback initiated')">Rollback</button>
+              <button class="btn btn-r btn-sm" onclick="showToast('Not available yet')">Rollback</button>
             </div>
           </td>
         </tr>
@@ -3255,7 +3255,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="form-row"><label class="lbl">Full Name</label><input class="inp" id="setting-fullname" placeholder="Your full name"></div>
           <div class="form-row"><label class="lbl">Email Address</label><input class="inp" id="setting-email" placeholder="your@email.gov.in" type="email"></div>
           <div class="form-row"><label class="lbl">Role / Designation</label><input class="inp" id="setting-role" placeholder="e.g. District Education Officer" readonly style="opacity:.6"></div>
-          <button class="btn btn-p btn-sm" onclick="showToast('Profile saved')">💾 Save Profile</button>
+          <button class="btn btn-p btn-sm" onclick="saveMyProfile()">💾 Save Profile</button>
         </div>
       </div>
       <div class="card">
@@ -3264,7 +3264,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="form-row"><label class="lbl">Current Password</label><input class="inp" type="password" id="setting-cur-pass" placeholder="Current password"></div>
           <div class="form-row"><label class="lbl">New Password</label><input class="inp" type="password" id="setting-new-pass" placeholder="New password (min 8 chars)"></div>
           <div class="form-row"><label class="lbl">Confirm New Password</label><input class="inp" type="password" id="setting-confirm-pass" placeholder="Repeat new password"></div>
-          <button class="btn btn-s btn-sm" onclick="showToast('Password updated')">🔑 Update Password</button>
+          <button class="btn btn-s btn-sm" onclick="changeMyPassword()">🔑 Update Password</button>
           <div style="font-size:10px;color:var(--text2)">⚠️ Default passwords must be changed before going live (IT Act §43A)</div>
         </div>
       </div>
@@ -3741,7 +3741,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <button class="btn btn-s btn-sm" onclick="resetAdFilters()">↺ Reset</button>
         <div style="position:relative">
           <button class="btn btn-g btn-sm" onclick="toggleAdExport()">📥 Export</button>
-          <div id="ad-export-menu" style="display:none;position:absolute;right:0;top:36px;background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:8px;z-index:200;min-width:160px;box-shadow:0 10px 25px rgba(0,0,0,.5)">
+          <div id="ad-export-menu" style="display:none;position:absolute;right:0;top:36px;background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:8px;z-index:9999;min-width:160px;box-shadow:0 10px 25px rgba(0,0,0,.5)">
             <button class="btn btn-s" style="width:100%;justify-content:flex-start;border:none;margin-bottom:4px" onclick="exportAdData('csv')">📄 Export as .CSV</button>
             <button class="btn btn-s" style="width:100%;justify-content:flex-start;border:none" onclick="exportAdData('xlsx')">📊 Export as .XLSX</button>
           </div>
@@ -3791,7 +3791,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <td>5/day</td><td>124,500</td>
               <td><div style="display:flex;align-items:center;gap:6px"><div class="pbar" style="width:60px"><div class="pbar-fill" style="width:72%;background:var(--accent3)"></div></div>72%</div></td>
               <td>5.1%</td><td><span class="sdot green"></span>Live</td>
-              <td><button class="btn btn-s btn-sm" onclick="showToast('Loading editor...')">Edit</button></td>
+              <td><button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">Edit</button></td>
             </tr>
             <tr>
               <td><strong>Maths Olympiad 2026</strong><div style="font-size:10px;color:var(--text2)">State Edu Dept.</div></td>
@@ -3801,7 +3801,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <td>Before Topic</td><td>88,200</td>
               <td><div style="display:flex;align-items:center;gap:6px"><div class="pbar" style="width:60px"><div class="pbar-fill" style="width:91%;background:var(--accent3)"></div></div>91%</div></td>
               <td>6.8%</td><td><span class="sdot green"></span>Live</td>
-              <td><button class="btn btn-s btn-sm" onclick="showToast('Loading editor...')">Edit</button></td>
+              <td><button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">Edit</button></td>
             </tr>
             <tr>
               <td><strong>History Book Fair</strong><div style="font-size:10px;color:var(--text2)">Ministry of Education</div></td>
@@ -3811,7 +3811,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <td>10/day</td><td>42,100</td>
               <td><div style="display:flex;align-items:center;gap:6px"><div class="pbar" style="width:60px"><div class="pbar-fill" style="width:58%;background:var(--yellow)"></div></div>58%</div></td>
               <td>3.2%</td><td><span class="sdot yellow"></span>Expiring</td>
-              <td><button class="btn btn-s btn-sm" onclick="showToast('Loading editor...')">Edit</button></td>
+              <td><button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">Edit</button></td>
             </tr>
           </tbody>
         </table>
@@ -4469,6 +4469,159 @@ function _legacyShowPageChartHook(pageId) {
 // --- MODALS ---
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+// ════════════════════════════════════════════════════════════════
+// REAL FEATURE WIRING (profile, password, ad edit, deployed apps)
+// ════════════════════════════════════════════════════════════════
+(function () {
+  const A = (url, init) => (window.MitraAPI ? MitraAPI.api(url, init)
+    : fetch(url, Object.assign({ headers: {} }, init, { headers: Object.assign(authHeaders(), (init && init.headers) || {}) })));
+  const J = (extra) => Object.assign({ 'Content-Type': 'application/json' }, extra || {});
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+  // ── 1. PROFILE ────────────────────────────────────────────────
+  window.loadMyProfile = async function () {
+    try {
+      const r = await A('/api/auth/me');
+      if (!r.ok) return;
+      const u = await r.json();
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+      set('setting-fullname', u.full_name || u.name);
+      set('setting-email', u.email);
+      set('setting-role', u.role);
+    } catch (e) {}
+  };
+  window.saveMyProfile = async function () {
+    const name = (document.getElementById('setting-fullname') || {}).value || '';
+    try {
+      const r = await A('/api/auth/me/profile', { method: 'PUT', headers: J(), body: JSON.stringify({ full_name: name }) });
+      const d = await r.json();
+      if (!r.ok) return showToastError(d.error || 'Could not save profile');
+      showToast('✅ Profile saved');
+    } catch (e) { showToastError('Network error'); }
+  };
+  window.changeMyPassword = async function () {
+    const cur = (document.getElementById('setting-cur-pass') || {}).value || '';
+    const nw  = (document.getElementById('setting-new-pass') || {}).value || '';
+    const cf  = (document.getElementById('setting-confirm-pass') || {}).value || '';
+    if (nw !== cf) return showToastError('New passwords do not match');
+    if (nw.length < 12) return showToastError('New password must be at least 12 characters');
+    try {
+      const r = await A('/api/auth/me/change-password', { method: 'POST', headers: J(), body: JSON.stringify({ currentPassword: cur, newPassword: nw }) });
+      const d = await r.json();
+      if (!r.ok) return showToastError(d.error || 'Could not update password');
+      ['setting-cur-pass', 'setting-new-pass', 'setting-confirm-pass'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      showToast('✅ Password updated');
+    } catch (e) { showToastError('Network error'); }
+  };
+
+  // ── 2. AD CAMPAIGNS (real table + edit) ───────────────────────
+  window.loadAdCampaigns = async function () {
+    const tb = document.getElementById('ad-campaigns-body');
+    if (!tb) return;
+    tb.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text2);padding:16px">Loading…</td></tr>';
+    try {
+      const r = await A('/api/ads');
+      const d = await r.json();
+      const rows = (d.data || d || []);
+      if (!rows.length) { tb.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text2);padding:16px">No campaigns yet.</td></tr>'; return; }
+      tb.innerHTML = rows.map(c => {
+        const live = (c.status || '').toLowerCase() === 'live' || (c.status || '').toLowerCase() === 'active';
+        return `<tr>
+          <td><strong>${esc(c.name || c.title || 'Untitled')}</strong><div style="font-size:10px;color:var(--text2)">${esc(c.advertiser || c.sponsor || '')}</div></td>
+          <td><span class="tag tag-b">${esc(c.media_type || '—')}</span></td>
+          <td><span class="tag tag-b">${esc(c.state || c.target || 'All India')}</span></td>
+          <td><div style="font-size:11px">${esc(c.period || '—')}</div></td>
+          <td>${esc(c.push_per_day || '—')}</td>
+          <td>${esc((c.impressions != null ? c.impressions : 0).toLocaleString())}</td>
+          <td>${esc(c.completion || '—')}</td>
+          <td>${esc(c.ctr || '—')}</td>
+          <td><span class="sdot ${live ? 'green' : 'yellow'}"></span>${esc(c.status || 'draft')}</td>
+          <td><button class="btn btn-s btn-sm" onclick="openAdEdit('${esc(c.id)}')">Edit</button></td>
+        </tr>`;
+      }).join('');
+    } catch (e) { tb.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#fca5a5;padding:16px">Failed to load.</td></tr>'; }
+  };
+  window.openAdEdit = async function (id) {
+    try {
+      const r = await A('/api/ads/' + encodeURIComponent(id));
+      const c = await r.json();
+      if (!r.ok) return showToastError(c.error || 'Could not load campaign');
+      document.getElementById('adedit-id').value = c.id;
+      document.getElementById('adedit-name').value = c.name || c.title || '';
+      document.getElementById('adedit-advertiser').value = c.advertiser || c.sponsor || '';
+      document.getElementById('adedit-desc').value = c.description || '';
+      document.getElementById('adedit-status').value = (c.status || 'draft');
+      openModal('modal-ad-edit');
+    } catch (e) { showToastError('Network error'); }
+  };
+  window.saveAdEdit = async function () {
+    const id = document.getElementById('adedit-id').value;
+    const body = {
+      name: document.getElementById('adedit-name').value,
+      advertiser: document.getElementById('adedit-advertiser').value,
+      description: document.getElementById('adedit-desc').value,
+      status: document.getElementById('adedit-status').value,
+    };
+    try {
+      const r = await A('/api/ads/' + encodeURIComponent(id), { method: 'PUT', headers: J(), body: JSON.stringify(body) });
+      const d = await r.json();
+      if (!r.ok) return showToastError(d.error || 'Could not save');
+      closeModal('modal-ad-edit');
+      showToast('✅ Campaign updated');
+      loadAdCampaigns();
+    } catch (e) { showToastError('Network error'); }
+  };
+
+  // ── 3. DEPLOYED STATE APPS (real table + OTA + rollback) ──────
+  window.loadDeployedApps = async function () {
+    const tb = document.getElementById('am-deployed-tbody');
+    if (!tb) return;
+    tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text2);padding:16px">Loading…</td></tr>';
+    try {
+      const r = await A('/api/app-builder/builds');
+      const d = await r.json();
+      const rows = (d.data || d || []);
+      if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text2);padding:16px">No deployed apps yet.</td></tr>'; return; }
+      tb.innerHTML = rows.map(b => {
+        const status = (b.build_status || b.status || 'building');
+        const live = status === 'live';
+        const dot = live ? 'green' : (status === 'building' ? 'yellow' : 'red');
+        return `<tr>
+          <td><span style="font-weight:600">${esc(b.app_name || b.name || 'MITRA')}</span></td>
+          <td>${esc(b.state || '—')}</td>
+          <td>${esc(b.version || 'v1.0.0')}</td>
+          <td>${esc((b.active_students != null ? b.active_students : 0).toLocaleString())}</td>
+          <td><div style="width:16px;height:16px;border-radius:4px;background:${esc(b.theme_color || '#6366f1')};display:inline-block"></div></td>
+          <td><span class="sdot ${dot}"></span>${esc(status)}</td>
+          <td><div style="display:flex;gap:4px">
+            <button class="btn btn-s btn-sm" onclick="otaUpdateApp('${esc(b.id)}')">OTA Update</button>
+            <button class="btn btn-r btn-sm" onclick="rollbackApp('${esc(b.id)}')">Rollback</button>
+          </div></td>
+        </tr>`;
+      }).join('');
+    } catch (e) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#fca5a5;padding:16px">Failed to load.</td></tr>'; }
+  };
+  window.otaUpdateApp = async function (id) {
+    if (!confirm('Push an OTA update (publish this build live to phones)?')) return;
+    try {
+      const r = await A('/api/app-builder/builds/' + encodeURIComponent(id) + '/publish', { method: 'POST', headers: J(), body: '{}' });
+      const d = await r.json();
+      if (!r.ok) return showToastError(d.error || 'OTA failed');
+      showToast('✅ ' + (d.message || 'OTA pushed'));
+      loadDeployedApps();
+    } catch (e) { showToastError('Network error'); }
+  };
+  window.rollbackApp = async function (id) {
+    if (!confirm('Roll back to the previous build?')) return;
+    try {
+      const r = await A('/api/app-builder/builds/' + encodeURIComponent(id) + '/rollback', { method: 'POST', headers: J(), body: '{}' });
+      const d = await r.json();
+      if (!r.ok) return showToastError(d.error || 'Rollback failed');
+      showToast('✅ ' + (d.message || 'Rolled back'));
+      loadDeployedApps();
+    } catch (e) { showToastError('Network error'); }
+  };
+})();
 
 // --- TOAST ---
 function showToast(msg) {
@@ -4815,7 +4968,7 @@ function addDeployedApp(name, state) {
     <td>v1.0.0</td>
     <td>0</td>
     <td><span class="sdot green"></span>Just Compiled</td>
-    <td><button class="btn btn-s btn-sm" onclick="showToast('Pushing OTA Update')">Push Update</button></td>
+    <td><button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">Push Update</button></td>
   `;
   tbody.prepend(tr);
 }
@@ -7577,7 +7730,7 @@ function amLinkDatabase() {
   if (list) {
     const row = document.createElement('div');
     row.className = 'db-instance-row';
-    row.innerHTML = `<div style="display:flex;align-items:center"><div class="db-dot idle"></div><div><div style="font-size:13px;font-weight:600">${name}</div><div style="font-size:11px;color:var(--text2)">Linked · just now</div></div></div><div style="display:flex;gap:6px"><span class="tag tag-b">Idle</span><button class="btn btn-s btn-sm" onclick="showToast('Ping OK')">Ping</button></div>`;
+    row.innerHTML = `<div style="display:flex;align-items:center"><div class="db-dot idle"></div><div><div style="font-size:13px;font-weight:600">${name}</div><div style="font-size:11px;color:var(--text2)">Linked · just now</div></div></div><div style="display:flex;gap:6px"><span class="tag tag-b">Idle</span><button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">Ping</button></div>`;
     list.appendChild(row);
   }
 }
@@ -7723,7 +7876,7 @@ function amShowDownloads(name, formats) {
     const c = fmtConfig[f] || { icon:'📄', label:f.toUpperCase(), size:'—' };
     return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:9px">
       <div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">${c.icon}</span><div><div style="font-size:12px;font-weight:600">${c.label}</div><div style="font-size:11px;color:var(--text2)">${c.size}</div></div></div>
-      <button class="btn btn-g btn-sm" onclick="showToast('⬇️ Downloading ${safe}.${f}...')">⬇️ Download</button>
+      <button class="btn btn-g btn-sm" onclick="showToast('Not available yet')">⬇️ Download</button>
     </div>`;
   }).join('');
   dl.style.display = 'block';
@@ -7736,7 +7889,7 @@ function amAddDeployedApp(name, state) {
   tr.innerHTML = `<td><span style="font-weight:600">${name}</span></td><td>${state}</td><td>v1.0.0</td><td>0</td>
     <td><div style="width:16px;height:16px;border-radius:4px;background:var(--accent);display:inline-block"></div></td>
     <td><span class="sdot green"></span>Just Built</td>
-    <td><div style="display:flex;gap:4px"><button class="btn btn-s btn-sm" onclick="showToast('OTA pushed')">OTA Update</button><button class="btn btn-r btn-sm" onclick="showToast('Rollback initiated')">Rollback</button></div></td>`;
+    <td><div style="display:flex;gap:4px"><button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">OTA Update</button><button class="btn btn-r btn-sm" onclick="showToast('Not available yet')">Rollback</button></div></td>`;
   tbody.prepend(tr);
 }
 
@@ -8316,6 +8469,26 @@ window.selectTheme = function(el, color) {
 
 
 <!-- ══════════ ICON LIBRARY MODAL (fixed) ══════════ -->
+<div class="modal-overlay" id="modal-ad-edit" onclick="if(event.target===this)closeModal('modal-ad-edit')">
+  <div class="modal" style="max-width:520px;width:95%">
+    <button class="modal-close" onclick="closeModal('modal-ad-edit')" style="color:#94a3b8">✕</button>
+    <div class="modal-title" style="font-size:20px;font-weight:800;color:#fff;margin-bottom:16px">Edit Campaign</div>
+    <input type="hidden" id="adedit-id">
+    <div class="form-row" style="margin-bottom:12px"><label class="lbl">Campaign Name</label><input class="inp" id="adedit-name"></div>
+    <div class="form-row" style="margin-bottom:12px"><label class="lbl">Advertiser</label><input class="inp" id="adedit-advertiser"></div>
+    <div class="form-row" style="margin-bottom:12px"><label class="lbl">Description</label><input class="inp" id="adedit-desc"></div>
+    <div class="form-row" style="margin-bottom:20px"><label class="lbl">Status</label>
+      <select class="sel" id="adedit-status">
+        <option value="draft">Draft</option><option value="live">Live</option>
+        <option value="paused">Paused</option><option value="expired">Expired</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn btn-s btn-sm" onclick="closeModal('modal-ad-edit')">Cancel</button>
+      <button class="btn btn-p btn-sm" onclick="saveAdEdit()">Save Changes</button>
+    </div>
+  </div>
+</div>
 <div class="modal-bg" id="icon-library-modal">
   <div class="modal" style="max-width:620px;width:95vw;padding:24px">
     <button class="modal-close" onclick="closeModal('icon-library-modal')">✕</button>
@@ -9472,7 +9645,7 @@ async function loadTenantFiles() {
       <td style="font-size:11px">${ota}</td>
       <td>${badge}</td>
       <td>${hash}</td>
-      <td><button class="btn btn-s" style="font-size:10px;padding:3px 8px" onclick="showToast('Pushing OTA update for ${f.app_name}')">OTA Push</button></td>
+      <td><button class="btn btn-s" style="font-size:10px;padding:3px 8px" onclick="showToast('Not available yet')">OTA Push</button></td>
     </tr>`;
   }).join('');
 
@@ -9559,6 +9732,7 @@ async function loadNotifAnalyticsSubTab() {
      ═══════════════════════════════════════════════════════════════ -->  
 
   
+<script src="/api-client.js" defer></script>
 <script src="/ads-compliance.js"></script>
 
 <script>
@@ -10870,7 +11044,7 @@ if (typeof originalDoLogin === 'function') {
 // DPDPA 2023 COMPLIANCE TRACKER - Dynamic Real-Time Status
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function renderDPDPATracker() {
+async function renderDPDPATracker_OLD_UNUSED() {
   const container = document.getElementById('dpdpa-tracker');
   if (!container) return;
 
@@ -11132,6 +11306,53 @@ async function checkAuditTrail() {
 }
 
 
+// ════════════════════════════════════════════════════════════════
+// LIVE DPDP COMPLIANCE TRACKER — reflects REAL backend state.
+// ════════════════════════════════════════════════════════════════
+async function renderDPDPATracker() {
+  const container = document.getElementById('dpdpa-tracker');
+  if (!container) return;
+  container.innerHTML = '<div style="color:var(--text3);font-size:12px;text-align:center;padding:20px;">⏳ Checking live compliance status…</div>';
+  try {
+    const call = (window.MitraAPI ? MitraAPI.api : fetch);
+    const res  = await call('/api/compliance/status', { headers: (typeof authHeaders === 'function' ? authHeaders() : {}) });
+    if (!res.ok) throw new Error('status ' + res.status);
+    const data = await res.json();
+    const checks = data.checks || [];
+    container.innerHTML = checks.map(item => {
+      const ok = !!item.status;
+      const crit = item.severity === 'critical' && !ok;
+      return `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px;background:${ok ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)'};border-radius:8px;border:1px solid ${ok ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'};margin-bottom:6px;">
+        <div style="font-size:18px;flex-shrink:0;">${ok ? '✅' : (crit ? '⛔' : '❌')}</div>
+        <div style="flex:1;">
+          <div style="font-weight:600;font-size:13px;color:${ok ? 'var(--green)' : 'var(--red)'};">
+            ${item.title}${item.severity ? ` <span style="font-size:9px;opacity:.7;text-transform:uppercase">· ${item.severity}</span>` : ''}
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px;">${item.description || ''}</div>
+        </div>
+      </div>`;
+    }).join('');
+    const passCount = data.passed != null ? data.passed : checks.filter(c => c.status).length;
+    const totalCount = data.total != null ? data.total : checks.length;
+    const percentage = totalCount ? Math.round((passCount / totalCount) * 100) : 0;
+    const scoreEl = document.getElementById('dpdpa-score');
+    if (scoreEl) {
+      scoreEl.textContent = `${passCount}/${totalCount}`;
+      if (data.critical_ok === false) { scoreEl.style.background = 'rgba(239,68,68,0.15)'; scoreEl.style.color = 'var(--red)'; }
+      else if (percentage === 100)    { scoreEl.style.background = 'rgba(16,185,129,0.15)'; scoreEl.style.color = 'var(--green)'; }
+      else if (percentage >= 80)      { scoreEl.style.background = 'rgba(251,191,36,0.15)'; scoreEl.style.color = 'var(--yellow)'; }
+      else                            { scoreEl.style.background = 'rgba(239,68,68,0.15)'; scoreEl.style.color = 'var(--red)'; }
+    }
+    const headline = document.getElementById('compliance-score');
+    if (headline) headline.textContent = percentage + '%';
+    const bar = document.getElementById('compliance-score-bar');
+    if (bar) bar.style.width = percentage + '%';
+  } catch (err) {
+    container.innerHTML = `<div style="color:var(--red);font-size:12px;text-align:center;padding:20px;">⚠️ Failed to load live compliance status<br><button class="btn btn-s btn-sm" onclick="renderDPDPATracker()" style="margin-top:10px;">🔄 Retry</button></div>`;
+  }
+}
+
 // Load on initial page view if already on compliance
 document.addEventListener('DOMContentLoaded', function() {
   const compliancePage = document.getElementById('page-compliance');
@@ -11165,6 +11386,7 @@ document.addEventListener('DOMContentLoaded', function() {
       setTimeout(function() {
         if (typeof initAdCharts === 'function') initAdCharts();
         if (typeof loadAdStats === 'function') loadAdStats();
+        if (typeof loadAdCampaigns === 'function') loadAdCampaigns();
       }, 100);
     }
 
@@ -11181,6 +11403,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (pageId === 'curriculum') {
       setTimeout(loadAllGeofenceStatuses, 300);
+    }
+
+    if (pageId === 'settings') {
+      setTimeout(function(){ if (typeof loadMyProfile === 'function') loadMyProfile(); }, 100);
+    }
+
+    if (pageId === 'app-builder') {
+      setTimeout(function(){ if (typeof loadDeployedApps === 'function') loadDeployedApps(); }, 100);
     }
   };
 

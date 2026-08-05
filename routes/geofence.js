@@ -4,18 +4,38 @@ const https  = require('https');
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
+const log = require('../lib/logger');
 router.use(authenticate);
+
+// ── Point-in-polygon (ray casting) — supports Polygon & MultiPolygon ─────────
+// GeoJSON coordinates are [lng, lat], note the order vs the rest of this file.
+function pointInPolygon(lat, lng, geojson) {
+  if (!geojson || !geojson.coordinates) return false;
+  const polygons = geojson.type === 'MultiPolygon' ? geojson.coordinates : [geojson.coordinates];
+  for (const poly of polygons) {
+    const ring = poly[0];
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      const intersect = ((yi > lat) !== (yj > lat)) &&
+        (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    if (inside) return true;
+  }
+  return false;
+}
 
 router.get('/', async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('geofences').get();
-    if (!snap.empty) return res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-  } catch (_) {}
-  res.json([
-    { id: 'geo-1', name: 'Gujarat Zone', state: 'Gujarat', district: null, radius_km: 50, is_active: true, has_geojson: false },
-    { id: 'geo-2', name: 'Anand District', state: 'Gujarat', district: 'Anand', radius_km: 25, is_active: true, has_geojson: false },
-  ]);
+    return res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load geofences');
+    return res.status(500).json({ error: 'Failed to load geofences' });
+  }
 });
 
 router.post('/', requirePerm('perm_manage_geo'), async (req, res) => {
@@ -88,7 +108,17 @@ router.get('/check-point', async (req, res) => {
 
     snap.docs.forEach(d => {
       const geo = d.data();
-      // Every geofence must have lat/lng centre + radius_km stored when created
+      if (geo.has_geojson && geo.geojson) {
+        // Preferred: real boundary check
+        if (pointInPolygon(lat, lng, geo.geojson)) {
+          matches.push({
+            id: d.id, name: geo.name, state: geo.state, district: geo.district,
+            method: 'boundary',
+          });
+        }
+        return;
+      }
+      // Fallback: circle check for geofences with no polygon attached yet
       if (!geo.lat || !geo.lng || !geo.radius_km) return;
       const dist = haversineKm(lat, lng, geo.lat, geo.lng);
       if (dist <= geo.radius_km) {
@@ -99,6 +129,7 @@ router.get('/check-point', async (req, res) => {
           district:  geo.district,
           radius_km: geo.radius_km,
           distance_km: parseFloat(dist.toFixed(2)),
+          method: 'radius',
         });
       }
     });

@@ -7,22 +7,18 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
+const log = require('../lib/logger');
 router.use(authenticate);
 
 router.get('/', async (req, res) => {
   try {
     const db = getFirestore();
     const snap = await db.collection('quizzes').limit(50).get();
-    if (!snap.empty) return res.json({ data: snap.docs.map(d => ({ id: d.id, ...d.data() })), total: snap.size });
-  } catch (_) {}
-  res.json({
-    data: [
-      { id: 'quiz-1', title: 'Science Chapter 1 Quiz', class_name: 'Class 9', subject: 'Science', topic: 'Cell Structure', language: 'English', status: 'published', question_count: 10 },
-      { id: 'quiz-2', title: 'Mathematics Chapter 2 Quiz', class_name: 'Class 8', subject: 'Mathematics', topic: 'Algebra', language: 'Hindi', status: 'published', question_count: 15 },
-      { id: 'quiz-3', title: 'Social Science Quiz', class_name: 'Class 7', subject: 'Social Science', topic: 'Indian History', language: 'English', status: 'draft', question_count: 8 },
-    ],
-    total: 3,
-  });
+    return res.json({ data: snap.docs.map(d => ({ id: d.id, ...d.data() })), total: snap.size });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load quizzes');
+    res.status(500).json({ error: 'Failed to load quizzes' });
+  }
 });
 
 router.get('/:id', async (req, res) => {
@@ -30,8 +26,11 @@ router.get('/:id', async (req, res) => {
     const db  = getFirestore();
     const doc = await db.collection('quizzes').doc(req.params.id).get();
     if (doc.exists) return res.json({ id: doc.id, ...doc.data() });
-  } catch (_) {}
-  res.json({ id: req.params.id, title: 'Quiz', questions: [] });
+    return res.status(404).json({ error: 'Quiz not found' });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load quiz');
+    res.status(500).json({ error: 'Failed to load quiz' });
+  }
 });
 
 router.get('/:id/questions', async (req, res) => {
@@ -39,15 +38,11 @@ router.get('/:id/questions', async (req, res) => {
     const db   = getFirestore();
     const snap = await db.collection('quizzes').doc(req.params.id)
                          .collection('questions').orderBy('sort_order').get();
-    if (!snap.empty) {
-      return res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }
-  } catch (_) {}
-  // Fallback until real questions are added via dashboard
-  res.json([
-    { id: uuidv4(), question_text: 'What is the powerhouse of the cell?', options: ['Nucleus', 'Mitochondria', 'Ribosome', 'Golgi Apparatus'], correct_answer_index: 1, explanation: 'Mitochondria produces ATP energy.' },
-    { id: uuidv4(), question_text: 'Which process makes food in plants?', options: ['Respiration', 'Digestion', 'Photosynthesis', 'Absorption'], correct_answer_index: 2, explanation: 'Photosynthesis uses sunlight to make food.' },
-  ]);
+    return res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load quiz questions');
+    res.status(500).json({ error: 'Failed to load questions' });
+  }
 });
 
 router.post('/', requirePerm('perm_edit_curriculum'), async (req, res) => {
@@ -287,6 +282,108 @@ router.get('/template', requirePerm('perm_edit_curriculum'), (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="MITRA_Quiz_Template.xlsx"');
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.send(buf);
+});
+
+// ── Change #31: Quiz analytics KPIs + top quizzes table ──────────────────────
+router.get('/analytics', async (req, res) => {
+  try {
+    const db = getFirestore();
+    const [attemptsSnap, quizzesSnap] = await Promise.all([
+      db.collection('quiz_attempts').limit(2000).get(),
+      db.collection('quizzes').get(),
+    ]);
+    const attempts = attemptsSnap.docs.map(d => d.data());
+    const total_attempts  = attempts.length;
+    const unique_students = new Set(attempts.map(a => a.student_id).filter(Boolean)).size;
+    const avg_score_pct   = total_attempts
+      ? parseFloat((attempts.reduce((s, a) => s + (a.score || 0), 0) / total_attempts).toFixed(1))
+      : 0;
+    const published_quizzes = quizzesSnap.docs.filter(d => d.data().status === 'published').length;
+    const completion_rate = (published_quizzes && unique_students)
+      ? parseFloat(Math.min(100, (total_attempts / (published_quizzes * unique_students)) * 100).toFixed(1))
+      : 0;
+
+    const perQuiz = {};
+    attempts.forEach(a => {
+      if (!a.quiz_id) return;
+      perQuiz[a.quiz_id] = perQuiz[a.quiz_id] || { attempts: 0, total_score: 0 };
+      perQuiz[a.quiz_id].attempts++;
+      perQuiz[a.quiz_id].total_score += (a.score || 0);
+    });
+    const quizTitleMap = {};
+    quizzesSnap.docs.forEach(d => { quizTitleMap[d.id] = d.data().title; });
+    const top_quizzes = Object.entries(perQuiz)
+      .map(([quiz_id, d]) => ({
+        quiz_id, title: quizTitleMap[quiz_id] || quiz_id,
+        attempts: d.attempts,
+        avg_score_pct: parseFloat((d.total_score / d.attempts).toFixed(1)),
+      }))
+      .sort((a, b) => b.attempts - a.attempts)
+      .slice(0, 10);
+
+    res.json({ kpi: { total_attempts, unique_students, avg_score_pct, completion_rate }, top_quizzes });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load quiz analytics');
+    res.status(500).json({ error: 'Failed to load quiz analytics' });
+  }
+});
+
+// ── Change #32: Quiz analytics export (XLSX) ──────────────────────────────────
+router.get('/analytics/export', requirePerm('perm_export_data'), async (req, res) => {
+  try {
+    const XLSX = require('xlsx');
+    const db   = getFirestore();
+    const snap = await db.collection('quiz_attempts').limit(5000).get();
+    const rows = snap.docs.map(d => {
+      const a = d.data();
+      return {
+        'Quiz ID': a.quiz_id || '',
+        'Student ID': a.student_id || '',
+        'Score %': a.score || 0,
+        'Time (secs)': a.time_secs || '',
+        'Subject': a.subject || '',
+        'State': a.state || '',
+        'District': a.district || '',
+        'Submitted At': a.submitted_at && a.submitted_at.toDate ? a.submitted_at.toDate().toISOString() : '',
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Quiz Attempts');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="Quiz_Analytics_Export.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) {
+    log.error({ err: err.message }, 'Quiz analytics export failed');
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// ── Change #33: Bulk actions (delete / publish / archive / pause) ────────────
+router.post('/bulk-action', requirePerm('perm_edit_curriculum'), async (req, res) => {
+  try {
+    const { action, quizIds } = req.body || {};
+    if (!Array.isArray(quizIds) || !quizIds.length) {
+      return res.status(400).json({ error: 'quizIds required' });
+    }
+    const statusForAction = { publish: 'published', archive: 'archived', pause: 'draft' };
+    if (action !== 'delete' && !statusForAction[action]) {
+      return res.status(400).json({ error: 'Unknown action: ' + action });
+    }
+    const db    = getFirestore();
+    const batch = db.batch();
+    quizIds.forEach(id => {
+      const ref = db.collection('quizzes').doc(id);
+      if (action === 'delete') batch.delete(ref);
+      else batch.update(ref, { status: statusForAction[action], updated_at: new Date() });
+    });
+    await batch.commit();
+    res.json({ message: `Applied "${action}" to ${quizIds.length} quizzes`, action, count: quizIds.length });
+  } catch (err) {
+    log.error({ err: err.message }, 'Quiz bulk-action failed');
+    res.status(500).json({ error: 'Bulk action failed' });
+  }
 });
 
 module.exports = router;

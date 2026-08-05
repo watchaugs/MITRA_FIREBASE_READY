@@ -28,7 +28,7 @@ const compression = require('compression');
 const log = require('./lib/logger');
 const secrets = require('./lib/secrets');
 
-const { authLimiter, apiLimiter, complianceLimiter, notifSendLimiter } = require('./middleware/rateLimiter');
+const { authLimiter, apiLimiter, complianceLimiter, notifSendLimiter, createRateLimiter } = require('./middleware/rateLimiter');
 const path = require('path');
 
 // ── Boot order ───────────────────────────────────────────────────────────────
@@ -67,21 +67,7 @@ async function boot() {
 
   const app = express();
 
-  // ── Strict CORS Firewall ──────────────────────────────────────────────────
-  // Only accept requests from the official Firebase frontend (and localhost for local development)
-  app.use(cors({
-      origin: [
-          'https://watchaugs-mitra.web.app', 
-          'https://watchaugs-mitra.firebaseapp.com',
-          'http://localhost:3000',
-          'http://localhost:5000',
-          'http://127.0.0.1:3000',
-      ],
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      credentials: true
-  }));
-
-  // ── Trust proxy ─────────────────────────────────────────────────────────────
+  // ── Trust proxy ─────────────────────────────────────────────────────────────  // 
   // Cloud Run sits behind exactly one proxy hop. Local dev: trust nothing.
   const trustProxy = process.env.TRUST_PROXY;
   if (trustProxy === 'true') app.set('trust proxy', true);
@@ -199,7 +185,8 @@ async function boot() {
   app.use('/api/compliance/purge-user',     complianceLimiter);
   app.use('/api/compliance/run-auto-purge', complianceLimiter);
   app.use('/api/compliance',   complianceRoutes);
-  app.use('/api/consent',      consentRoutes);
+  const consentLimiter = createRateLimiter({ windowMs: 60_000, max: 20, message: 'Too many consent requests.' });
+  app.use('/api/consent',      consentLimiter, consentRoutes);
   app.use('/api/users',        usersRoutes);
   app.use('/api/ads',          advertisementsRoutes);
   app.use('/api/tenant',       tenantRoutes);

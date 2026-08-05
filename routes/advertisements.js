@@ -1,19 +1,50 @@
 'use strict';
 const router = require('express').Router();
+const multer  = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
+const { filterByState, canAccessState } = require('../lib/stateScope');
+const storage = require('../lib/storage');
+const log = require('../lib/logger');
 router.use(authenticate);
+const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
 
 // ── GET /  — List all ad campaigns ───────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('ad_campaigns').orderBy('created_at', 'desc').limit(100).get();
-    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // National admins see all; a state user sees their own state's ads + national (stateless) ads.
+    const all  = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const data = all.filter(a => !a.state || canAccessState(req, a.state));
     res.json({ data, total: data.length });
-  } catch (_) {
-    res.json({ data: [], total: 0 });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load ad campaigns');
+    res.status(500).json({ error: 'Failed to load ad campaigns' });
+  }
+});
+
+// ── Change #27: POST /upload — Ad creative file upload ───────────────────────
+router.post('/upload', requirePerm('perm_manage_ads'), memUpload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file provided' });
+  try {
+    const result = await storage.put('ad_creative', req.file.originalname, req.file.buffer);
+    const id = uuidv4();
+    const doc = {
+      id, category: 'ad_creative',
+      storage_key: result.key,
+      original_name: result.originalName,
+      size: result.size,
+      uploaded_by: req.user.id,
+      created_at: new Date(),
+    };
+    await getFirestore().collection('uploads').doc(id).set(doc);
+    const url = `/api/uploads/file/${encodeURIComponent(result.key)}`;
+    res.status(201).json({ ...doc, url });
+  } catch (err) {
+    log.error({ err: err.message }, 'Ad creative upload failed');
+    res.status(err.status || 500).json({ error: err.message || 'Upload failed' });
   }
 });
 
@@ -118,9 +149,14 @@ router.post('/', requirePerm('perm_manage_ads'), async (req, res) => {
 // ── PUT /:id  — Update ad campaign ───────────────────────────────────────────
 router.put('/:id', requirePerm('perm_manage_ads'), async (req, res) => {
   try {
-    const db = getFirestore();
-    await db.collection('ad_campaigns').doc(req.params.id)
-      .update({ ...req.body, updated_at: new Date() });
+    const db  = getFirestore();
+    const ref = db.collection('ad_campaigns').doc(req.params.id);
+    const cur = await ref.get();
+    if (!cur.exists) return res.status(404).json({ error: 'Not found' });
+    if (cur.data().state && !canAccessState(req, cur.data().state)) {
+      return res.status(403).json({ error: 'Your account cannot edit this state\'s campaign.' });
+    }
+    await ref.update({ ...req.body, updated_at: new Date() });
     res.json({ id: req.params.id, ...req.body });
   } catch (_) {
     res.status(500).json({ error: 'Failed to update ad campaign' });

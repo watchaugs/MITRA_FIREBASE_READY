@@ -319,4 +319,50 @@ router.post('/reset-password', async (req, res) => {
   }
 });
 
+// ── PUT /api/auth/me/profile ─── update your own display name ────────────────
+router.put('/me/profile', authenticate, async (req, res) => {
+  try {
+    const { full_name } = req.body || {};
+    if (!full_name || typeof full_name !== 'string' || full_name.trim().length < 2) {
+      return res.status(400).json({ error: 'Full name must be at least 2 characters.' });
+    }
+    if (full_name.length > 120) return res.status(400).json({ error: 'Full name too long.' });
+    const db = getFirestore();
+    await db.collection('dashboard_users').doc(req.user.id)
+      .update({ full_name: full_name.trim(), updated_at: new Date() });
+    res.json({ success: true, full_name: full_name.trim() });
+  } catch (err) {
+    log.error({ err: err.message }, 'update profile error');
+    res.status(500).json({ error: 'Failed to update profile.' });
+  }
+});
+
+// ── POST /api/auth/me/change-password ─── change your own password ───────────
+router.post('/me/change-password', authenticate, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current and new password are required.' });
+    }
+    if (newPassword.length < 12) {
+      return res.status(400).json({ error: 'New password must be at least 12 characters.' });
+    }
+    if (newPassword === currentPassword) {
+      return res.status(400).json({ error: 'New password must be different from the current one.' });
+    }
+    const db  = getFirestore();
+    const ref = db.collection('dashboard_users').doc(req.user.id);
+    const doc = await ref.get();
+    if (!doc.exists) return res.status(404).json({ error: 'User not found.' });
+    const match = await bcrypt.compare(currentPassword, doc.data().password_hash || '');
+    if (!match) return res.status(401).json({ error: 'Current password is incorrect.' });
+    const password_hash = await bcrypt.hash(newPassword, 12);
+    await ref.update({ password_hash, password_changed_at: new Date() });
+    res.json({ success: true, message: 'Password updated.' });
+  } catch (err) {
+    log.error({ err: err.message }, 'change password error');
+    res.status(500).json({ error: 'Failed to change password.' });
+  }
+});
+
 module.exports = router;

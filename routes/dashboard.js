@@ -1,9 +1,9 @@
 /**
  * routes/dashboard.js — Dashboard summary KPIs
- * MODIFIED: Returns realistic mock data. Real data via BigQuery post-launch.
  */
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
+const log = require('../lib/logger');
 router.use(authenticate);
 
 router.get('/summary', async (req, res) => {
@@ -11,7 +11,7 @@ router.get('/summary', async (req, res) => {
     const db = require('../lib/firebase').getFirestore();
     const [apps, users, assets, quizzes, campaigns] = await Promise.all([
       db.collection('app_builds').where('status', '==', 'live').get(),
-      db.collection('users').where('is_active', '==', true).get(),
+      db.collection('dashboard_users').where('is_active', '==', true).get(),
       db.collection('ar_assets').where('status', '==', 'published').get(),
       db.collection('quizzes').where('status', '==', 'published').get(),
       db.collection('ad_campaigns').where('status', '==', 'active').get(),
@@ -22,7 +22,9 @@ router.get('/summary', async (req, res) => {
       const studentSnap = await db.collection('telemetry_sessions')
         .select('student_id').limit(5000).get();
       active_students = new Set(studentSnap.docs.map(d => d.data().student_id)).size;
-    } catch (_) {}
+    } catch (err) {
+      log.error({ err: err.message }, 'Failed to count active students');
+    }
 
     res.json({
       live_apps:         apps.size,
@@ -33,7 +35,7 @@ router.get('/summary', async (req, res) => {
       active_students,
     });
   } catch (err) {
-    // Firestore unavailable — return zeros rather than crash
+    log.error({ err: err.message }, 'Dashboard summary failed — returning zeros');
     res.json({ live_apps: 0, user_accounts: 0, published_assets: 0, published_quizzes: 0, live_ad_campaigns: 0, active_students: 0 });
   }
 });

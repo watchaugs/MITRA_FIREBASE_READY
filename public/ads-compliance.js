@@ -132,9 +132,12 @@ function handleAdUpload(input) {
 }
 
 /** Campaign controls */
+let _lastSavedAdCampaignId = null;
+
 function saveAdCampaign() {
   const name = (document.getElementById('ad-campaign-name') || {}).value || '';
   if (!name) { showToast('❌ Please enter a campaign name'); return; }
+  const token = localStorage.getItem('mitra_token');
   const payload = {
     name,
     advertiser: (document.getElementById('ad-advertiser') || {}).value,
@@ -142,43 +145,45 @@ function saveAdCampaign() {
     publish_at: (document.getElementById('ad-publish-date') || {}).value,
     expires_at: (document.getElementById('ad-expiry-date') || {}).value,
   };
-  fetch('/api/ads/campaigns', {
+  fetch('/api/ads', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
     body: JSON.stringify(payload),
   })
- .then(r => r.json())
-  .then(d => showToast('💾 Campaign saved (ID: ' + (d.id || 'draft') + ')'))
-  .catch(() => showToast('💾 Campaign draft saved locally'));
+  .then(r => r.json())
+  .then(d => {
+    _lastSavedAdCampaignId = d.id || null;
+    showToast('💾 Campaign saved (ID: ' + (d.id || 'draft') + ')');
+  })
+  .catch(() => showToast('❌ Could not save campaign — check your connection and try again'));
 }
 
 function publishAdCampaign() {
-  // 1. Grab the MITRA token
+  if (!_lastSavedAdCampaignId) {
+    showToast('❌ Save the campaign first, then publish it');
+    return;
+  }
   const token = localStorage.getItem('mitra_token');
-
-  // 2. Send request with the Authorization header
-  fetch('/api/ads/campaigns/publish', { 
-      method: 'POST', 
-      headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': token ? `Bearer ${token}` : ''
-      }, 
-      body: JSON.stringify({ status: 'live' }) 
+  fetch('/api/ads/' + _lastSavedAdCampaignId + '/publish', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': token ? `Bearer ${token}` : ''
+    },
   })
   .then(response => {
-      // 3. Handle the 401 Bouncer Error gracefully
-      if (response.status === 401) {
-          showToast('⚠️ Error: Unauthorized. Master Admin token missing.');
-          throw new Error('401');
-      }
-      return response.json().catch(() => ({})); 
+    if (response.status === 401) {
+      showToast('⚠️ Error: Unauthorized. Please log in again.');
+      throw new Error('401');
+    }
+    if (!response.ok) throw new Error('publish-failed');
+    return response.json().catch(() => ({}));
   })
   .then(() => showToast('🚀 Advertisement published to target apps!'))
   .catch((err) => {
-      // 4. Preserve your original UI behavior if it's a general network error
-      if (err.message !== '401') {
-          showToast('🚀 Advertisement published to target apps!');
-      }
+    if (err.message !== '401') {
+      showToast('❌ Publish failed — please try again');
+    }
   });
 }
 
@@ -729,7 +734,20 @@ function exportDPDPAReport() {
   _xlsxOrCSV(data, 'MITRA_DPDPA_Report');
 }
 
-function exportConsentLog() { showToast('Generating consent log XLSX…'); fetch('/api/compliance/consent-log/export').catch(() => {}); }
+function exportConsentLog() {
+  showToast('Generating consent log XLSX…');
+  const token = localStorage.getItem('mitra_token');
+  fetch('/api/compliance/consent-log/export', { headers: { 'Authorization': token ? `Bearer ${token}` : '' } })
+    .then(r => { if (!r.ok) throw new Error('export-failed'); return r.blob(); })
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'Consent_Log_Export.xlsx';
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    })
+    .catch(() => showToast('❌ Consent log export failed'));
+}
 function exportComplianceXLSX() {
   const findings = AUDIT_FINDINGS.map(f => ({ ID: f.id, Severity: f.sev, Title: f.title, Law: f.law, Description: f.desc, Status: f.status }));
   _xlsxOrCSV(findings, 'MITRA_Compliance_Full');
@@ -737,7 +755,17 @@ function exportComplianceXLSX() {
 function exportComplianceCSV() { exportComplianceXLSX(); }
 function exportData(type, fmt) {
   showToast('Generating ' + type + ' ' + fmt.toUpperCase() + '…');
-  fetch('/api/compliance/export?type=' + type + '&format=' + fmt).catch(() => {});
+  const token = localStorage.getItem('mitra_token');
+  fetch('/api/compliance/export?type=' + type + '&format=' + fmt, { headers: { 'Authorization': token ? `Bearer ${token}` : '' } })
+    .then(r => { if (!r.ok) throw new Error('export-failed'); return r.blob(); })
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'Compliance_Export.' + fmt;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    })
+    .catch(() => showToast('❌ Export failed'));
 }
 
 function _xlsxOrCSV(data, filename) {
@@ -913,13 +941,13 @@ async function saveDPO() {
 
     try {
         // 2. Send the secure request to the database
-        const response = await fetch('/api/compliance/dpo', { // Update this path if your backend uses a dedicated officer route
+        const response = await fetch('/api/compliance/officers', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': token ? `Bearer ${token}` : ''
             },
-            body: JSON.stringify({ key: 'dpo_name', value: name, email: email })
+            body: JSON.stringify({ dpo: { name, email } })
         });
 
         if (!response.ok) {

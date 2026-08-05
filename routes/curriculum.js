@@ -8,18 +8,22 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
+const log = require('../lib/logger');
 router.use(authenticate);
 
 // ── GET / and /tree — Reads from Firestore curriculum collection ──────────────
 async function getCurriculumNodes() {
+  const db = getFirestore();
+  let snap = null;
   try {
-    const db   = getFirestore();
-    const snap = await db.collection('curriculum').get();
-    if (!snap.empty) {
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    }
-  } catch (_) {}
-  // Fallback mock — shown until real curriculum is added via dashboard
+    snap = await db.collection('curriculum').get();
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load curriculum — showing placeholder content, check this error');
+  }
+  if (snap && !snap.empty) {
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+  // Fallback mock — shown until real curriculum is added via dashboard, or if the read above failed (see log)
   return [
     { id: 'sub-science', node_type: 'subject', name: 'Science', icon: '🔬', sort_order: 1, is_active: true, parent_id: null },
     { id: 'sub-maths',   node_type: 'subject', name: 'Mathematics', icon: '📐', sort_order: 2, is_active: true, parent_id: null },
@@ -84,24 +88,26 @@ router.delete('/:id', requirePerm('perm_edit_curriculum'), async (req, res) => {
 // Returns published AR assets as "topics" — what the Flutter app uses to
 // display the lesson list and request the CDN URL for the GLB file.
 router.get('/ar-topics', async (req, res) => {
+  const db = getFirestore();
+  let snap = null;
   try {
-    const db   = getFirestore();
-    const snap = await db.collection('ar_assets')
-      .where('status', '==', 'published').limit(200).get();
-    if (!snap.empty) {
-      return res.json(snap.docs.map(d => ({
-        id:         d.id,
-        topic:      d.data().topic      || '',
-        class_name: d.data().class_name || '',
-        subject:    d.data().subject    || '',
-        language:   d.data().language   || 'English',
-        status:     d.data().status     || 'live',
-        unity_url:  d.data().unity_url  || null,
-        flutter_url:d.data().flutter_url|| null,
-      })));
-    }
-  } catch (_) {}
-  // Fallback — shown until first asset is published via dashboard
+    snap = await db.collection('ar_assets').where('status', '==', 'published').limit(200).get();
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load AR topics — showing placeholder content, check this error');
+  }
+  if (snap && !snap.empty) {
+    return res.json(snap.docs.map(d => ({
+      id:         d.id,
+      topic:      d.data().topic      || '',
+      class_name: d.data().class_name || '',
+      subject:    d.data().subject    || '',
+      language:   d.data().language   || 'English',
+      status:     d.data().status     || 'live',
+      unity_url:  d.data().unity_url  || null,
+      flutter_url:d.data().flutter_url|| null,
+    })));
+  }
+  // Fallback — shown until first asset is published via dashboard, or if the read above failed (see log)
   res.json([
     { id: 'demo-1', topic: 'Cell Division', class_name: 'Class 9', subject: 'Science', language: 'English', status: 'live', unity_url: null, flutter_url: null },
     { id: 'demo-2', topic: 'Photosynthesis', class_name: 'Class 8', subject: 'Science', language: 'English', status: 'live', unity_url: null, flutter_url: null },
@@ -117,7 +123,8 @@ router.post('/hierarchy', async (req, res) => {
     await db.collection('curriculum_hierarchy').doc(state_code).set({ state_code, structure, updated_by: req.user?.id, updated_at: new Date() }, { merge: true });
     res.json({ message: 'Hierarchy saved', state_code });
   } catch (err) {
-    res.json({ message: 'Hierarchy received', state_code: req.body.state_code });
+    log.error({ err: err.message }, 'Failed to save curriculum hierarchy');
+    res.status(500).json({ error: 'Failed to save hierarchy' });
   }
 });
 

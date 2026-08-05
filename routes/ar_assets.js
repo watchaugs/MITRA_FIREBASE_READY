@@ -7,6 +7,7 @@ const { getFirestore } = require('../lib/firebase');
 const { compressGlb }  = require('../lib/draco');
 const storage          = require('../lib/storage');
 const { authenticate, requirePerm } = require('../middleware/auth');
+const log = require('../lib/logger');
 // NOTE: fs and UPLOAD_DIR removed — all file I/O now goes through lib/storage.js
 // In dev (no STORAGE_BUCKET set): files save to ./uploads/ on local disk
 // In prod (STORAGE_BUCKET set):   files save to GCS bucket → later swapped to R2
@@ -93,7 +94,8 @@ router.post('/upload', requirePerm('perm_upload_unity'),
       );
       await db.collection('ar_assets').doc(id).set(cleanDoc);
     } catch (err) {
-      console.error('Firestore write failed:', err.message);
+      log.error({ err: err.message }, 'AR asset Firestore write failed — file uploaded but not recorded');
+      return res.status(500).json({ error: 'Upload saved the file but failed to record it. Please retry.' });
     }
     res.status(201).json({ message: 'AR Asset uploaded', asset: doc });
   }
@@ -103,29 +105,31 @@ router.get('/assets', async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('ar_assets').limit(100).get();
-    if (!snap.empty) return res.json({ data: snap.docs.map(d => ({ id: d.id, ...d.data() })), total: snap.size });
-  } catch (_) {}
-  res.json({ data: [], total: 0 });
+    return res.json({ data: snap.docs.map(d => ({ id: d.id, ...d.data() })), total: snap.size });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load AR assets');
+    return res.status(500).json({ error: 'Failed to load AR assets' });
+  }
 });
 
 router.get('/topics', async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('ar_assets').where('status', '==', 'published').limit(200).get();
-    if (!snap.empty) {
-      return res.json(snap.docs.map(d => ({
-        id:          d.id,
-        topic:       d.data().topic       || '',
-        class_name:  d.data().class_name  || '',
-        subject:     d.data().subject     || '',
-        language:    d.data().language    || 'English',
-        status:      d.data().status      || 'live',
-        unity_url:   d.data().unity_url   || null,
-        flutter_url: d.data().flutter_url || null,
-      })));
-    }
-  } catch (_) {}
-  res.json([]);
+    return res.json(snap.docs.map(d => ({
+      id:          d.id,
+      topic:       d.data().topic       || '',
+      class_name:  d.data().class_name  || '',
+      subject:     d.data().subject     || '',
+      language:    d.data().language    || 'English',
+      status:      d.data().status      || 'live',
+      unity_url:   d.data().unity_url   || null,
+      flutter_url: d.data().flutter_url || null,
+    })));
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load AR topics');
+    return res.status(500).json({ error: 'Failed to load AR topics' });
+  }
 });
 
 router.get('/assets/:id', async (req, res) => {
@@ -133,8 +137,11 @@ router.get('/assets/:id', async (req, res) => {
     const db  = getFirestore();
     const doc = await db.collection('ar_assets').doc(req.params.id).get();
     if (doc.exists) return res.json({ id: doc.id, ...doc.data() });
-  } catch (_) {}
-  res.status(404).json({ error: 'Asset not found' });
+    return res.status(404).json({ error: 'Asset not found' });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load AR asset');
+    return res.status(500).json({ error: 'Failed to load asset' });
+  }
 });
 
 router.put('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => {
