@@ -178,7 +178,9 @@ router.post('/verify-otp', async (req, res) => {
   try {
     const { phone, otp, role } = req.body;
 
-    if (otp !== '123456') {
+    // Master OTP is only accepted outside production (local testing).
+    const masterOtp = process.env.NODE_ENV === 'production' ? null : '123456';
+    if (!masterOtp || otp !== masterOtp) {
       return res.status(400).json({ message: 'OTP is incorrect. Please try again.' });
     }
 
@@ -241,6 +243,56 @@ router.post('/refresh', async (req, res) => {
   } catch (err) {
     log.error({ err: err.message }, 'refresh error');
     res.status(500).json({ error: 'Token refresh failed' });
+  }
+});
+
+// ── POST /api/auth/firebase — Mobile app exchanges a Firebase ID token ─────────
+// The Flutter app signs the student in with real Firebase Phone OTP, then sends
+// the Firebase ID token here. We verify it and mint our own access/refresh JWTs.
+router.post('/firebase', async (req, res) => {
+  try {
+    const idToken = req.body?.id_token;
+    const role    = req.body?.role || 'student';
+    if (!idToken || typeof idToken !== 'string') {
+      return res.status(400).json({ error: 'id_token required' });
+    }
+
+    const firebase = require('../lib/firebase');
+    let decodedFirebase;
+    try {
+      decodedFirebase = await firebase.verifyIdToken(idToken);
+    } catch {
+      return res.status(401).json({ error: 'Invalid Firebase token' });
+    }
+
+    const userId = decodedFirebase.uid;
+    const db     = getFirestore();
+
+    let userData = { role };
+    try {
+      const doc = await db.collection('users').doc(userId).get();
+      if (doc.exists) userData = { ...userData, ...doc.data() };
+    } catch { /* profile may not exist yet — proceed with minimal claims */ }
+
+    const familyId     = uuidv4();
+    const accessToken  = signAccess({ id: userId, role: userData.role || role, ...userData });
+    const refreshToken = signRefresh(userId, familyId);
+
+    return res.json({
+      access_token:  accessToken,
+      accessToken,
+      refresh_token: refreshToken,
+      refreshToken,
+      expires_in:    28800,
+      user: {
+        id:   userId,
+        name: userData.full_name || userData.name || 'User',
+        role: userData.role || role,
+      },
+    });
+  } catch (err) {
+    log.error({ err: err.message }, 'firebase-exchange error');
+    res.status(500).json({ error: 'Firebase login failed' });
   }
 });
 

@@ -1,29 +1,16 @@
-const { Storage } = require('@google-cloud/storage');
-const path = require('path');
+// controllers/uploadController.js
+// ─────────────────────────────────────────────────────────────────────────────
+// DEPRECATED direct-to-GCS uploader. This used to hardcode a bucket name, which
+// breaks the Cloudflare-migration seam. All real uploads now go through
+// lib/storage.js (which honours STORAGE_BUCKET today and R2 later).
+//
+// This stub is kept only so any accidental import doesn't crash the server.
+// It intentionally does NOT talk to any bucket directly.
+// ─────────────────────────────────────────────────────────────────────────────
+'use strict';
 
-// This connects to your Google Cloud using the key we downloaded
-const storage = new Storage({
-  keyFilename: path.join(__dirname, '../gcp-key.json') 
-});
-const bucket = storage.bucket('watchaugs-mitra-public-content');
-
-exports.handleUpload = async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
-
-  const cleanName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, '_');
-  const folder = cleanName.endsWith('.glb') || cleanName.endsWith('.usdz') ? 'ar-models/' : 'topic-images/';
-  const destinationPath = `${folder}${Date.now()}_${cleanName}`;
-  const blob = bucket.file(destinationPath);
-
-  const blobStream = blob.createWriteStream({
-    resumable: false,
-    contentType: req.file.mimetype,
+exports.handleUpload = async (_req, res) => {
+  return res.status(410).json({
+    error: 'This upload path is deprecated. Use /api/ar/upload (routes/ar_assets.js), which goes through lib/storage.js.',
   });
-
-  blobStream.on('finish', () => {
-    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
-    res.status(200).json({ success: true, url: publicUrl });
-  });
-
-  blobStream.end(req.file.buffer);
 };

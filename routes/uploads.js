@@ -99,6 +99,19 @@ router.get('/', requirePerm('perm_export_data'), async (req, res) => {
 router.get('/file/:key(*)', async (req, res) => {
   try {
     const key = decodeURIComponent(req.params.key);
+
+    // In production (GCS/R2), redirect to a direct URL so the bytes flow
+    // storage → phone WITHOUT passing through (and being billed by) Cloud Run.
+    // When a CDN domain is configured later, prefer that public URL.
+    if (process.env.STORAGE_BUCKET || process.env.R2_PUBLIC_URL) {
+      if (process.env.R2_PUBLIC_URL) {
+        return res.redirect(302, `${process.env.R2_PUBLIC_URL}/${key}`);
+      }
+      const signed = await storage.signedUrl(key, { expiresInMin: 60 });
+      return res.redirect(302, signed);
+    }
+
+    // Local dev only: stream from disk.
     const stream = await storage.getStream(key);
     stream.pipe(res);
   } catch (err) {

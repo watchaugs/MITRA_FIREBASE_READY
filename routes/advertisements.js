@@ -102,6 +102,22 @@ router.get('/impressions', async (req, res) => {
   }
 });
 
+// POST /impressions — the student app records that an ad was shown.
+// Never fail the app: always acknowledge so the client doesn't retry-loop.
+router.post('/impressions', async (req, res) => {
+  try {
+    const db = getFirestore();
+    await db.collection('ad_impressions').add({
+      ...req.body,
+      created_at: new Date(),
+      source: 'student_app',
+    });
+    res.status(202).json({ received: true });
+  } catch (_) {
+    res.status(202).json({ received: true, queued: true });
+  }
+});
+
 // ── GET /analytics/overview  ──────────────────────────────────────────────────
 router.get('/analytics/overview', async (req, res) => {
   try {
