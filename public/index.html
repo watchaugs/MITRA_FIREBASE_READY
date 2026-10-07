@@ -1564,11 +1564,21 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="hero-title">📊 <span class="grad">Analytics Engine</span> — Deep Insights Platform</div>
     <div style="font-size:13px;color:var(--text2);max-width:620px;line-height:1.6">Student usage, classroom engagement, location heatmaps, quiz performance and predictive insights — streamed live from deployed student apps across India.</div>
     <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;position:relative">
-      <button class="btn btn-p" onclick="toggleExportMenu()">📥 Export Data</button>
-      <div id="export-menu" style="display:none; position:absolute; left:0; top:44px; background:var(--card2); border:1px solid var(--border); border-radius:8px; padding:8px; z-index:9999; min-width:140px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
-        <button class="btn btn-s" style="width:100%; justify-content:flex-start; border:none; margin-bottom:4px;" onclick="exportData('csv')">Export as .CSV</button>
-        <button class="btn btn-s" style="width:100%; justify-content:flex-start; border:none;" onclick="exportData('xlsx')">Export as .XLSX</button>
-      </div>
+      <select id="exp-month" class="btn btn-s" style="min-width:120px">
+        <option value="01">January</option><option value="02">February</option>
+        <option value="03">March</option><option value="04">April</option>
+        <option value="05">May</option><option value="06">June</option>
+        <option value="07">July</option><option value="08">August</option>
+        <option value="09">September</option><option value="10">October</option>
+        <option value="11">November</option><option value="12">December</option>
+      </select>
+      <select id="exp-year" class="btn btn-s" style="min-width:90px"></select>
+      <select id="exp-scope" class="btn btn-s" style="min-width:140px">
+        <option value="">All India</option>
+      </select>
+      <button class="btn btn-g" onclick="exportData('csv')">📄 CSV</button>
+      <button class="btn btn-g" onclick="exportData('xlsx')">⬇️ XLSX</button>
+      <button class="btn btn-p" onclick="exportData('pptx')">📊 Download PPT</button>
     </div>
   </div>
 
@@ -5038,21 +5048,35 @@ document.addEventListener('click', function(event) {
 });
 
 async function exportData(format) {
-  document.getElementById('export-menu').style.display = 'none';
-  showToast(`⏳ Generating ${format.toUpperCase()} export from live data...`);
+  const menu = document.getElementById('export-menu');
+  if (menu) menu.style.display = 'none';
+  const month = document.getElementById('exp-month')?.value || '01';
+  const year  = document.getElementById('exp-year')?.value || new Date().getFullYear();
+  const scope = document.getElementById('exp-scope')?.value || '';
+  const ym = `${year}-${month}`;
+  showToast(`⏳ Generating ${format.toUpperCase()} for ${ym}...`);
   try {
     const token = localStorage.getItem('mitra_token') || '';
-    const res = await fetch(`/api/analytics/export?format=${format}&type=telemetry&days=30`, {
+    // PPT uses the reports endpoint; CSV/XLSX use the analytics export endpoint.
+    const stateParam = scope ? `&state=${encodeURIComponent(scope)}` : '';
+    const scopeLabel = scope || 'All India';
+    const endpoint = (format === 'pptx')
+      ? `/api/reports/monthly.pptx?month=${ym}&scope=${encodeURIComponent(scopeLabel)}`
+      : `/api/analytics/export?format=${format}&type=telemetry&month=${ym}${stateParam}`;
+    const res = await fetch(endpoint, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const res = await fetch(url, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
     if (!res.ok) { showToast('❌ Export failed'); return; }
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
+    const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
+    a.href = blobUrl;
     a.download = `MITRA_Analytics_${new Date().toISOString().slice(0,10)}.${format}`;
     document.body.appendChild(a); a.click();
-    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(blobUrl); }, 1000);
     showToast('✅ Export downloaded');
   } catch(e) { showToast('❌ Export failed — check connection'); }
 }
@@ -11667,5 +11691,22 @@ function enforceRolePermissions() {
     ">
 </div>
 
+<script>
+  (function(){
+    var y = document.getElementById('exp-year');
+    if (y) {
+      var now = new Date().getFullYear();
+      for (var i = now; i >= now - 3; i--) {
+        var o = document.createElement('option'); o.value = i; o.text = i; y.appendChild(o);
+      }
+      var m = document.getElementById('exp-month');
+      if (m) m.value = String(new Date().getMonth()+1).padStart(2,'0');
+    }
+    var sc = document.getElementById('exp-scope');
+    if (sc && typeof INDIA_STATES !== 'undefined') {
+      INDIA_STATES.forEach(function(s){ sc.add(new Option(s.name, s.name)); });
+    }
+  })();
+</script>
 </body>
 </html>

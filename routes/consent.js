@@ -31,8 +31,12 @@ router.post('/grant', async (req, res) => {
 router.post('/revoke', authenticate, async (req, res) => {
   try {
     const { student_id } = req.body;
+    if (!student_id) return res.status(400).json({ error: 'student_id required' });
     const db = getFirestore();
-    await db.collection('consent_records').doc(student_id).update({ granted: false, revoked_at: new Date() });
+    await db.collection('consent_records').doc(student_id).set(
+      { student_id, granted: false, revoked_at: new Date() },
+      { merge: true }
+    );
     res.json({ success: true });
   } catch { res.status(500).json({ error: 'Revoke failed' }); }
 });

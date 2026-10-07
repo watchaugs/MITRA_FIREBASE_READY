@@ -48,6 +48,20 @@ service cloud.firestore {
     }
 
     // ── Users Collection ──────────────────────────────────────────────────────
+    // Class may change only if the lock is absent or older than 90 days,
+    // and the write must stamp class_locked_at to the server time.
+    function classChangeAllowed() {
+      return request.resource.data.class_grade == resource.data.class_grade
+        || (
+             (
+               !('class_locked_at' in resource.data)
+               || resource.data.class_locked_at == null
+               || request.time > resource.data.class_locked_at + duration.value(90, 'd')
+             )
+             && request.resource.data.class_locked_at == request.time
+           );
+    }
+
     match /users/{userId} {
       // User can read their own profile; admins can read all
       allow read: if isAuth() && (request.auth.uid == userId || isAdmin());
@@ -59,7 +73,8 @@ service cloud.firestore {
          !request.resource.data.keys().hasAny(['role', 'perm_publish_apps',
            'perm_upload_unity', 'perm_manage_geo', 'perm_view_analytics',
            'perm_create_users', 'perm_edit_curriculum', 'perm_approve_content',
-           'perm_export_data', 'perm_manage_ads']));
+           'perm_export_data', 'perm_manage_ads']) &&
+         classChangeAllowed());
 
       // Only superadmin can permanently delete; others can only deactivate
       allow delete: if isSuperAdmin();
@@ -176,6 +191,20 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create, update: if isAdmin();
       allow delete: if isSuperAdmin();
+    }
+
+    // ── Students (app: telemetry read + setup write) ─────────────────────────
+    match /students/{studentId} {
+      allow read: if isAuth() && (request.auth.uid == studentId || isAdmin()
+        || (isTeacher() && isMyState('state')));
+      allow write: if isAuth() && request.auth.uid == studentId;
+    }
+
+    // ── Public compliance config (Grievance Officer / DPO) ───────────────────
+    // Dashboard writes; app reads officer details with a student token.
+    match /public_config/{docId} {
+      allow read: if isAuth();
+      allow create, update, delete: if isAdmin();
     }
 
     // ── Default: Deny everything else ────────────────────────────────────────

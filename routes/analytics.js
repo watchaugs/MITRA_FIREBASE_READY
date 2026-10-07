@@ -262,7 +262,7 @@ router.get('/telemetry/summary', async (req, res) => {
 // ── Export ────────────────────────────────────────────────────────────────────
 router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
   try {
-    const { format = 'xlsx', state, district, class_grade, subject } = req.query;
+    const { format = 'xlsx', state, district, class_grade, subject, month } = req.query;
     const db = require('../lib/firebase').getFirestore();
 
     // Build filtered query — all filters are optional
@@ -271,6 +271,14 @@ router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
     if (district)    query = query.where('district',    '==', district);
     if (class_grade) query = query.where('class_grade', '==', class_grade);
     if (subject)     query = query.where('subject',     '==', subject);
+
+    // Month filter: 'YYYY-MM' → first..last day of that month on created_at
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      const [yy, mm] = month.split('-').map(Number);
+      const start = new Date(Date.UTC(yy, mm - 1, 1));
+      const end   = new Date(Date.UTC(yy, mm, 1));
+      query = query.where('created_at', '>=', start).where('created_at', '<', end);
+    }
 
     const snap = await query.limit(10000).get();
 
