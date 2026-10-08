@@ -7,6 +7,7 @@ const { getFirestore } = require('../lib/firebase');
 const { compressGlb }  = require('../lib/draco');
 const storage          = require('../lib/storage');
 const { authenticate, requirePerm } = require('../middleware/auth');
+const { visibleInState, parseTargetStates } = require('../lib/stateScope');
 const log = require('../lib/logger');
 // NOTE: fs and UPLOAD_DIR removed — all file I/O now goes through lib/storage.js
 // In dev (no STORAGE_BUCKET set): files save to ./uploads/ on local disk
@@ -73,6 +74,7 @@ router.post('/upload', requirePerm('perm_upload_unity'),
       file_format:   ext.replace('.', ''),
       file_size_mb:  (req.file.size / 1024 / 1024).toFixed(2),
       status:        'uploaded',
+      target_states: parseTargetStates(req.body.target_states),
       uploaded_by:   req.user.id,
       created_at:    new Date(),
       // compression stats — null for non-GLB uploads
@@ -105,7 +107,9 @@ router.get('/assets', async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('ar_assets').limit(100).get();
-    return res.json({ data: snap.docs.map(d => ({ id: d.id, ...d.data() })), total: snap.size });
+    let rows   = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    rows       = visibleInState(rows, req.query.state); // geofence: national + requested state
+    return res.json({ data: rows, total: rows.length });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load AR assets');
     return res.status(500).json({ error: 'Failed to load AR assets' });
@@ -116,15 +120,17 @@ router.get('/topics', async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('ar_assets').where('status', '==', 'published').limit(200).get();
-    return res.json(snap.docs.map(d => ({
-      id:          d.id,
-      topic:       d.data().topic       || '',
-      class_name:  d.data().class_name  || '',
-      subject:     d.data().subject     || '',
-      language:    d.data().language    || 'English',
-      status:      d.data().status      || 'live',
-      unity_url:   d.data().unity_url   || null,
-      flutter_url: d.data().flutter_url || null,
+    let rows   = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    rows       = visibleInState(rows, req.query.state); // geofence: national + requested state
+    return res.json(rows.map(r => ({
+      id:          r.id,
+      topic:       r.topic       || '',
+      class_name:  r.class_name  || '',
+      subject:     r.subject     || '',
+      language:    r.language    || 'English',
+      status:      r.status      || 'live',
+      unity_url:   r.unity_url   || null,
+      flutter_url: r.flutter_url || null,
     })));
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load AR topics');

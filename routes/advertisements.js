@@ -4,7 +4,7 @@ const multer  = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
-const { filterByState, canAccessState } = require('../lib/stateScope');
+const { filterByState, canAccessState, visibleInState } = require('../lib/stateScope');
 const storage = require('../lib/storage');
 const log = require('../lib/logger');
 router.use(authenticate);
@@ -17,7 +17,9 @@ router.get('/', async (req, res) => {
     const snap = await db.collection('ad_campaigns').orderBy('created_at', 'desc').limit(100).get();
     // National admins see all; a state user sees their own state's ads + national (stateless) ads.
     const all  = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const data = all.filter(a => !a.state || canAccessState(req, a.state));
+    let data   = all.filter(a => !a.state || canAccessState(req, a.state));
+    // App-facing geofence: when a device passes ?state, keep national + that state's ads
+    if (req.query.state) data = visibleInState(data, req.query.state);
     res.json({ data, total: data.length });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load ad campaigns');

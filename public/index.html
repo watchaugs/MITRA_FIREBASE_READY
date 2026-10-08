@@ -5900,6 +5900,9 @@ async function saveMqsQuiz(desiredStatus) {
   const questions = mqsQuestions.filter(Boolean).filter(q => q.q && q.a && q.b && q.c && q.d);
   if (!questions.length) return showToast('Add at least one question');
 
+  const mqsStatesSel = document.getElementById('mqs-states');
+  const targetStates = mqsStatesSel ? [...mqsStatesSel.selectedOptions].map(o => o.value).filter(Boolean) : [];
+
   try {
     const qRes = await fetch('/api/quiz', {
       method: 'POST', 
@@ -5907,6 +5910,7 @@ async function saveMqsQuiz(desiredStatus) {
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title, class_name: cls, subject, topic, language: lang,
+        target_states: targetStates,
         go_live_immediately: desiredStatus === 'live'
       })
     });
@@ -9787,6 +9791,17 @@ const UM_PAGE_PERMS = [
   { key:'perm_manage_compliance',label:'🛡️ Compliance',    default_roles:['master_admin','admin','education_secretary'] },
   { key:'perm_view_ads',         label:'📣 Advertisements', default_roles:['master_admin'] },
   { key:'perm_manage_ads',       label:'📣 Manage Ads',     default_roles:['master_admin'] },
+  { key:'perm_edit_dashboard',   label:'✏️ Edit Dashboard',    default_roles:['master_admin','admin'] },
+  { key:'perm_edit_curriculum',  label:'📝 Edit Curriculum',   default_roles:['master_admin','admin','education_secretary'] },
+  { key:'perm_view_quiz',        label:'🧩 View Quiz',         default_roles:['master_admin','admin','education_secretary','developer'] },
+  { key:'perm_edit_quiz',        label:'📝 Edit Quiz',         default_roles:['master_admin','admin'] },
+  { key:'perm_upload_unity',     label:'🎮 Upload Unity',      default_roles:['master_admin','admin','developer','upload_authority'] },
+  { key:'perm_approve_content',  label:'✅ Approve Content',   default_roles:['master_admin','admin','dept_education'] },
+  { key:'perm_view_geofence',    label:'📍 View Geofences',    default_roles:['master_admin','admin','developer'] },
+  { key:'perm_manage_geo',       label:'📍 Manage Geofences',  default_roles:['master_admin','admin'] },
+  { key:'perm_send_notif',       label:'📨 Send Notifications', default_roles:['master_admin','admin'] },
+  { key:'perm_edit_controls',    label:'🎛️ Edit Controls',     default_roles:['master_admin','admin','developer'] },
+  { key:'perm_replay_analytics', label:'🔁 Replay Analytics',  default_roles:['master_admin','admin','district_officer','analytics_only'] },
 ];
 
 const ROLE_PRESETS = {

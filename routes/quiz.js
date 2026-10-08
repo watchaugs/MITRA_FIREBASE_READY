@@ -7,6 +7,7 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
+const { visibleInState, parseTargetStates } = require('../lib/stateScope');
 const log = require('../lib/logger');
 router.use(authenticate);
 
@@ -14,7 +15,9 @@ router.get('/', async (req, res) => {
   try {
     const db = getFirestore();
     const snap = await db.collection('quizzes').limit(50).get();
-    return res.json({ data: snap.docs.map(d => ({ id: d.id, ...d.data() })), total: snap.size });
+    let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    rows     = visibleInState(rows, req.query.state); // geofence: national + requested state
+    return res.json({ data: rows, total: rows.length });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load quizzes');
     res.status(500).json({ error: 'Failed to load quizzes' });
@@ -49,7 +52,7 @@ router.post('/', requirePerm('perm_edit_curriculum'), async (req, res) => {
   try {
     const db = getFirestore();
     const id = uuidv4();
-    await db.collection('quizzes').doc(id).set({ ...req.body, created_by: req.user.id, created_at: new Date(), status: 'draft' });
+    await db.collection('quizzes').doc(id).set({ ...req.body, target_states: parseTargetStates(req.body.target_states), created_by: req.user.id, created_at: new Date(), status: 'draft' });
     res.status(201).json({ id, ...req.body });
   } catch { res.status(500).json({ error: 'Failed to create quiz' }); }
 });

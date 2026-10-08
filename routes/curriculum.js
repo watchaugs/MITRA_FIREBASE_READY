@@ -8,6 +8,7 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
+const { visibleInState } = require('../lib/stateScope');
 const log = require('../lib/logger');
 router.use(authenticate);
 
@@ -96,15 +97,17 @@ router.get('/ar-topics', async (req, res) => {
     log.error({ err: err.message }, 'Failed to load AR topics — showing placeholder content, check this error');
   }
   if (snap && !snap.empty) {
-    return res.json(snap.docs.map(d => ({
-      id:         d.id,
-      topic:      d.data().topic      || '',
-      class_name: d.data().class_name || '',
-      subject:    d.data().subject    || '',
-      language:   d.data().language   || 'English',
-      status:     d.data().status     || 'live',
-      unity_url:  d.data().unity_url  || null,
-      flutter_url:d.data().flutter_url|| null,
+    let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    rows     = visibleInState(rows, req.query.state); // geofence: national + requested state
+    return res.json(rows.map(r => ({
+      id:         r.id,
+      topic:      r.topic      || '',
+      class_name: r.class_name || '',
+      subject:    r.subject    || '',
+      language:   r.language   || 'English',
+      status:     r.status     || 'live',
+      unity_url:  r.unity_url  || null,
+      flutter_url:r.flutter_url|| null,
     })));
   }
   // Fallback — shown until first asset is published via dashboard, or if the read above failed (see log)
