@@ -191,6 +191,7 @@ async function boot() {
   app.use('/api/ads',          advertisementsRoutes);
   app.use('/api/tenant',       tenantRoutes);
   app.use('/api/geofence',     geofenceRoutes);
+  app.use('/api/internal', require('./routes/telemetry_export'));
 
   // ── Health check (M11) ──────────────────────────────────────────────────────
   app.get('/api/health', (req, res) => {
