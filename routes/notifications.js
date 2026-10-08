@@ -16,7 +16,16 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore }              = require('../lib/firebase');
 const log = require('../lib/logger');
 
-router.use(authenticate);
+router.use((req, res, next) => {
+  // Cloud Scheduler calls /dispatch-scheduled with a shared secret (no user token).
+  if (req.path === '/dispatch-scheduled' &&
+      process.env.DISPATCH_SECRET &&
+      req.get('x-cron-secret') === process.env.DISPATCH_SECRET) {
+    req.user = { id: 'cloud-scheduler', role: 'master_admin' };
+    return next();
+  }
+  return authenticate(req, res, next);
+});
 
 // ── Helper: get FCM messaging instance ───────────────────────────────────────
 function getMessaging() {

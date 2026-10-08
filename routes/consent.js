@@ -4,9 +4,11 @@ const { getFirestore } = require('../lib/firebase');
 const { authenticate } = require('../middleware/auth');
 const { encryptFields, decryptFields } = require('../lib/fieldCrypto');
 const SENSITIVE_CONSENT_FIELDS = ['guardian_name', 'guardian_email', 'guardian_phone', 'student_name'];
+const { createRateLimiter } = require('../middleware/rateLimiter');
+const consentLimiter = createRateLimiter({ windowMs: 900000, max: 60, message: 'Too many consent requests — try again shortly.' });
 
 // Consent endpoints are called by the Flutter app before authentication
-router.get('/status', async (req, res) => {
+router.get('/status', consentLimiter, async (req, res) => {
   try {
     const { student_id } = req.query;
     if (!student_id) return res.json({ granted: true, version: '1.0', consents: ['data_collection', 'analytics'] });
@@ -16,7 +18,7 @@ router.get('/status', async (req, res) => {
   } catch { res.json({ granted: false }); }
 });
 
-router.post('/grant', async (req, res) => {
+router.post('/grant', consentLimiter, async (req, res) => {
   try {
     const { student_id, consents, version } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id required' });

@@ -1,6 +1,6 @@
 /**
  * routes/analytics.js — Student App Telemetry & Replay Analytics
- * MODIFIED: Returns realistic mock data. Real BigQuery pipeline activates post-launch.
+ * Reads live telemetry from Firestore; returns empty/placeholder values until telemetry exists.
  */
 'use strict';
 

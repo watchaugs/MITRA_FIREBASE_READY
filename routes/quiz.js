@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════
 // routes/quiz.js — Quiz management
-// MODIFIED: Returns mock data. Real quizzes stored in Firestore.
+// Quizzes are stored in and served from Firestore.
 // ═══════════════════════════════════════════════════════════════════════
 'use strict';
 const router = require('express').Router();
@@ -9,7 +9,16 @@ const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { visibleInState, parseTargetStates } = require('../lib/stateScope');
 const log = require('../lib/logger');
-router.use(authenticate);
+router.use((req, res, next) => {
+  // Cloud Scheduler calls /dispatch-scheduled with a shared secret (no user token).
+  if (req.path === '/dispatch-scheduled' &&
+      process.env.DISPATCH_SECRET &&
+      req.get('x-cron-secret') === process.env.DISPATCH_SECRET) {
+    req.user = { id: 'cloud-scheduler', role: 'master_admin' };
+    return next();
+  }
+  return authenticate(req, res, next);
+});
 
 router.get('/', async (req, res) => {
   try {
@@ -386,6 +395,29 @@ router.post('/bulk-action', requirePerm('perm_edit_curriculum'), async (req, res
   } catch (err) {
     log.error({ err: err.message }, 'Quiz bulk-action failed');
     res.status(500).json({ error: 'Bulk action failed' });
+  }
+});
+
+// ── POST /dispatch-scheduled ─ Cloud Scheduler flips due scheduled quizzes live ─
+router.post('/dispatch-scheduled', async (req, res) => {
+  try {
+    const db  = getFirestore();
+    const now = new Date();
+    const snap = await db.collection('quizzes')
+      .where('status', '==', 'scheduled')
+      .where('scheduled_at', '<=', now)
+      .limit(200)
+      .get();
+    if (snap.empty) return res.json({ published: 0 });
+    let published = 0;
+    for (let i = 0; i < snap.docs.length; i += 400) {
+      const batch = db.batch();
+      for (const doc of snap.docs.slice(i, i + 400)) { batch.update(doc.ref, { status: 'live', published_at: now }); published++; }
+      await batch.commit();
+    }
+    res.json({ published });
+  } catch (err) {
+    res.status(500).json({ error: 'Quiz dispatch failed', detail: err.message });
   }
 });
 
