@@ -192,6 +192,7 @@ async function boot() {
   app.use('/api/tenant',       tenantRoutes);
   app.use('/api/geofence',     geofenceRoutes);
   app.use('/api/internal', require('./routes/telemetry_export'));
+  app.use('/api/reports',  require('./routes/reports'));
 
   // ── Health check (M11) ──────────────────────────────────────────────────────
   app.get('/api/health', (req, res) => {

@@ -139,6 +139,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 .inp{width:100%;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;transition:.15s}
 .inp:focus{border-color:var(--accent)}
 .sel{width:100%;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer}
+/* Analytics export dropdowns — dark theme + readable options */
+#exp-month,#exp-year,#exp-scope{background:var(--card2);color:var(--text);border:1px solid var(--border2)}
+#exp-month option,#exp-year option,#exp-scope option{background:#141e33;color:#f1f5f9}
+#exp-month option:checked,#exp-year option:checked,#exp-scope option:checked{background:#1e2d4a;color:#fff}
 .sel:focus{border-color:var(--accent)}
 .lbl{font-size:12px;color:var(--text2);font-weight:500;margin-bottom:5px;display:block}
 .form-row{margin-bottom:14px}
@@ -1576,9 +1580,9 @@ document.addEventListener('DOMContentLoaded', () => {
       <select id="exp-scope" class="btn btn-s" style="min-width:140px">
         <option value="">All India</option>
       </select>
-      <button class="btn btn-g" onclick="exportData('csv')">📄 CSV</button>
-      <button class="btn btn-g" onclick="exportData('xlsx')">⬇️ XLSX</button>
-      <button class="btn btn-p" onclick="exportData('pptx')">📊 Download PPT</button>
+      <button class="btn btn-g" onclick="exportAnalyticsData('csv')">📄 CSV</button>
+      <button class="btn btn-g" onclick="exportAnalyticsData('xlsx')">⬇️ XLSX</button>
+      <button class="btn btn-p" onclick="exportAnalyticsData('pptx')">📊 Download PPT</button>
     </div>
   </div>
 
@@ -5047,7 +5051,7 @@ document.addEventListener('click', function(event) {
   }
 });
 
-async function exportData(format) {
+async function exportAnalyticsData(format) {
   const menu = document.getElementById('export-menu');
   if (menu) menu.style.display = 'none';
   const month = document.getElementById('exp-month')?.value || '01';
@@ -5071,7 +5075,11 @@ async function exportData(format) {
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
-    a.download = `MITRA_Analytics_${new Date().toISOString().slice(0,10)}.${format}`;
+    const _MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const _monthName = _MN[parseInt(month, 10) - 1] || month;
+    a.download = (format === 'pptx')
+      ? `MITRA_Monthly_Report_${_monthName}_${year}.pptx`
+      : `MITRA_Analytics_${new Date().toISOString().slice(0,10)}.${format}`;
     document.body.appendChild(a); a.click();
     setTimeout(() => { a.remove(); URL.revokeObjectURL(blobUrl); }, 1000);
     showToast('✅ Export downloaded');
