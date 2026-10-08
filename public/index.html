@@ -5066,9 +5066,6 @@ async function exportData(format) {
     const res = await fetch(endpoint, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
-    const res = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
     if (!res.ok) { showToast('❌ Export failed'); return; }
     const blob = await res.blob();
     const blobUrl = URL.createObjectURL(blob);
