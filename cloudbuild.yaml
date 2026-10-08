@@ -44,7 +44,7 @@ steps:
       - '--min-instances=0'
       - '--timeout=300'
       - '--set-env-vars=^##^NODE_ENV=production##GCP_PROJECT_ID=$PROJECT_ID##STORAGE_BUCKET=${_STORAGE_BUCKET}##TELEMETRY_BUCKET=mitra-telemetry-raw##APP_BASE_URL=${_APP_BASE_URL}##ALLOWED_ORIGINS=https://watchaugs-mitra.web.app,http://localhost:3000,http://localhost:3001'
-      - '--set-secrets=JWT_SECRET=jwt-secret:latest,JWT_REFRESH_SECRET=jwt-refresh-secret:latest,EXPORT_SECRET=export-secret:latest'
+      - '--set-secrets=JWT_SECRET=jwt-secret:latest,JWT_REFRESH_SECRET=jwt-refresh-secret:latest,EXPORT_SECRET=export-secret:latest,DISPATCH_SECRET=dispatch-secret:latest'
 
 images:
   - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:latest'

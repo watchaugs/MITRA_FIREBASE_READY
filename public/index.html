@@ -4315,7 +4315,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div>
           <div class="form-row">
             <label class="lbl">Select Campaign to Configure</label>
-            <select class="sel" id="freq-campaign" onchange="loadCampaignFreq()">
+            <select class="sel" id="freq-campaign">
               <option>Science Kit Launch</option>
               <option>Maths Olympiad 2026</option>
               <option>History Book Fair</option>
@@ -5899,6 +5899,9 @@ async function saveMqsQuiz(desiredStatus) {
 
   const questions = mqsQuestions.filter(Boolean).filter(q => q.q && q.a && q.b && q.c && q.d);
   if (!questions.length) return showToast('Add at least one question');
+
+  const mqsStatesSel = document.getElementById('mqs-states');
+  const targetStates = mqsStatesSel ? [...mqsStatesSel.selectedOptions].map(o => o.value).filter(Boolean) : [];
 
   const mqsStatesSel = document.getElementById('mqs-states');
   const targetStates = mqsStatesSel ? [...mqsStatesSel.selectedOptions].map(o => o.value).filter(Boolean) : [];
