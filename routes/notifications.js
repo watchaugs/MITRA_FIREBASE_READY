@@ -40,7 +40,7 @@ router.get('/', async (req, res) => {
 // Body: { title, body, topic_filter, state_filter, class_filter, subject_filter }
 // Uses FCM Topic messaging — students subscribe to topics like "class_8_science_GJ"
 // No per-device token management needed at this stage.
-router.post('/send', requirePerm('perm_view_notif'), async (req, res) => {
+router.post('/send', requirePerm('perm_send_notif'), async (req, res) => {
   try {
     const {
       title         = 'New AR Content Available!',
@@ -96,7 +96,7 @@ router.post('/send', requirePerm('perm_view_notif'), async (req, res) => {
 // ── POST /schedule  — Schedule a future notification ─────────────────────────
 // Stores in Firestore; /dispatch-scheduled processes due entries.
 // This powers the 5:00 PM daily content-unlock notification.
-router.post('/schedule', requirePerm('perm_view_notif'), async (req, res) => {
+router.post('/schedule', requirePerm('perm_send_notif'), async (req, res) => {
   try {
     const {
       title, body, topic_filter,
@@ -137,7 +137,7 @@ router.get('/history', async (req, res) => {
 });
 
 // ── DELETE /:id  — Cancel a scheduled notification ───────────────────────────
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePerm('perm_send_notif'), async (req, res) => {
   try {
     const db  = getFirestore();
     const ref = db.collection('scheduled_notifications').doc(req.params.id);

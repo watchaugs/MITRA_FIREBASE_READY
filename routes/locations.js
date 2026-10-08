@@ -1,7 +1,7 @@
 'use strict';
 const { State, City } = require('country-state-city');
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 router.use(authenticate);
 
 // Pulls live from country-state-city package — all 36 states/UTs,
@@ -70,19 +70,19 @@ router.get('/geojson/state/:code', (req, res) => {
 router.get('/geojson/district/:id', (req, res) => {
   res.json({ type: 'FeatureCollection', features: [] });
 });
-router.post('/sync-geojson/state/:code', (req, res) => {
+router.post('/sync-geojson/state/:code', requirePerm('perm_manage_geo'), (req, res) => {
   res.json({ success: true, message: `GeoJSON sync queued for ${req.params.code}` });
 });
-router.post('/sync-geojson/district/:id', (req, res) => {
+router.post('/sync-geojson/district/:id', requirePerm('perm_manage_geo'), (req, res) => {
   res.json({ success: true, message: 'District GeoJSON sync queued' });
 });
-router.post('/sync-all', (req, res) => {
+router.post('/sync-all', requirePerm('perm_manage_geo'), (req, res) => {
   res.json({ success: true, message: 'Full GeoJSON sync queued', total: IN_STATES.length });
 });
 router.get('/states/sync-status', (req, res) => {
   res.json({ synced: IN_STATES.length, pending: 0, last_sync: new Date().toISOString() });
 });
-router.post('/seed-states', (req, res) => {
+router.post('/seed-states', requirePerm('perm_manage_geo'), (req, res) => {
   res.json({ success: true, seeded: IN_STATES.length });
 });
 
