@@ -1583,6 +1583,12 @@ document.addEventListener('DOMContentLoaded', () => {
       <button class="btn btn-g" onclick="exportAnalyticsData('csv')">📄 CSV</button>
       <button class="btn btn-g" onclick="exportAnalyticsData('xlsx')">⬇️ XLSX</button>
       <button class="btn btn-p" onclick="exportAnalyticsData('pptx')">📊 Download PPT</button>
+      <button class="btn btn-g" onclick="downloadAnalyticalReport()" title="Download the themed 16-sheet summary workbook for the scope selected above (All India or a state)">📑 Summary report</button>
+      <button class="btn btn-s" onclick="exportRawDataset()" title="Export the FULL raw dataset from the warehouse to downloadable files (free BigQuery extract)">🗄️ Raw dataset</button>
+      <button id="btn-sync-telemetry" class="btn btn-s" onclick="syncTelemetry()" title="Pull new app telemetry from Firestore into the data warehouse, then refresh">⬇️ Sync telemetry</button>
+      <button id="btn-refresh-analytics" class="btn btn-g" onclick="refreshAnalyticsSnapshot()" title="Recompute analytics from the data warehouse — run once or twice a month">🔄 Refresh data</button>
+      <span id="an-refreshed-label" style="align-self:center;font-size:11px;color:var(--text2)">—</span>
+      <div id="raw-export-panel" style="display:none;flex-basis:100%;margin-top:8px"></div>
     </div>
   </div>
 
@@ -4993,6 +4999,64 @@ function resetAppBuild() {
 }
 
 // --- ANALYTICS SPECIFIC FUNCTIONS ---
+
+// Sync: pull new app telemetry into the warehouse, then refresh the snapshot.
+async function syncTelemetry() {
+  const btn = document.getElementById('btn-sync-telemetry');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing…'; }
+  try {
+    const res  = await fetch('/api/analytics/sync-telemetry', { method: 'POST', headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      showToast('Synced ' + (data.rows || 0) + ' new events into the warehouse');
+      await refreshAnalyticsSnapshot();
+    } else {
+      showToast('Sync failed: ' + (data.error || res.status));
+    }
+  } catch (e) {
+    showToast('Sync failed: ' + (e.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⬇️ Sync telemetry'; }
+  }
+}
+
+// Refresh: recompute the analytics snapshot from BigQuery (manual, ~monthly).
+async function refreshAnalyticsSnapshot() {
+  const btn = document.getElementById('btn-refresh-analytics');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Refreshing…'; }
+  try {
+    const res  = await fetch('/api/analytics/refresh', { method: 'POST', headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      showToast('Analytics refreshed from the data warehouse');
+      setRefreshedLabel(data.refreshed_at);
+      loadAnalyticsOverview();
+      loadReplayAnalytics();
+    } else {
+      showToast('Refresh failed: ' + (data.error || res.status));
+    }
+  } catch (e) {
+    showToast('Refresh failed: ' + (e.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh data'; }
+  }
+}
+
+function setRefreshedLabel(iso) {
+  const el = document.getElementById('an-refreshed-label');
+  if (!el) return;
+  if (!iso) { el.textContent = 'Never refreshed'; return; }
+  try {
+    el.textContent = 'Updated: ' +
+      new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+  } catch (_) { el.textContent = 'Updated: ' + iso; }
+}
+
+async function loadRefreshStatus() {
+  const data = await safeFetch('/api/analytics/refresh-status');
+  if (data) setRefreshedLabel(data.refreshed_at);
+}
+
 function switchAnTab(tabId, btn) {
   document.querySelectorAll('.an-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.an-section').forEach(s => s.classList.remove('active'));
@@ -5013,6 +5077,7 @@ async function loadAnalyticsOverview() {
   set('kpi-avg-session',   (data.avg_session_mins|| 0) + ' min');
   set('kpi-dropoff',       (data.dropoff_pct     || 0) + '%');
   set('kpi-offline',       (data.offline_pct     || 0) + '%');
+  loadRefreshStatus();
 }
 
 async function loadReplayAnalytics() {
@@ -5084,6 +5149,59 @@ async function exportAnalyticsData(format) {
     setTimeout(() => { a.remove(); URL.revokeObjectURL(blobUrl); }, 1000);
     showToast('✅ Export downloaded');
   } catch(e) { showToast('❌ Export failed — check connection'); }
+}
+
+// Download the themed 16-sheet summary workbook for the selected scope.
+async function downloadAnalyticalReport() {
+  const scope = (document.getElementById('exp-scope')?.value || '').trim() || 'All India';
+  showToast('⏳ Generating summary report for ' + scope + '…');
+  try {
+    const token = localStorage.getItem('mitra_token') || '';
+    const res = await fetch('/api/analytics/report?scope=' + encodeURIComponent(scope), { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!res.ok) { showToast('❌ Report failed'); return; }
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `MITRA_Summary_${scope.replace(/[^A-Za-z0-9]+/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(blobUrl); }, 1000);
+    showToast('✅ Report downloaded');
+  } catch (e) { showToast('❌ Report failed — check connection'); }
+}
+
+// Layer 3: export the FULL raw dataset from BigQuery to downloadable files.
+async function exportRawDataset() {
+  showToast('⏳ Starting full-dataset export (free BigQuery extract)…');
+  const panel = document.getElementById('raw-export-panel');
+  try {
+    const res = await fetch('/api/analytics/raw-export', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ format: 'csv' }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      const files = data.files || [];
+      if (panel) {
+        panel.style.display = 'block';
+        if (!files.length) {
+          panel.innerHTML = '<span style="font-size:12px;color:var(--text2)">No rows to export yet — run Sync telemetry first.</span>';
+        } else if (files.some(f => f.url)) {
+          panel.innerHTML = '<span style="font-size:12px;color:var(--text2)">Raw export ready (' + data.format + ') — links valid 24h:</span><br>' +
+            files.filter(f => f.url).map((f, i) =>
+              `<a href="${f.url}" class="btn btn-s btn-sm" style="margin:3px" download>⬇️ Part ${i + 1}${f.size ? ' (' + f.size + ')' : ''}</a>`).join('');
+        } else {
+          panel.innerHTML = '<span style="font-size:12px;color:var(--text2)">Files created in storage, but download-link signing is not enabled yet (see setup note). You can download them from the GCS bucket meanwhile.</span>';
+        }
+      }
+      showToast('✅ Raw export ready');
+    } else {
+      showToast('❌ Export failed: ' + (data.error || res.status));
+    }
+  } catch (e) {
+    showToast('❌ Export failed — check connection');
+  }
 }
 
 // ⚡ GLOBAL CHART MAKER (Accessible everywhere instantly)

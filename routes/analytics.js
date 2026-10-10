@@ -1,333 +1,434 @@
 /**
  * routes/analytics.js — Student App Telemetry & Replay Analytics
- * Reads live telemetry from Firestore; returns empty/placeholder values until telemetry exists.
+ *
+ * SNAPSHOT MODEL (cost-safe):
+ *   • GET endpoints read a pre-computed snapshot from Firestore
+ *     (analytics_cache/latest) — NO BigQuery on page load, ever.
+ *   • POST /refresh runs all the BigQuery aggregates ONCE and saves the
+ *     snapshot. You trigger it manually (once or twice a month), so BigQuery
+ *     is touched only then. Everything else is free-tier Firestore reads.
+ *   • /export streams raw rows from BigQuery on demand (a manual admin action).
  */
 'use strict';
 
 const router = require('express').Router();
 const XLSX   = require('xlsx');
 const { authenticate, requirePerm } = require('../middleware/auth');
+const { runQuery, FQ_TABLE } = require('../lib/bq');
+const { runExport } = require('../lib/telemetry_exporter');
 
 router.use(authenticate);
 
-// ── Telemetry ingest from student app ────────────────────────────────────────
-// Real telemetry arrives in Firestore directly from the Flutter app SDK.
-// This endpoint kept for backwards compatibility — just acknowledges receipt.
+// ── Zeroed defaults (shown until the first Refresh populates the snapshot) ────
+const EMPTY = {
+  overview:  { active_users: 0, avg_session_mins: 0, dropoff_pct: 0, offline_pct: 0, avg_replays: 0 },
+  replay:    { kpi: { total_replays: 0, avg_replays_per_student: 0, repeat_sessions: 0 },
+               by_module: [], by_subject: [], by_state: [], table: [] },
+  location:  [],
+  classroom: [],
+  predictive: [],
+  telemetry_summary: { success: true, data: [] },
+  refreshed_at: null,
+};
+
+async function readSnapshot() {
+  try {
+    const db  = require('../lib/firebase').getFirestore();
+    const doc = await db.collection('analytics_cache').doc('latest').get();
+    return doc.exists ? doc.data() : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// ── Legacy ingest (kept as a pure ack; the app writes telemetry directly to
+//    Firestore now, so this never writes anything). ───────────────────────────
 router.post('/telemetry', async (req, res) => {
-  try {
-    const db = require('../lib/firebase').getFirestore();
-    const payload = req.body;
-
-    // Accept both: a single event object OR an array (weekly batch sync)
-    const events = Array.isArray(payload) ? payload : [payload];
-
-    const batch = db.batch();
-    events.forEach(event => {
-      const ref = db.collection('telemetry_sessions').doc();
-      batch.set(ref, {
-        ...event,
-        ingested_at: new Date(),
-        source: 'app_batch_sync',
-      });
-    });
-
-    await batch.commit();
-    res.status(202).json({ received: true, count: events.length });
-  } catch (err) {
-    // Never fail the student app — always acknowledge receipt
-    // The client will retry next weekly sync
-    res.status(202).json({ received: true, queued: true });
-  }
+  res.status(202).json({ received: true, note: 'telemetry is collected via the app SDK' });
 });
 
-// ── Overview KPIs ─────────────────────────────────────────────────────────────
-router.get('/overview', requirePerm('perm_view_analytics'), async (req, res) => {
+// ══════════════════════════════════════════════════════════════════════════
+// REFRESH — the ONLY place BigQuery is queried. Run once or twice a month.
+// ══════════════════════════════════════════════════════════════════════════
+router.post('/refresh', requirePerm('perm_view_analytics'), async (req, res) => {
   try {
-    const db   = require('../lib/firebase').getFirestore();
-    const snap = await db.collection('telemetry_sessions').limit(2000).get();
-    if (snap.empty) throw new Error('no data');
-    const sessions = snap.docs.map(d => d.data());
-    const total    = sessions.length;
-    res.json({
-      active_users:     new Set(sessions.map(s => s.student_id)).size,
-      avg_session_mins: parseFloat((sessions.reduce((s, a) => s + (a.session_minutes || 0), 0) / total).toFixed(1)),
-      dropoff_pct:      parseFloat(((sessions.filter(s => s.dropped_off).length / total) * 100).toFixed(1)),
-      offline_pct:      parseFloat(((sessions.filter(s => s.offline).length    / total) * 100).toFixed(1)),
-      avg_replays:      parseFloat((sessions.reduce((s, a) => s + (a.replay_count || 0), 0) / total).toFixed(1)),
-    });
-  } catch (_) {
-    res.json({ active_users: 0, avg_session_mins: 0, dropoff_pct: 0, offline_pct: 0, avg_replays: 0 });
-  }
-});
+    const AR_END      = `event_collection = 'ar_views' AND event_type = 'ar_end'`;
+    const SESSION_END = `event_collection = 'sessions' AND event_type = 'session_end'`;
 
-// ── Replay & Repeat Analytics ─────────────────────────────────────────────────
-router.get('/replay', requirePerm('perm_view_analytics'), async (req, res) => {
-  try {
-    const db   = require('../lib/firebase').getFirestore();
-    const snap = await db.collection('telemetry_sessions').limit(2000).get();
+    // Run all aggregates. Each returns a tiny result set.
+    const [overviewRows, replayKpiRows, byModule, bySubject, byState,
+           location, classroom, predictive, summary] = await Promise.all([
+      // Overview KPIs
+      runQuery(`
+        SELECT
+          COUNT(DISTINCT student_id) AS active_users,
+          ROUND(AVG(IF(${SESSION_END}, duration_seconds, NULL)) / 60, 1) AS avg_session_mins,
+          ROUND(100 * SAFE_DIVIDE(COUNTIF(${AR_END} AND completed = false),
+                                  COUNTIF(${AR_END})), 1) AS dropoff_pct,
+          ROUND(100 * SAFE_DIVIDE(COUNTIF(offline_session = true), COUNT(*)), 1) AS offline_pct,
+          ROUND(SAFE_DIVIDE(COUNTIF(${AR_END} AND is_replay = true),
+                            COUNT(DISTINCT student_id)), 2) AS avg_replays
+        FROM ${FQ_TABLE}`),
 
-    if (snap.empty) throw new Error('no data');
+      // Replay KPI base
+      runQuery(`
+        SELECT
+          COUNTIF(${AR_END} AND is_replay = true) AS total_replays,
+          COUNT(DISTINCT student_id) AS students
+        FROM ${FQ_TABLE}`),
 
-    const sessions = snap.docs.map(d => d.data());
-    const total    = sessions.length;
+      // Replay by module
+      runQuery(`
+        SELECT
+          COALESCE(module_title, topic_id, 'Unknown') AS topic,
+          COUNT(*) AS total_events,
+          ROUND(SAFE_DIVIDE(COUNTIF(is_replay = true), COUNT(*)), 2) AS avg_replays
+        FROM ${FQ_TABLE}
+        WHERE ${AR_END}
+        GROUP BY topic ORDER BY avg_replays DESC LIMIT 10`),
 
-    // ── KPIs ──────────────────────────────────────────────────────────────
-    const totalReplays   = sessions.reduce((s, a) => s + (a.replay_count || 0), 0);
-    const repeatSessions = sessions.filter(s => (s.replay_count || 0) > 0).length;
+      // Replay by subject
+      runQuery(`
+        SELECT
+          COALESCE(subject, 'Unknown') AS subject,
+          ROUND(SAFE_DIVIDE(COUNTIF(is_replay = true), COUNT(*)), 2) AS avg_replays,
+          COUNT(DISTINCT IF(is_replay = true, student_id, NULL)) AS repeat_students
+        FROM ${FQ_TABLE}
+        WHERE ${AR_END}
+        GROUP BY subject ORDER BY avg_replays DESC`),
 
-    // ── By module (topic) ─────────────────────────────────────────────────
-    const moduleMap = {};
-    sessions.forEach(s => {
-      const key = s.topic || 'Unknown';
-      if (!moduleMap[key]) moduleMap[key] = { topic: key, total_replays: 0, count: 0 };
-      moduleMap[key].total_replays += (s.replay_count || 0);
-      moduleMap[key].count++;
-    });
-    const by_module = Object.values(moduleMap)
-      .map(m => ({
-        topic:        m.topic,
-        avg_replays:  parseFloat((m.total_replays / m.count).toFixed(2)),
-        total_events: m.count,
-      }))
-      .sort((a, b) => b.avg_replays - a.avg_replays)
-      .slice(0, 10);
+      // Replay by state
+      runQuery(`
+        SELECT
+          COALESCE(state, 'Unknown') AS state,
+          ROUND(SAFE_DIVIDE(COUNTIF(is_replay = true), COUNT(*)), 2) AS avg_replays,
+          ROUND(100 * SAFE_DIVIDE(COUNTIF(is_replay = true), COUNT(*)), 1) AS repeat_pct
+        FROM ${FQ_TABLE}
+        WHERE ${AR_END}
+        GROUP BY state ORDER BY avg_replays DESC`),
 
-    // ── By subject ────────────────────────────────────────────────────────
-    const subjectMap = {};
-    sessions.forEach(s => {
-      const key = s.subject || 'Unknown';
-      if (!subjectMap[key]) subjectMap[key] = { subject: key, total_replays: 0, repeat_students: new Set(), count: 0 };
-      subjectMap[key].total_replays += (s.replay_count || 0);
-      if ((s.replay_count || 0) > 0) subjectMap[key].repeat_students.add(s.student_id);
-      subjectMap[key].count++;
-    });
-    const by_subject = Object.values(subjectMap)
-      .map(s => ({
-        subject:         s.subject,
-        avg_replays:     parseFloat((s.total_replays / s.count).toFixed(2)),
-        repeat_students: s.repeat_students.size,
-      }))
-      .sort((a, b) => b.avg_replays - a.avg_replays);
+      // Location breakdown
+      runQuery(`
+        SELECT
+          state, district,
+          COUNT(DISTINCT student_id) AS active_users,
+          ROUND(AVG(IF(${SESSION_END}, duration_seconds, NULL)) / 60, 1) AS avg_session
+        FROM ${FQ_TABLE}
+        WHERE state IS NOT NULL
+        GROUP BY state, district ORDER BY active_users DESC LIMIT 500`),
 
-    // ── By state ──────────────────────────────────────────────────────────
-    const stateMap = {};
-    sessions.forEach(s => {
-      const key = s.state || 'Unknown';
-      if (!stateMap[key]) stateMap[key] = { state: key, total_replays: 0, repeat: 0, count: 0 };
-      stateMap[key].total_replays += (s.replay_count || 0);
-      if ((s.replay_count || 0) > 0) stateMap[key].repeat++;
-      stateMap[key].count++;
-    });
-    const by_state = Object.values(stateMap)
-      .map(s => ({
-        state:       s.state,
-        avg_replays: parseFloat((s.total_replays / s.count).toFixed(2)),
-        repeat_pct:  parseFloat(((s.repeat / s.count) * 100).toFixed(1)),
-      }))
-      .sort((a, b) => b.avg_replays - a.avg_replays);
+      // Classroom analytics
+      runQuery(`
+        SELECT
+          class_grade, subject,
+          COUNT(DISTINCT student_id) AS total_students,
+          ROUND(AVG(IF(${SESSION_END}, duration_seconds, NULL)) / 60, 1) AS avg_session
+        FROM ${FQ_TABLE}
+        GROUP BY class_grade, subject ORDER BY total_students DESC LIMIT 500`),
 
-    res.json({
-      kpi: {
-        total_replays:             totalReplays,
-        avg_replays_per_student:   parseFloat((totalReplays / total).toFixed(2)),
-        repeat_sessions:           repeatSessions,
+      // Predictive drop-offs (AR modules ended without completion)
+      runQuery(`
+        SELECT
+          COALESCE(module_title, topic_id, 'Unknown') AS topic,
+          COUNTIF(completed = false) AS drop_offs,
+          ROUND(AVG(IF(completed = false, duration_seconds, NULL)) / 60, 1) AS time_spent
+        FROM ${FQ_TABLE}
+        WHERE ${AR_END}
+        GROUP BY topic HAVING drop_offs > 0 ORDER BY drop_offs DESC LIMIT 10`),
+
+      // Telemetry summary by state
+      runQuery(`
+        SELECT
+          state AS region, state,
+          COUNT(DISTINCT student_id) AS users,
+          CAST(ROUND(AVG(IF(${SESSION_END}, duration_seconds, NULL))) AS INT64) AS avg_module_seconds,
+          ROUND(100 * SAFE_DIVIDE(COUNTIF(${AR_END} AND completed = false),
+                                  COUNTIF(${AR_END})), 1) AS \`drop\`,
+          ROUND(100 * SAFE_DIVIDE(COUNTIF(offline_session = true), COUNT(*)), 1) AS offline
+        FROM ${FQ_TABLE}
+        WHERE state IS NOT NULL
+        GROUP BY state ORDER BY users DESC`),
+    ]);
+
+    const ov  = overviewRows[0]  || {};
+    const rk  = replayKpiRows[0] || {};
+    const totalReplays = rk.total_replays || 0;
+    const students     = rk.students || 0;
+
+    const snapshot = {
+      overview: {
+        active_users:     ov.active_users     || 0,
+        avg_session_mins: ov.avg_session_mins || 0,
+        dropoff_pct:      ov.dropoff_pct      || 0,
+        offline_pct:      ov.offline_pct      || 0,
+        avg_replays:      ov.avg_replays      || 0,
       },
-      by_module,
-      by_subject,
-      by_state,
-      table: [],
-    });
-  } catch (_) {
-    // Return zeroed structure — dashboard renders empty state cleanly
-    res.json({
-      kpi: { total_replays: 0, avg_replays_per_student: 0, repeat_sessions: 0 },
-      by_module: [],
-      by_subject: [],
-      by_state: [],
-      table: [],
-    });
+      replay: {
+        kpi: {
+          total_replays:           totalReplays,
+          avg_replays_per_student: students > 0 ? Math.round((totalReplays / students) * 100) / 100 : 0,
+          repeat_sessions:         totalReplays,
+        },
+        by_module:  byModule,
+        by_subject: bySubject,
+        by_state:   byState,
+        table:      [],
+      },
+      location,
+      classroom,
+      predictive,
+      telemetry_summary: { success: true, data: summary },
+      refreshed_at: new Date().toISOString(),
+    };
+
+    // Strip any BigQuery wrapper objects / undefined before storing.
+    const clean = JSON.parse(JSON.stringify(snapshot));
+
+    const db = require('../lib/firebase').getFirestore();
+    await db.collection('analytics_cache').doc('latest').set(clean);
+
+    // Also precompute the per-scope summary-report docs (for the 📑 button).
+    let reportScopes = 0;
+    try { reportScopes = await buildReportScopes(db); } catch (_) { /* best-effort */ }
+
+    res.json({ ok: true, refreshed_at: clean.refreshed_at, report_scopes: reportScopes });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err.message || err) });
   }
 });
 
-// ── Location breakdown ────────────────────────────────────────────────────────
+// ── Report helpers (themed summary workbook, one doc per scope) ──────────────
+// Seed aspirational-districts list (NITI Aayog) — editable later via config.
+const ASPIRATIONAL_DISTRICTS = [
+  'udaipur','gaya','chandauli','sonbhadra','siddharthnagar','chitrakoot','fatehpur',
+  'bahraich','balrampur','shrawasti','barabanki','khagaria','araria','sheikhpura',
+  'jamui','banka','katihar','purnia','nawada','muzaffarpur','dhubri','goalpara',
+  'barpeta','darrang','hailakandi','dahod','narmada','ranchi','khunti','gumla',
+  'dumka','godda','pakur','sahibganj','latehar','palamu','bokaro','hazaribagh',
+  'ramgarh','west singhbhum','simdega','giridih','lohardaga','dindori','barwani',
+  'vidisha','rajgarh','guna','chhatarpur','damoh','singrauli','gadchiroli',
+  'nandurbar','osmanabad','washim','malkangiri','nabarangpur','koraput','rayagada',
+  'kalahandi','kandhamal','gajapati','nuapada','bolangir','dhenkanal',
+];
+function slugScope(s) { return String(s || 'All India').replace(/[^A-Za-z0-9]+/g, '_'); }
+function monthNameFrom(iso) {
+  try { return new Date(iso).toLocaleString('en-US', { month: 'long', year: 'numeric' }); }
+  catch (_) { return ''; }
+}
+async function buildReportScopes(db) {
+  const rb = require('../lib/report_builder');
+  const joins = { status: {}, bloom: {}, board: {}, qcount: {}, curriculum: [], aspirational: ASPIRATIONAL_DISTRICTS };
+  try {
+    const s = await db.collection('ar_assets').limit(3000).get();
+    s.forEach(d => { const a = d.data(); const k = a.title || a.name || a.module_title; if (k) joins.status[k] = a.status || 'published'; });
+  } catch (_) {}
+  try {
+    const s = await db.collection('quizzes').limit(3000).get();
+    s.forEach(d => { const q = d.data(); const k = q.title || q.name; if (k) { joins.bloom[k] = q.blooms_level || q.bloom || ''; joins.board[k] = q.board || ''; joins.qcount[k] = q.question_count || q.questions || ''; } });
+  } catch (_) {}
+  try {
+    const s = await db.collection('curriculum').limit(3000).get();
+    s.forEach(d => { const c = d.data(); joins.curriculum.push([c.class_grade || c.class || '', c.subject || '', c.topic || c.title || '', c.board || '', c.language || '']); });
+  } catch (_) {}
+  rb.setJoins(joins);
+  const { generated, scopes } = await rb.buildAllScopes();
+  const entries = Object.entries(scopes);
+  for (let i = 0; i < entries.length; i += 300) {
+    const batch = db.batch();
+    for (const [name, data] of entries.slice(i, i + 300)) {
+      batch.set(db.collection('analytics_cache').doc('scope__' + slugScope(name)), { scope: name, generated, data });
+    }
+    await batch.commit();
+  }
+  await db.collection('analytics_cache').doc('report_index').set({ scopes: entries.map(e => e[0]), generated });
+  return entries.length;
+}
+
+// ── Sync telemetry: Firestore → BigQuery (manual, admin-triggered) ───────────
+// Runs the exporter on demand. No Cloud Scheduler — you trigger this from the
+// dashboard button once or twice a month. Protected by the analytics permission
+// (so no shared secret has to live in the browser).
+router.post('/sync-telemetry', requirePerm('perm_view_analytics'), async (req, res) => {
+  try {
+    const result = await runExport({ limitPerCollection: 500 });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
+// ── Overview KPIs (from snapshot) ─────────────────────────────────────────────
+router.get('/overview', requirePerm('perm_view_analytics'), async (req, res) => {
+  const snap = await readSnapshot();
+  res.json((snap && snap.overview) || EMPTY.overview);
+});
+
+// ── Replay & Repeat Analytics (from snapshot) ─────────────────────────────────
+router.get('/replay', requirePerm('perm_view_analytics'), async (req, res) => {
+  const snap = await readSnapshot();
+  res.json((snap && snap.replay) || EMPTY.replay);
+});
+
+// ── Location breakdown (from snapshot) ────────────────────────────────────────
 router.get('/location', async (req, res) => {
-  try {
-    const db   = require('../lib/firebase').getFirestore();
-    const snap = await db.collection('telemetry_sessions').limit(2000).get();
-    if (snap.empty) throw new Error('no data');
-    const map = {};
-    snap.docs.forEach(d => {
-      const s   = d.data();
-      const key = `${s.state}|${s.district}`;
-      if (!map[key]) map[key] = { state: s.state, district: s.district, users: new Set(), total_mins: 0, count: 0 };
-      map[key].users.add(s.student_id);
-      map[key].total_mins += (s.session_minutes || 0);
-      map[key].count++;
-    });
-    return res.json(Object.values(map).map(r => ({
-      state:        r.state,
-      district:     r.district,
-      active_users: r.users.size,
-      avg_session:  parseFloat((r.total_mins / r.count).toFixed(1)),
-    })).sort((a, b) => b.active_users - a.active_users));
-  } catch (_) {
-    res.json([]);
-  }
+  const snap = await readSnapshot();
+  res.json((snap && snap.location) || EMPTY.location);
 });
 
-// ── Classroom analytics ───────────────────────────────────────────────────────
+// ── Classroom analytics (from snapshot) ───────────────────────────────────────
 router.get('/classroom', async (req, res) => {
-  try {
-    const db   = require('../lib/firebase').getFirestore();
-    const snap = await db.collection('telemetry_sessions').limit(2000).get();
-    if (snap.empty) throw new Error('no data');
-    const map = {};
-    snap.docs.forEach(d => {
-      const s   = d.data();
-      const key = `${s.class_grade}|${s.subject}`;
-      if (!map[key]) map[key] = { class_grade: s.class_grade, subject: s.subject, students: new Set(), total_mins: 0, count: 0 };
-      map[key].students.add(s.student_id);
-      map[key].total_mins += (s.session_minutes || 0);
-      map[key].count++;
-    });
-    return res.json(Object.values(map).map(r => ({
-      class_grade:    r.class_grade,
-      subject:        r.subject,
-      total_students: r.students.size,
-      avg_session:    parseFloat((r.total_mins / r.count).toFixed(1)),
-    })).sort((a, b) => b.total_students - a.total_students));
-  } catch (_) {
-    res.json([]);
-  }
+  const snap = await readSnapshot();
+  res.json((snap && snap.classroom) || EMPTY.classroom);
 });
 
-// ── Predictive analytics ──────────────────────────────────────────────────────
+// ── Predictive analytics (from snapshot) ──────────────────────────────────────
 router.get('/predictive', async (req, res) => {
-  try {
-    const db   = require('../lib/firebase').getFirestore();
-    const snap = await db.collection('telemetry_sessions')
-                         .where('dropped_off', '==', true).limit(1000).get();
-    if (snap.empty) throw new Error('no data');
-    const map = {};
-    snap.docs.forEach(d => {
-      const s   = d.data();
-      const key = s.topic || 'Unknown';
-      if (!map[key]) map[key] = { topic: key, drop_offs: 0, total_time: 0 };
-      map[key].drop_offs++;
-      map[key].total_time += (s.session_minutes || 0);
-    });
-    return res.json(Object.values(map).map(r => ({
-      topic:      r.topic,
-      drop_offs:  r.drop_offs,
-      time_spent: parseFloat((r.total_time / r.drop_offs).toFixed(1)),
-    })).sort((a, b) => b.drop_offs - a.drop_offs).slice(0, 10));
-  } catch (_) {
-    res.json([]);
-  }
+  const snap = await readSnapshot();
+  res.json((snap && snap.predictive) || EMPTY.predictive);
 });
 
-// ── Telemetry summary ─────────────────────────────────────────────────────────
+// ── Telemetry summary (from snapshot) ─────────────────────────────────────────
 router.get('/telemetry/summary', async (req, res) => {
+  const snap = await readSnapshot();
+  res.json((snap && snap.telemetry_summary) || EMPTY.telemetry_summary);
+});
+
+// ── Refresh status (for the "last refreshed" label) ───────────────────────────
+router.get('/refresh-status', requirePerm('perm_view_analytics'), async (req, res) => {
+  const snap = await readSnapshot();
+  res.json({ refreshed_at: (snap && snap.refreshed_at) || null });
+});
+
+// ── Layer 3: FULL raw dataset export (BigQuery → GCS, free extract) ──────────
+// EXTRACT jobs are NOT query-billed (free). Writes the whole telemetry table to
+// gzipped CSV (auto-sharded at crore-scale), then hands back 24h signed links
+// so the browser downloads straight from GCS (not through Cloud Run).
+router.post('/raw-export', requirePerm('perm_export_data'), async (req, res) => {
   try {
-    const db   = require('../lib/firebase').getFirestore();
-    const snap = await db.collection('telemetry_sessions').limit(2000).get();
-    if (snap.empty) throw new Error('no data');
-    const map = {};
-    snap.docs.forEach(d => {
-      const s = d.data();
-      if (!s.state) return;
-      if (!map[s.state]) map[s.state] = { region: s.state, state: s.state, users: new Set(), total_secs: 0, drops: 0, offlines: 0, count: 0 };
-      map[s.state].users.add(s.student_id);
-      map[s.state].total_secs += (s.session_minutes || 0) * 60;
-      if (s.dropped_off) map[s.state].drops++;
-      if (s.offline)     map[s.state].offlines++;
-      map[s.state].count++;
-    });
-    return res.json({
-      success: true,
-      data: Object.values(map).map(r => ({
-        region:             r.region,
-        state:              r.state,
-        users:              r.users.size,
-        avg_module_seconds: Math.round(r.total_secs / r.count),
-        drop:               parseFloat(((r.drops    / r.count) * 100).toFixed(1)),
-        offline:            parseFloat(((r.offlines / r.count) * 100).toFixed(1)),
-      })).sort((a, b) => b.users - a.users),
-    });
-  } catch (_) {
-    res.json({ success: true, data: [] });
+    const { BigQuery } = require('@google-cloud/bigquery');
+    const { Storage }  = require('@google-cloud/storage');
+    const PROJECT = process.env.GCP_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'watchaugs-mitra';
+    const DATASET = 'mitra_telemetry_production';
+    const TABLE   = 'telemetry_synced';
+    const BUCKET  = process.env.TELEMETRY_BUCKET || 'mitra-telemetry-raw';
+
+    const format = (req.body && req.body.format) === 'parquet' ? 'parquet' : 'csv';
+    const ts     = new Date().toISOString().replace(/[:.]/g, '-');
+    const ext    = format === 'parquet' ? 'parquet' : 'csv.gz';
+    const prefix = `exports/${ts}`;
+    const destUri = `gs://${BUCKET}/${prefix}/data_*.${ext}`;
+
+    const bq = new BigQuery({ projectId: PROJECT });
+    const extractCfg = format === 'parquet'
+      ? { format: 'PARQUET' }
+      : { format: 'CSV', gzip: true };
+
+    // Free extract job (no query bytes billed).
+    await bq.dataset(DATASET).table(TABLE).extract(destUri, extractCfg);
+
+    // List produced files and sign 24h read URLs.
+    const storage = new Storage({ projectId: PROJECT });
+    const [objs] = await storage.bucket(BUCKET).getFiles({ prefix: `${prefix}/` });
+    const expires = Date.now() + 24 * 60 * 60 * 1000;
+    const files = [];
+    for (const o of objs) {
+      let url = null;
+      try {
+        [url] = await o.getSignedUrl({ version: 'v4', action: 'read', expires });
+      } catch (_) { /* signing needs an IAM role; fall back to gs path */ }
+      const sizeKb = o.metadata && o.metadata.size ? Math.round(Number(o.metadata.size) / 1024) : 0;
+      files.push({ name: o.name, size: sizeKb ? `${sizeKb} KB` : '', url, gs: `gs://${BUCKET}/${o.name}` });
+    }
+    res.json({ ok: true, format, files });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err.message || err) });
   }
 });
 
-// ── Export ────────────────────────────────────────────────────────────────────
+// ── Analytical report — themed 16-sheet summary workbook for a chosen scope ───
+// Reads the precomputed per-scope doc (analytics_cache/scope__<slug>) and renders
+// it via lib/summary_report.js. Zero BigQuery at download. Run Refresh first.
+router.get('/report', requirePerm('perm_export_data'), async (req, res) => {
+  try {
+    const scope = (req.query.scope && String(req.query.scope).trim()) || 'All India';
+    const db = require('../lib/firebase').getFirestore();
+    const doc = await db.collection('analytics_cache').doc('scope__' + slugScope(scope)).get();
+    const payload = doc.exists ? doc.data() : null;
+    const { buildSummaryWorkbook } = require('../lib/summary_report');
+    const genIso = (payload && payload.generated) || new Date().toISOString();
+    const buf = await buildSummaryWorkbook({
+      scope,
+      month: monthNameFrom(genIso),
+      generated: genIso.slice(0, 19).replace('T', ' ') + ' UTC',
+      data: (payload && payload.data) || {},
+    });
+    res.setHeader('Content-Disposition',
+      `attachment; filename="MITRA_Summary_${slugScope(scope)}_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) {
+    res.status(500).json({ error: 'Report failed', detail: err.message });
+  }
+});
+
+// ── Export — raw rows straight from BigQuery (manual admin action) ────────────
 router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
   try {
-    const { format = 'xlsx', state, district, class_grade, subject, month } = req.query;
-    const db = require('../lib/firebase').getFirestore();
+    const { format = 'xlsx', state = '', district = '', class_grade = '', subject = '', month = '' } = req.query;
 
-    // Build filtered query — all filters are optional
-    let query = db.collection('telemetry_sessions');
-    if (state)       query = query.where('state',       '==', state);
-    if (district)    query = query.where('district',    '==', district);
-    if (class_grade) query = query.where('class_grade', '==', class_grade);
-    if (subject)     query = query.where('subject',     '==', subject);
+    const rows = await runQuery(`
+      SELECT
+        student_id, state, district, class_grade, subject,
+        COALESCE(module_title, topic_id) AS topic,
+        ar_tier, session_minutes, duration_seconds,
+        is_replay, completed, offline_session, connectivity_type,
+        cold_start_ms, CAST(timestamp AS STRING) AS event_time
+      FROM ${FQ_TABLE}
+      WHERE (@state = ''       OR state = @state)
+        AND (@district = ''    OR district = @district)
+        AND (@class_grade = '' OR class_grade = @class_grade)
+        AND (@subject = ''     OR subject = @subject)
+        AND (@month = ''       OR STARTS_WITH(CAST(timestamp AS STRING), @month))
+      LIMIT 50000
+    `, { state, district, class_grade, subject, month },
+       { cacheKey: `export:${state}:${district}:${class_grade}:${subject}:${month}` });
 
-    // Month filter: 'YYYY-MM' → first..last day of that month on created_at
-    if (month && /^\d{4}-\d{2}$/.test(month)) {
-      const [yy, mm] = month.split('-').map(Number);
-      const start = new Date(Date.UTC(yy, mm - 1, 1));
-      const end   = new Date(Date.UTC(yy, mm, 1));
-      query = query.where('created_at', '>=', start).where('created_at', '<', end);
-    }
+    const out = rows.map(s => ({
+      Student_ID:      s.student_id      || '',
+      State:           s.state           || '',
+      District:        s.district        || '',
+      Class:           s.class_grade     || '',
+      Subject:         s.subject         || '',
+      Topic:           s.topic           || '',
+      AR_Tier:         s.ar_tier         || '',
+      Session_Minutes: s.session_minutes || 0,
+      Duration_Secs:   s.duration_seconds || 0,
+      Is_Replay:       s.is_replay       ? 'Yes' : 'No',
+      Completed:       s.completed       ? 'Yes' : 'No',
+      Offline:         s.offline_session ? 'Yes' : 'No',
+      Connectivity:    s.connectivity_type || '',
+      Cold_Start_Ms:   s.cold_start_ms   || '',
+      Event_Time:      (s.event_time || '').slice(0, 19),
+    }));
 
-    const snap = await query.limit(10000).get();
-
-    const rows = snap.docs.map(d => {
-      const s = d.data();
-      return {
-        Student_ID:      s.student_id      || '',
-        State:           s.state           || '',
-        District:        s.district        || '',
-        Class:           s.class_grade     || '',
-        Subject:         s.subject         || '',
-        Topic:           s.topic           || '',
-        AR_Tier:         s.ar_tier         || '',
-        Session_Minutes: s.session_minutes || 0,
-        Replay_Count:    s.replay_count    || 0,
-        Dropped_Off:     s.dropped_off     ? 'Yes' : 'No',
-        Offline:         s.offline         ? 'Yes' : 'No',
-        Network_Type:    s.network_type    || '',
-        Device_RAM_GB:   s.device_ram_gb   || '',
-        Battery_Drain:   s.battery_drain   || '',
-        Cold_Start_Sec:  s.cold_start_sec  || '',
-        Date:            s.created_at
-                           ? new Date(s.created_at._seconds * 1000).toISOString().slice(0, 10)
-                           : '',
-      };
-    });
-
-    // If no real data yet, return an informative empty sheet
-    if (rows.length === 0) {
-      rows.push({
-        Student_ID: 'NO_DATA', State: '', District: '', Class: '',
-        Subject: '', Topic: '', AR_Tier: '', Session_Minutes: 0,
-        Replay_Count: 0, Dropped_Off: '', Offline: '', Network_Type: '',
-        Device_RAM_GB: '', Battery_Drain: '', Cold_Start_Sec: '', Date: '',
+    if (out.length === 0) {
+      out.push({
+        Student_ID: 'NO_DATA', State: '', District: '', Class: '', Subject: '',
+        Topic: '', AR_Tier: '', Session_Minutes: 0, Duration_Secs: 0, Is_Replay: '',
+        Completed: '', Offline: '', Connectivity: '', Cold_Start_Ms: '', Event_Time: '',
       });
     }
 
-    const ws  = XLSX.utils.json_to_sheet(rows);
-    const wb  = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(out);
+    const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'RAW_Sessions');
 
     const ext      = format === 'csv' ? 'csv' : 'xlsx';
-    const bookType = format === 'csv' ? 'csv'  : 'xlsx';
+    const bookType = format === 'csv' ? 'csv' : 'xlsx';
     const buf      = XLSX.write(wb, { type: 'buffer', bookType });
 
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="MITRA_Analytics_${new Date().toISOString().slice(0, 10)}.${ext}"`
-    );
+    res.setHeader('Content-Disposition',
+      `attachment; filename="MITRA_Analytics_${new Date().toISOString().slice(0, 10)}.${ext}"`);
     res.setHeader('Content-Type', format === 'csv'
       ? 'text/csv'
       : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
