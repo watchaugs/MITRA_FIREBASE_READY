@@ -174,8 +174,12 @@ service cloud.firestore {
     }
 
     // ── Compliance Settings ───────────────────────────────────────────────────
+    // Admins read everything. The signed-in app may read ONLY the two public
+    // officer-contact docs (Grievance Officer / DPO) — meant to be publicly
+    // listed under the DPDPA.
     match /compliance_settings/{settingId} {
-      allow read: if isAdmin();
+      allow read: if isAdmin()
+        || (isAuth() && settingId in ['grievance_officer', 'dpo_info']);
       allow create, update, delete: if isSuperAdmin();
     }
 
@@ -205,6 +209,23 @@ service cloud.firestore {
     match /public_config/{docId} {
       allow read: if isAuth();
       allow create, update, delete: if isAdmin();
+    }
+
+    // ── Telemetry sync (app writes its own batches; admins read) ─────────────
+    // The app writes telemetry_sync/{uid}/{collection}.
+    match /telemetry_sync/{uid}/{document=**} {
+      allow write: if isAuth() && request.auth.uid == uid;
+      allow read: if isAdmin();
+    }
+
+    // ── DPDPA data requests (export / deletion) ──────────────────────────────
+    // A student files/reads their own request; the compliance team actions it.
+    match /data_requests/{requestId} {
+      allow create, update: if isAuth()
+        && request.resource.data.student_id == request.auth.uid;
+      allow read: if isAdmin()
+        || (isAuth() && resource.data.student_id == request.auth.uid);
+      allow delete: if isAdmin();
     }
 
     // ── Default: Deny everything else ────────────────────────────────────────

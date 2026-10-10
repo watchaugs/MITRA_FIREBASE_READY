@@ -120,6 +120,40 @@ router.post('/impressions', async (req, res) => {
   }
 });
 
+// POST /engagement — richer ad interaction depth from the student app.
+// Stores click / view-time / completion events; bumps click counter only.
+// One or two Firestore writes per call; no compute, scale-to-zero safe.
+router.post('/engagement', async (req, res) => {
+  try {
+    const db = getFirestore();
+    const b  = req.body || {};
+    await db.collection('ad_engagement').add({
+      campaign_id:     b.campaign_id || null,
+      event_type:      b.event_type || 'view',   // 'view' | 'click' | 'complete' | 'skip'
+      view_time_ms:    typeof b.view_time_ms === 'number' ? b.view_time_ms : null,
+      completed:       b.completed === true,
+      completion_pct:  typeof b.completion_pct === 'number' ? b.completion_pct : null,
+      media_type:      b.media_type || null,      // 'image' | 'video'
+      state:           b.state || null,
+      district:        b.district || null,
+      student_id:      b.student_id || null,
+      created_at:      new Date(),
+      source:          'student_app',
+    });
+    // Best-effort live click counter for the /kpi CTR tile (never double-counts impressions).
+    if (b.campaign_id && b.event_type === 'click') {
+      try {
+        const { FieldValue } = require('firebase-admin/firestore');
+        await db.collection('ad_campaigns').doc(b.campaign_id)
+          .set({ clicks: FieldValue.increment(1) }, { merge: true });
+      } catch (_) { /* counter is best-effort; never fail the app */ }
+    }
+    res.status(202).json({ received: true });
+  } catch (_) {
+    res.status(202).json({ received: true, queued: true });
+  }
+});
+
 // ── GET /analytics/overview  ──────────────────────────────────────────────────
 router.get('/analytics/overview', async (req, res) => {
   try {

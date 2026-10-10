@@ -62,6 +62,7 @@ async function boot() {
   const consentRoutes       = require('./routes/consent');
   const usersRoutes         = require('./routes/users');
   const advertisementsRoutes = require('./routes/advertisements');
+  const feedbackRoutes       = require('./routes/feedback');
   const tenantRoutes        = require('./routes/tenant');
   const geofenceRoutes      = require('./routes/geofence');
 
@@ -189,6 +190,7 @@ async function boot() {
   app.use('/api/consent',      consentLimiter, consentRoutes);
   app.use('/api/users',        usersRoutes);
   app.use('/api/ads',          advertisementsRoutes);
+  app.use('/api/feedback',     feedbackRoutes);
   app.use('/api/tenant',       tenantRoutes);
   app.use('/api/geofence',     geofenceRoutes);
   app.use('/api/internal', require('./routes/telemetry_export'));

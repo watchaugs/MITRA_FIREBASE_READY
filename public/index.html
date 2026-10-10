@@ -5903,9 +5903,6 @@ async function saveMqsQuiz(desiredStatus) {
   const mqsStatesSel = document.getElementById('mqs-states');
   const targetStates = mqsStatesSel ? [...mqsStatesSel.selectedOptions].map(o => o.value).filter(Boolean) : [];
 
-  const mqsStatesSel = document.getElementById('mqs-states');
-  const targetStates = mqsStatesSel ? [...mqsStatesSel.selectedOptions].map(o => o.value).filter(Boolean) : [];
-
   try {
     const qRes = await fetch('/api/quiz', {
       method: 'POST', 
