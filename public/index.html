@@ -1581,9 +1581,8 @@ document.addEventListener('DOMContentLoaded', () => {
         <option value="">All India</option>
       </select>
       <button class="btn btn-g" onclick="exportAnalyticsData('csv')">📄 CSV</button>
-      <button class="btn btn-g" onclick="exportAnalyticsData('xlsx')">⬇️ XLSX</button>
       <button class="btn btn-p" onclick="exportAnalyticsData('pptx')">📊 Download PPT</button>
-      <button class="btn btn-g" onclick="downloadAnalyticalReport()" title="Download the themed 16-sheet summary workbook for the scope selected above (All India or a state)">📑 Summary report</button>
+      <button class="btn btn-g" onclick="downloadAnalyticalReport()" title="Download the 16-sheet summary workbook (XLSX) for the scope selected above (All India or a state)">📑 Summary XLSX</button>
       <button class="btn btn-s" onclick="exportRawDataset()" title="Export the FULL raw dataset from the warehouse to downloadable files (free BigQuery extract)">🗄️ Raw dataset</button>
       <button id="btn-sync-telemetry" class="btn btn-s" onclick="syncTelemetry()" title="Pull new app telemetry from Firestore into the data warehouse, then refresh">⬇️ Sync telemetry</button>
       <button id="btn-refresh-analytics" class="btn btn-g" onclick="refreshAnalyticsSnapshot()" title="Recompute analytics from the data warehouse — run once or twice a month">🔄 Refresh data</button>
