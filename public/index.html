@@ -2149,7 +2149,7 @@ document.addEventListener('DOMContentLoaded', () => {
 <div class="am-tabs" id="am-tab-bar">
   <button class="am-tab on"  onclick="switchAmTab('db',this)">🗄️ Database</button>
   <button class="am-tab"     onclick="switchAmTab('tenant',this)">🏛️ Tenant Database Links</button>
-  <button class="am-tab"     onclick="switchAmTab('apps',this)">📋 Deployed Apps</button>
+  <button class="am-tab"     onclick="switchAmTab('apps',this);initStateAppForm()">📋 Deployed Apps</button>
 </div>
 
 <!-- ════════════════ TAB: LIVE PREVIEW ════════════════ -->
@@ -2797,45 +2797,35 @@ document.addEventListener('DOMContentLoaded', () => {
 <div class="am-panel" id="am-apps">
   <div class="sh" style="margin-bottom:16px">
     <div><div class="card-title">📋 Deployed State Applications</div><div class="card-sub">Active apps feeding data into the MITRA Dashboard.</div></div>
-    <button class="btn btn-p btn-sm" onclick="switchAmTab('tenant',document.querySelectorAll('.am-tab')[1])">🏛️ View Tenant Files</button>
+    <button class="btn btn-s btn-sm" onclick="initStateAppForm()">↻ Refresh</button>
   </div>
+
+  <!-- Create / Update a per-state app variant -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title" style="font-size:14px">➕ Create / Update State App</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin:12px 0">
+      <div><label class="lbl">App Name</label><input class="inp" id="sa-name" placeholder="MITRA Bihar"></div>
+      <div><label class="lbl">State</label><select class="sel" id="sa-state"><option value="">Select State</option></select></div>
+      <div><label class="lbl">Version</label><input class="inp" id="sa-version" placeholder="v1.0.0"></div>
+      <div><label class="lbl">Theme Colour</label><input type="color" class="inp" id="sa-theme" value="#6366f1" style="height:38px;padding:4px"></div>
+      <div><label class="lbl">Logo URL (optional)</label><input class="inp" id="sa-logo" placeholder="https://…/logo.png"></div>
+    </div>
+    <label class="lbl">Features enabled</label>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 4px">
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="sa-f-ar" checked> AR lessons</label>
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="sa-f-quiz" checked> Quizzes</label>
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="sa-f-leaderboard" checked> Leaderboard</label>
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="sa-f-ads" checked> Sponsor banners</label>
+    </div>
+    <div id="sa-status" style="font-size:12px;min-height:18px;margin:6px 0"></div>
+    <button class="btn btn-p btn-sm" onclick="saveStateApp()">💾 Save State App (draft)</button>
+  </div>
+
   <div class="card" style="padding:0;overflow:hidden">
     <table class="tbl">
       <thead><tr><th>App Name</th><th>Target State</th><th>Version</th><th>Active Students</th><th>Theme</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody id="am-deployed-tbody">
-        <tr>
-          <td><span style="font-weight:600">MITRA UP</span></td><td>Uttar Pradesh</td><td>v2.1.4</td>
-          <td>22,300</td><td><div style="width:16px;height:16px;border-radius:4px;background:#6366f1;display:inline-block"></div></td>
-          <td><span class="sdot green"></span>Live (Play Store)</td>
-          <td>
-            <div style="display:flex;gap:4px">
-              <button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">OTA Update</button>
-              <button class="btn btn-r btn-sm" onclick="showToast('Not available yet')">Rollback</button>
-            </div>
-          </td>
-        </tr>
-        <tr>
-          <td><span style="font-weight:600">MITRA Maha</span></td><td>Maharashtra</td><td>v2.1.4</td>
-          <td>20,650</td><td><div style="width:16px;height:16px;border-radius:4px;background:#10b981;display:inline-block"></div></td>
-          <td><span class="sdot green"></span>Live (Play Store)</td>
-          <td>
-            <div style="display:flex;gap:4px">
-              <button class="btn btn-s btn-sm" onclick="showToast('Not available yet')">OTA Update</button>
-              <button class="btn btn-r btn-sm" onclick="showToast('Not available yet')">Rollback</button>
-            </div>
-          </td>
-        </tr>
-        <tr>
-          <td><span style="font-weight:600">MITRA Raj</span></td><td>Rajasthan</td><td>v2.1.2</td>
-          <td>9,400</td><td><div style="width:16px;height:16px;border-radius:4px;background:#f59e0b;display:inline-block"></div></td>
-          <td><span class="sdot yellow"></span>Update Pending</td>
-          <td>
-            <div style="display:flex;gap:4px">
-              <button class="btn btn-p btn-sm" onclick="switchAmTab('db',document.querySelectorAll('.am-tab')[5])">Rebuild</button>
-              <button class="btn btn-r btn-sm" onclick="showToast('Not available yet')">Rollback</button>
-            </div>
-          </td>
-        </tr>
+        <tr><td colspan="7" style="text-align:center;color:var(--text2);padding:20px">Loading deployed apps…</td></tr>
       </tbody>
     </table>
   </div>
@@ -4649,6 +4639,53 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
     } catch (e) { showToastError('Network error'); }
   };
 })();
+
+// ── State App config form (per-state cosmetic + feature flags → /builds) ─────
+function initStateAppForm() {
+  const sel = document.getElementById('sa-state');
+  if (sel && sel.options.length <= 1 && typeof INDIA_STATES !== 'undefined') {
+    INDIA_STATES.forEach(s => sel.add(new Option(s.name, s.code)));
+  }
+  if (typeof loadDeployedApps === 'function') loadDeployedApps();
+}
+
+async function saveStateApp() {
+  const name     = document.getElementById('sa-name').value.trim();
+  const state    = document.getElementById('sa-state').value;
+  const statusEl = document.getElementById('sa-status');
+  if (!name || !state) {
+    statusEl.innerHTML = '<span style="color:var(--red)">Enter an app name and pick a state.</span>';
+    return;
+  }
+  const body = {
+    app_name: name,
+    state,
+    version:     document.getElementById('sa-version').value.trim() || 'v1.0.0',
+    theme_color: document.getElementById('sa-theme').value,
+    logo_url:    document.getElementById('sa-logo').value.trim() || null,
+    feature_flags: {
+      ar:          document.getElementById('sa-f-ar').checked,
+      quiz:        document.getElementById('sa-f-quiz').checked,
+      leaderboard: document.getElementById('sa-f-leaderboard').checked,
+      ads:         document.getElementById('sa-f-ads').checked,
+    },
+  };
+  statusEl.innerHTML = '⏳ Saving…';
+  try {
+    const token = localStorage.getItem('mitra_token') || '';
+    const res = await fetch('/api/app-builder/builds', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { 'Authorization': 'Bearer ' + token } : {}),
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ('Save failed (' + res.status + ')'));
+    statusEl.innerHTML = '<span style="color:var(--accent3)">✅ Saved as draft. Use “OTA Update” in the table below to push it live to that state.</span>';
+    if (typeof loadDeployedApps === 'function') loadDeployedApps();
+  } catch (e) {
+    statusEl.innerHTML = '<span style="color:var(--red)">✗ ' + (e.message || e) + '</span>';
+  }
+}
 
 // --- TOAST ---
 function showToast(msg) {

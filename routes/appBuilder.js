@@ -134,4 +134,42 @@ router.get('/state-apps', async (req, res) => {
   res.json({ data: builds, total: builds.length });
 });
 
+// ── GET /config/:state ──────────────────────────────────────────────────────
+// APP-FACING: the Flutter app calls this on startup with the student's state
+// and applies the per-state cosmetic + feature config (theme, logo, flags).
+// No composite index needed — we filter/sort the LIVE builds in memory, and
+// always fall back to safe defaults so the app can never be bricked by config.
+const DEFAULT_APP_CONFIG = {
+  app_name: 'MITRA',
+  theme_color: '#6366f1',
+  logo_url: null,
+  version: 'v1.0.0',
+  feature_flags: { ar: true, quiz: true, leaderboard: true, ads: true },
+};
+router.get('/config/:state', async (req, res) => {
+  const base = { state: req.params.state, ...DEFAULT_APP_CONFIG };
+  try {
+    const db   = getFirestore();
+    const snap = await db.collection('app_builds')
+      .where('state', '==', req.params.state).limit(25).get();
+    const toMs = (v) => (v && v.toDate ? v.toDate().getTime() : new Date(v || 0).getTime());
+    const live = snap.docs
+      .map(d => d.data())
+      .filter(b => (b.status || b.build_status) === 'live')
+      .sort((a, b) => toMs(b.created_at) - toMs(a.created_at))[0];
+    if (!live) return res.json(base);
+    res.json({
+      state:         req.params.state,
+      app_name:      live.app_name      || base.app_name,
+      theme_color:   live.theme_color   || base.theme_color,
+      logo_url:      live.logo_url       || base.logo_url,
+      version:       live.version        || base.version,
+      feature_flags: { ...base.feature_flags, ...(live.feature_flags || {}) },
+    });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load per-state app config — serving defaults');
+    res.json(base); // never block the app on config
+  }
+});
+
 module.exports = router;
