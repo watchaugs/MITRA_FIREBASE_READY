@@ -14,7 +14,12 @@ const jwt = require('jsonwebtoken');
 const log = require('../lib/logger');
 const { getFirestore } = require('../lib/firebase');
 
-// Student / teacher tokens come from the app (/api/auth/firebase). They are not// dashboard accounts, so they must never be looked up in dashboard_users —// that lookup used to fail and returned 401 "Account deactivated" for EVERY// app request.const APP_ROLES = new Set(['student', 'teacher']); // 60-second in-memory cache: userId → { active, role, perms, fetchedAt }
+// Student / teacher tokens come from the app (/api/auth/firebase). They are not
+// dashboard accounts, so they must never be looked up in dashboard_users —
+// that lookup used to fail and returned 401 "Account deactivated" for EVERY
+// app request.
+const APP_ROLES = new Set(['student', 'teacher']);
+// 60-second in-memory cache: userId → { active, role, perms, fetchedAt }
 const userStatusCache = new Map();
 const CACHE_TTL_MS = 60_000;
 function setDbQuery() { /* no-op — kept so old callers don't break; Firestore lookup below needs no injection */ }
