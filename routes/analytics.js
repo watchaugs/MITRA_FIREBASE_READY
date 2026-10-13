@@ -257,6 +257,12 @@ router.post('/sync-telemetry', requirePerm('perm_view_analytics'), async (req, r
   }
 });
 
+// ── Whole snapshot in one call (1 Firestore read) — used by all Analytics charts
+router.get('/snapshot', requirePerm('perm_view_analytics'), async (req, res) => {
+  const snap = await readSnapshot();
+  res.json(snap || { ...EMPTY, empty: true });
+});
+
 // ── Overview KPIs (from snapshot) ─────────────────────────────────────────────
 router.get('/overview', requirePerm('perm_view_analytics'), async (req, res) => {
   const snap = await readSnapshot();

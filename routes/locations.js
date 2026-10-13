@@ -70,20 +70,8 @@ router.get('/geojson/state/:code', (req, res) => {
 router.get('/geojson/district/:id', (req, res) => {
   res.json({ type: 'FeatureCollection', features: [] });
 });
-router.post('/sync-geojson/state/:code', requirePerm('perm_manage_geo'), (req, res) => {
-  res.json({ success: true, message: `GeoJSON sync queued for ${req.params.code}` });
-});
-router.post('/sync-geojson/district/:id', requirePerm('perm_manage_geo'), (req, res) => {
-  res.json({ success: true, message: 'District GeoJSON sync queued' });
-});
-router.post('/sync-all', requirePerm('perm_manage_geo'), (req, res) => {
-  res.json({ success: true, message: 'Full GeoJSON sync queued', total: IN_STATES.length });
-});
-router.get('/states/sync-status', (req, res) => {
-  res.json({ synced: IN_STATES.length, pending: 0, last_sync: new Date().toISOString() });
-});
-router.post('/seed-states', requirePerm('perm_manage_geo'), (req, res) => {
-  res.json({ success: true, seeded: IN_STATES.length });
-});
+// (Removed: /sync-geojson/*, /sync-all, /states/sync-status and /seed-states.
+//  They replied "queued"/"synced" without doing anything. Geofences are
+//  centre + radius — see routes/geofence.js.)
 
 module.exports = router;

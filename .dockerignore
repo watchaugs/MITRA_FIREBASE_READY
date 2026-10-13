@@ -1,0 +1,18 @@
+# Keep secrets, scripts and dev files out of the Cloud Run image
+node_modules
+npm-debug.log*
+.git
+.gitignore
+.env
+.env.*
+jwt.txt
+db.txt
+db/
+scripts/
+git-filter-repo
+fix-pass.js
+force-setup.js
+final-admin-fix.js
+update-admin.js
+*.md
+WALKTHROUGH.html

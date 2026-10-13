@@ -17,7 +17,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate } = require('../middleware/auth');
 const log = require('../lib/logger');
-const { sendResetEmail } = require('../lib/mailer');
+const { sendResetEmail, sendMfaCode } = require('../lib/mailer');
 
 const LOCKOUT_THRESHOLD = parseInt(process.env.LOCKOUT_THRESHOLD, 10) || 10;
 const LOCKOUT_MINUTES   = parseInt(process.env.LOCKOUT_MINUTES, 10)   || 30;
@@ -73,6 +73,9 @@ function signAccess(user) {
       perm_export_data:      !!user.perm_export_data,
       perm_manage_ads:       !!user.perm_manage_ads,
       perm_replay_analytics: !!user.perm_replay_analytics,
+      perm_manage_compliance:!!user.perm_manage_compliance,
+      perm_send_notif:       !!user.perm_send_notif,
+      perm_view_legal:       !!user.perm_view_legal,
     },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '8h', algorithm: 'HS256' }
@@ -90,6 +93,61 @@ function signRefresh(userId, familyId) {
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
+
+// ── Login response (shared by password-only and password+code sign-in) ───────
+function buildLoginResponse(userId, userRow) {
+  const accessToken  = signAccess({ ...userRow, id: userId });
+  const refreshToken = signRefresh(userId, uuidv4());
+  return {
+    token:         accessToken,   // legacy field — dashboard reads this
+    access_token:  accessToken,
+    refresh_token: refreshToken,
+    expires_in:    28800,
+    user: {
+      id:    userId,
+      name:  userRow.full_name,
+      email: userRow.email,
+      role:  userRow.role,
+      state: userRow.assigned_state || null,
+      mfa_required: userRow.mfa_required === true,
+      // Exact page/action permissions saved from Users → Edit (null = use the role preset)
+      ui_permissions: Array.isArray(userRow.ui_permissions) ? userRow.ui_permissions : null,
+      permissions: {
+        publish_apps:     !!userRow.perm_publish_apps,
+        upload_unity:     !!userRow.perm_upload_unity,
+        manage_geo:       !!userRow.perm_manage_geo,
+        view_analytics:   !!userRow.perm_view_analytics,
+        create_users:     !!userRow.perm_create_users,
+        edit_curriculum:  !!userRow.perm_edit_curriculum,
+        approve_content:  !!userRow.perm_approve_content,
+        export_data:      !!userRow.perm_export_data,
+        manage_ads:       !!userRow.perm_manage_ads,
+        replay_analytics: !!userRow.perm_replay_analytics,
+        manage_compliance:!!userRow.perm_manage_compliance,
+        send_notif:       !!userRow.perm_send_notif,
+        view_legal:       !!userRow.perm_view_legal,
+      },
+    },
+  };
+}
+
+// ── MFA (email code) ─────────────────────────────────────────────────────────
+// Required when the account has mfa_required = true (set from Users / Compliance
+// / Settings) or when Compliance settings turn it on for everyone.
+async function mfaRequiredFor(db, userRow) {
+  if (userRow.mfa_required === true) return true;
+  try {
+    const s = await db.collection('compliance_settings').doc('_global_settings').get();
+    return s.exists && s.data().mfa_required === true;
+  } catch (_) { return false; }
+}
+function maskEmail(e) {
+  const [u, d] = String(e || '').split('@');
+  if (!d) return '';
+  return (u.length <= 2 ? u[0] + '*' : u.slice(0, 2) + '*'.repeat(Math.max(1, u.length - 2))) + '@' + d;
+}
+const MFA_TTL_MS = 10 * 60 * 1000;
+const MFA_MAX_TRIES = 5;
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
@@ -135,46 +193,100 @@ router.post('/login', async (req, res) => {
 
     await clearFailedLogins(email);
 
-    const userId      = userDoc.id;
-    const familyId    = uuidv4();
-    const accessToken  = signAccess({ ...userRow, id: userId });
-    const refreshToken = signRefresh(userId, familyId);
+    const userId = userDoc.id;
+
+    // Second step: email a 6-digit code when MFA applies to this account.
+    if (await mfaRequiredFor(db, userRow)) {
+      const challengeId = crypto.randomBytes(16).toString('hex');
+      const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+      await db.collection('mfa_challenges').doc(challengeId).set({
+        user_id: userId, email: userRow.email,
+        code_hash: hashToken(`${challengeId}:${code}`),
+        attempts: 0, expires_at: Date.now() + MFA_TTL_MS, created_at: new Date(),
+      });
+      try {
+        await sendMfaCode({ to: userRow.email, code });
+      } catch (err) {
+        await db.collection('mfa_challenges').doc(challengeId).delete().catch(() => {});
+        log.error({ err: err.message, userId }, 'MFA email failed');
+        return res.status(503).json({ error: 'Could not email your sign-in code. Ask an administrator to check the SMTP settings.' });
+      }
+      log.info({ userId, email }, 'Password OK — MFA code emailed');
+      return res.json({ mfa_required: true, challenge_id: challengeId, email_hint: maskEmail(userRow.email) });
+    }
 
     log.info({ userId, email, role: userRow.role }, 'Dashboard login successful');
-
-    res.json({
-      token:         accessToken,   // legacy field — dashboard reads this
-      access_token:  accessToken,
-      refresh_token: refreshToken,
-      expires_in:    28800,
-      user: {
-        id:    userId,
-        name:  userRow.full_name,
-        email: userRow.email,
-        role:  userRow.role,
-        state: userRow.assigned_state || null,
-        permissions: {
-          publish_apps:     !!userRow.perm_publish_apps,
-          upload_unity:     !!userRow.perm_upload_unity,
-          manage_geo:       !!userRow.perm_manage_geo,
-          view_analytics:   !!userRow.perm_view_analytics,
-          create_users:     !!userRow.perm_create_users,
-          edit_curriculum:  !!userRow.perm_edit_curriculum,
-          approve_content:  !!userRow.perm_approve_content,
-          export_data:      !!userRow.perm_export_data,
-          manage_ads:       !!userRow.perm_manage_ads,
-          replay_analytics: !!userRow.perm_replay_analytics,
-        },
-      },
-    });
+    res.json(buildLoginResponse(userId, userRow));
   } catch (err) {
     log.error({ err: err.message }, 'login error');
     res.status(500).json({ error: 'Authentication failed' });
   }
 });
 
-// ── POST /api/auth/verify-otp (Mobile App) ───────────────────────────────────
-router.post('/verify-otp', async (req, res) => {
+// ── POST /api/auth/verify-mfa (Dashboard, second step) ───────────────────────
+router.post('/verify-mfa', async (req, res) => {
+  try {
+    const challengeId = String(req.body?.challenge_id || '');
+    const code        = String(req.body?.code || '').trim();
+    if (!/^[a-f0-9]{32}$/.test(challengeId) || !/^\d{6}$/.test(code)) {
+      return res.status(400).json({ error: 'Enter the 6-digit code from your email.' });
+    }
+    const db  = getFirestore();
+    const ref = db.collection('mfa_challenges').doc(challengeId);
+    const doc = await ref.get();
+    if (!doc.exists) return res.status(401).json({ error: 'This code has expired. Sign in again.' });
+    const c = doc.data();
+    if (Date.now() > c.expires_at) {
+      await ref.delete().catch(() => {});
+      return res.status(401).json({ error: 'This code has expired. Sign in again.' });
+    }
+    if ((c.attempts || 0) >= MFA_MAX_TRIES) {
+      await ref.delete().catch(() => {});
+      return res.status(429).json({ error: 'Too many wrong codes. Sign in again.' });
+    }
+    const a = Buffer.from(hashToken(`${challengeId}:${code}`));
+    const b = Buffer.from(String(c.code_hash || ''));
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      await ref.update({ attempts: (c.attempts || 0) + 1 });
+      await recordFailedLogin(c.email);
+      return res.status(401).json({ error: 'Incorrect code. Check the latest email and try again.' });
+    }
+    await ref.delete();
+    const userDoc = await db.collection('dashboard_users').doc(c.user_id).get();
+    if (!userDoc.exists || userDoc.data().is_active === false) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    log.info({ userId: c.user_id }, 'Dashboard login successful (MFA)');
+    res.json(buildLoginResponse(userDoc.id, userDoc.data()));
+  } catch (err) {
+    log.error({ err: err.message }, 'verify-mfa error');
+    res.status(500).json({ error: 'Verification failed. Please try again.' });
+  }
+});
+
+// ── PUT /api/auth/me/mfa ─── turn the sign-in code on/off for your own account
+router.put('/me/mfa', authenticate, async (req, res) => {
+  try {
+    const enabled = req.body?.enabled === true;
+    const db = getFirestore();
+    if (!enabled) {
+      const s = await db.collection('compliance_settings').doc('_global_settings').get();
+      if (s.exists && s.data().mfa_required === true) {
+        return res.status(400).json({ error: 'MFA is required for every account by the Compliance settings.' });
+      }
+    }
+    await db.collection('dashboard_users').doc(req.user.id).update({ mfa_required: enabled, updated_at: new Date() });
+    await db.collection('audit_log').add({
+      action: enabled ? 'mfa_enabled_self' : 'mfa_disabled_self', actor: req.user.id, created_at: new Date(),
+    });
+    res.json({ success: true, mfa_required: enabled });
+  } catch (err) {
+    log.error({ err: err.message }, 'me/mfa error');
+    res.status(500).json({ error: 'Could not update MFA setting.' });
+  }
+});
+
+// ── POST /api/auth/verify-otp (Mobile App) ───────────────────────────────────router.post('/verify-otp', async (req, res) => {
   try {
     const { phone, otp, role } = req.body;
 
@@ -268,14 +380,26 @@ router.post('/firebase', async (req, res) => {
     const userId = decodedFirebase.uid;
     const db     = getFirestore();
 
-    let userData = { role };
+    let userData = {};
     try {
       const doc = await db.collection('users').doc(userId).get();
-      if (doc.exists) userData = { ...userData, ...doc.data() };
+      if (doc.exists) userData = doc.data();
     } catch { /* profile may not exist yet — proceed with minimal claims */ }
 
+    // SECURITY: the app can only ever get a student or teacher token here.
+    // (Previously the role came from the request body, so a modified app could
+    // ask for "master_admin".) Dashboard roles are only issued by /login.
+    const appRoles  = ['student', 'teacher'];
+    const finalRole = appRoles.includes(userData.role) ? userData.role
+                    : (role === 'teacher' ? 'teacher' : 'student');
+
     const familyId     = uuidv4();
-    const accessToken  = signAccess({ id: userId, role: userData.role || role, ...userData });
+    const accessToken  = signAccess({
+      id: userId, role: finalRole,
+      email: userData.email || null,
+      full_name: userData.full_name || userData.name || null,
+      assigned_state: userData.assigned_state || null,
+    });
     const refreshToken = signRefresh(userId, familyId);
 
     return res.json({
@@ -287,7 +411,7 @@ router.post('/firebase', async (req, res) => {
       user: {
         id:   userId,
         name: userData.full_name || userData.name || 'User',
-        role: userData.role || role,
+        role: finalRole,
       },
     });
   } catch (err) {

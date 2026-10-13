@@ -18,10 +18,29 @@ router.get('/status', consentLimiter, async (req, res) => {
   } catch { res.json({ granted: false }); }
 });
 
+// The app sends its Firebase ID token with consent calls. We only accept a
+// consent record for the signed-in student themself (DPDPA: consent must be
+// given by the data principal / guardian — nobody else may write it).
+async function callerUid(req) {
+  const h = req.headers['authorization'] || '';
+  if (!h.startsWith('Bearer ')) return null;
+  const token = h.slice(7).trim();
+  try {
+    const decoded = await require('../lib/firebase').verifyIdToken(token);
+    return decoded.uid;
+  } catch (_) { /* not a Firebase token — try a dashboard/app JWT */ }
+  try {
+    const jwt = require('jsonwebtoken');
+    return jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] }).id || null;
+  } catch (_) { return null; }
+}
+
 router.post('/grant', consentLimiter, async (req, res) => {
   try {
     const { student_id, consents, version } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id required' });
+    const uid = await callerUid(req);
+    if (!uid || uid !== student_id) return res.status(401).json({ error: 'Sign in to record your own consent' });
     const db = getFirestore();
     await db.collection('consent_records').doc(student_id).set({
       student_id, consents, version, granted: true, granted_at: new Date()

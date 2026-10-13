@@ -8,6 +8,7 @@ const { compressGlb }  = require('../lib/draco');
 const storage          = require('../lib/storage');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { visibleInState, parseTargetStates } = require('../lib/stateScope');
+const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
 const log = require('../lib/logger');
 // NOTE: fs and UPLOAD_DIR removed — all file I/O now goes through lib/storage.js
 // In dev (no STORAGE_BUCKET set): files save to ./uploads/ on local disk
@@ -199,6 +200,9 @@ router.get('/assets', async (req, res) => {
     const snap = await db.collection('ar_assets').limit(100).get();
     let rows   = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     rows       = visibleInState(rows, req.query.state); // geofence: national + requested state
+    if (isAppCaller(req)) {
+      rows = rows.filter(r => r.status === 'published' && isReleased(r, req.query.state || req.user.state));
+    }
     return res.json({ data: rows, total: rows.length });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load AR assets');
@@ -212,6 +216,7 @@ router.get('/topics', async (req, res) => {
     const snap = await db.collection('ar_assets').where('status', '==', 'published').limit(200).get();
     let rows   = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     rows       = visibleInState(rows, req.query.state); // geofence: national + requested state
+    if (isAppCaller(req)) rows = rows.filter(r => isReleased(r, req.query.state || req.user.state));
     return res.json(rows.map(r => ({
       id:          r.id,
       topic:       r.topic       || '',
@@ -269,7 +274,41 @@ router.post('/assets/:id/publish', requirePerm('perm_approve_content'), async (r
 });
 
 router.post('/assets/:id/review', requirePerm('perm_upload_unity'), async (req, res) => {
-  res.json({ message: 'Submitted for review' });
+  try {
+    await getFirestore().collection('ar_assets').doc(req.params.id)
+      .update({ status: 'review', submitted_by: req.user.id, submitted_at: new Date() });
+    res.json({ success: true, message: 'Submitted for review' });
+  } catch { res.status(500).json({ error: 'Could not submit for review' }); }
+});
+
+// ── PUT /assets/:id/release-state ─── release in ONE state (Curriculum page) ─
+router.put('/assets/:id/release-state', requirePerm('perm_approve_content'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const ref = db.collection('ar_assets').doc(req.params.id);
+    const doc = await ref.get();
+    if (!doc.exists) return res.status(404).json({ error: 'Asset not found' });
+    const release = cleanRelease(mergeStateRelease(doc.data().release, req.body?.state, req.body?.value));
+    await ref.update({ release, release_updated_by: req.user.id, release_updated_at: new Date() });
+    res.json({ success: true, id: req.params.id, release });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Could not save release' });
+  }
+});
+
+// ── PUT /assets/:id/release ─── when students may see this lesson ───────────
+router.put('/assets/:id/release', requirePerm('perm_approve_content'), async (req, res) => {
+  try {
+    const release = cleanRelease(req.body && req.body.release);
+    const db = getFirestore();
+    const ref = db.collection('ar_assets').doc(req.params.id);
+    if (!(await ref.get()).exists) return res.status(404).json({ error: 'Asset not found' });
+    await ref.update({ release, release_updated_by: req.user.id, release_updated_at: new Date() });
+    await db.collection('audit_log').add({ action: 'ar_release_set', actor: req.user.id, detail: { asset_id: req.params.id, release }, created_at: new Date() });
+    res.json({ success: true, id: req.params.id, release });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Could not save release' });
+  }
 });
 
 router.post('/links', requirePerm('perm_edit_curriculum'), async (req, res) => {

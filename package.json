@@ -1,22 +1,17 @@
 {
   "name": "mitra-backend",
   "version": "5.0.0",
-  "description": "MITRA Government School AR Platform — Hardened backend for Cloud Run + Cloud SQL + Firebase Hosting",
+  "description": "MITRA Government School AR Platform — backend for Cloud Run + Firestore + Firebase Hosting",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "migrate": "node db/migrate.js",
-    "seed": "node db/seed.js",
-    "seed:locations": "node db/seed_india_locations.js",
-    "setup": "npm run migrate && npm run seed",
-    "lint": "eslint routes/ db/ middleware/ lib/ --ext .js"
+    "lint": "eslint routes/ middleware/ lib/ --ext .js"
   },
   "dependencies": {
     "@gltf-transform/core": "^4.4.1",
     "@gltf-transform/functions": "^4.4.1",
     "@google-cloud/bigquery": "^8.3.1",
-    "@google-cloud/cloud-sql-connector": "^1.4.0",
     "@google-cloud/secret-manager": "^5.5.0",
     "@google-cloud/storage": "^7.21.0",
     "axios": "^1.16.1",
@@ -37,7 +32,6 @@
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^6.10.1",
-    "pg": "^8.12.0",
     "pino": "^9.2.0",
     "pino-pretty": "^11.2.1",
     "pizzip": "^3.1.7",

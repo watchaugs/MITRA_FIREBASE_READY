@@ -7,6 +7,23 @@ const { getFirestore } = require('../lib/firebase');
 const { filterByState, canAccessState, visibleInState } = require('../lib/stateScope');
 const storage = require('../lib/storage');
 const log = require('../lib/logger');
+const { isAppCaller } = require('../lib/release');
+const tms = (v) => (v && typeof v.toDate === 'function') ? v.toDate().getTime() : (v ? new Date(v).getTime() : null);
+// A campaign reaches phones only when it is live (or scheduled and its start
+// date has passed) and it has not expired.
+function isRunning(a, now = Date.now()) {
+  if (!['live', 'scheduled'].includes(a.status)) return false;
+  const start = tms(a.publish_at), end = tms(a.expires_at);
+  if (start && start > now) return false;
+  if (end && end < now) return false;
+  // Optional publishing days (India time): ['mon','tue',…]; empty = every day
+  if (Array.isArray(a.publish_days) && a.publish_days.length) {
+    const day = new Date(now + 5.5 * 3600000).getUTCDay();          // IST weekday
+    const key = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][day];
+    if (!a.publish_days.includes(key)) return false;
+  }
+  return true;
+}
 router.use(authenticate);
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
 
@@ -20,6 +37,8 @@ router.get('/', async (req, res) => {
     let data   = all.filter(a => !a.state || canAccessState(req, a.state));
     // App-facing geofence: when a device passes ?state, keep national + that state's ads
     if (req.query.state) data = visibleInState(data, req.query.state);
+    // Students never receive drafts, paused, future or expired campaigns.
+    if (isAppCaller(req)) data = data.filter(a => isRunning(a)).map(a => ({ ...a, status: 'live' }));
     res.json({ data, total: data.length });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load ad campaigns');
@@ -59,12 +78,15 @@ router.get('/kpi', async (req, res) => {
     const ads  = snap.docs.map(d => d.data());
     const total_impressions = ads.reduce((s, a) => s + (a.impressions || 0), 0);
     const total_clicks      = ads.reduce((s, a) => s + (a.clicks || 0), 0);
-    const active_campaigns  = ads.filter(a => a.status === 'live').length;
+    const active_campaigns  = ads.filter(a => isRunning(a)).length;
     const ctr = total_impressions > 0
       ? parseFloat(((total_clicks / total_impressions) * 100).toFixed(2))
       : 0;
+    let daily_push = null;
+    try { const f = await db.collection('ad_settings').doc('frequency').get(); if (f.exists) daily_push = f.data().daily_push ?? f.data().cap ?? null; } catch (_) {}
     res.json({ total_impressions, total_clicks, active_campaigns, ctr, total_spend: 0,
-      reach: new Set(ads.flatMap(a => a.target_states || [])).size });
+      states_targeted: new Set(ads.flatMap(a => a.target_states || [])).size,
+      reach: new Set(ads.flatMap(a => a.target_states || [])).size, daily_push });
   } catch (_) {
     res.json({ total_impressions: 0, total_clicks: 0, active_campaigns: 0, ctr: 0, total_spend: 0, reach: 0 });
   }
@@ -109,11 +131,13 @@ router.get('/impressions', async (req, res) => {
 router.post('/impressions', async (req, res) => {
   try {
     const db = getFirestore();
-    await db.collection('ad_impressions').add({
-      ...req.body,
-      created_at: new Date(),
-      source: 'student_app',
-    });
+    const adId = String(req.body?.ad_id || req.body?.campaign_id || '');
+    // One write per impression (same as before), but now it moves the campaign's
+    // counter, so the Ads KPIs and CTR are real instead of always 0.
+    if (adId) {
+      const { FieldValue } = require('firebase-admin/firestore');
+      await db.collection('ad_campaigns').doc(adId).set({ impressions: FieldValue.increment(1), last_impression_at: new Date() }, { merge: true });
+    }
     res.status(202).json({ received: true });
   } catch (_) {
     res.status(202).json({ received: true, queued: true });
@@ -189,7 +213,12 @@ router.post('/', requirePerm('perm_manage_ads'), async (req, res) => {
   try {
     const db  = getFirestore();
     const id  = uuidv4();
-    const doc = { ...req.body, id, status: 'draft', impressions: 0, clicks: 0,
+    const b = req.body || {};
+    if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Campaign name is required' });
+    const doc = { ...b, id,
+                  status: b.status === 'scheduled' ? 'scheduled' : 'draft',
+                  target_states: Array.isArray(b.target_states) ? b.target_states : [],
+                  impressions: 0, clicks: 0,
                   created_by: req.user.id, created_at: new Date() };
     await db.collection('ad_campaigns').doc(id).set(doc);
     res.status(201).json(doc);

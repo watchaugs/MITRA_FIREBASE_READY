@@ -12,6 +12,32 @@ const { sendWelcomeEmail } = require('../lib/mailer');
 const log = require('../lib/logger');
 router.use(authenticate);
 
+// Server-enforced permissions (the ones requirePerm() checks in routes/*.js).
+const BACKEND_PERMS = ['perm_publish_apps','perm_upload_unity','perm_manage_geo','perm_view_analytics',
+  'perm_create_users','perm_edit_curriculum','perm_approve_content','perm_export_data','perm_manage_ads',
+  'perm_replay_analytics','perm_manage_compliance','perm_send_notif','perm_view_legal'];
+
+// The dashboard sends the ticked boxes as an array of perm keys. Older code sent
+// a grouped object — still accepted. Returns the perm_* fields + the full list.
+function permFieldsFrom(permissions) {
+  if (Array.isArray(permissions)) {
+    const ui  = permissions.filter(k => typeof k === 'string' && /^perm_[a-z_]+$/.test(k));
+    const set = new Set(ui);
+    const fields = {};
+    BACKEND_PERMS.forEach(k => { fields[k] = set.has(k); });
+    return { fields, ui };
+  }
+  const p = permissions || {};
+  return { ui: null, fields: {
+    perm_manage_geo:      p.geofence === true,
+    perm_create_users:    p.users === true,
+    perm_edit_curriculum: p.ar_curriculum === true,
+    perm_upload_unity:    p.ar_curriculum === true,
+    perm_view_analytics:  p.analytics === true,
+    perm_publish_apps:    p.notifications === true,
+  } };
+}
+
 router.get('/', requirePerm('perm_create_users'), async (req, res) => {
   try {
     const db   = getFirestore();
@@ -43,9 +69,12 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
     const password_hash = await bcrypt.hash(uuidv4(), 12);
 
     const db = getFirestore();
+    const dupe = await db.collection('dashboard_users').where('email', '==', String(email).toLowerCase()).limit(1).get();
+    if (!dupe.empty) return res.status(409).json({ error: `A user with ${email} already exists` });
     const id = uuidv4();
+    const mapped = permFieldsFrom(permissions);
     const userData = {
-      email, password_hash, full_name, role,
+      email: String(email).toLowerCase(), password_hash, full_name, role,
       assigned_state, assigned_district: assigned_district || null,
       is_active: true, created_at: new Date(),
       perm_manage_geo:       permissions.geofence       === true,
@@ -58,6 +87,8 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
       perm_export_data:      false,
       perm_manage_ads:       false,
       perm_replay_analytics: false,
+      ...mapped.fields,
+      ...(mapped.ui ? { ui_permissions: mapped.ui } : {}),
     };
     await db.collection('dashboard_users').doc(id).set(userData);
 
@@ -94,17 +125,28 @@ router.get('/:id', requirePerm('perm_create_users'), async (req, res) => {
 
 router.put('/:id', requirePerm('perm_create_users'), async (req, res) => {
   try {
-    const { full_name, role, is_active } = req.body;
+    const { full_name, role, is_active, permissions, mfa_required } = req.body;
     if (role !== undefined && !canGrantRole(req.user.role, role)) {
       return res.status(403).json({ error: 'You cannot grant a role higher than your own' });
     }
+    if (req.params.id === req.user.id && is_active === false) {
+      return res.status(400).json({ error: 'You cannot disable your own account' });
+    }
     const db = getFirestore();
-    const updates = {};
+    const updates = { updated_at: new Date() };
     if (full_name !== undefined) updates.full_name = full_name;
     if (role !== undefined)      updates.role      = role;
-    if (is_active !== undefined) updates.is_active = is_active;
+    if (is_active !== undefined) updates.is_active = is_active === true;
+    if (mfa_required !== undefined) updates.mfa_required = mfa_required === true;
+    if (permissions !== undefined) {
+      const mapped = permFieldsFrom(permissions);
+      Object.assign(updates, mapped.fields);
+      if (mapped.ui) updates.ui_permissions = mapped.ui;
+    }
     await db.collection('dashboard_users').doc(req.params.id).update(updates);
-    res.json({ id: req.params.id, ...updates });
+    try { require('../middleware/auth').invalidateUserCache?.(req.params.id); } catch (_) {}
+    res.json({ success: true, id: req.params.id, ...updates,
+      note: 'Permission changes apply the next time this user signs in.' });
   } catch { res.status(500).json({ error: 'Failed to update user' }); }
 });
 
@@ -121,7 +163,12 @@ router.delete('/:id', requirePerm('perm_create_users'), async (req, res) => {
 
 router.post('/bulk-update', requirePerm('perm_create_users'), async (req, res) => {
   try {
-    const { ids = [], updates = {} } = req.body || {};
+    const { ids = [] } = req.body || {};
+    // Accept both { ids, updates: {...} } and the flat { ids, role } / { ids, is_active } the dashboard sends.
+    const updates = req.body.updates || {
+      ...(req.body.role !== undefined ? { role: req.body.role } : {}),
+      ...(req.body.is_active !== undefined ? { is_active: req.body.is_active === true } : {}),
+    };
     if (!ids.length) return res.status(400).json({ error: 'No user ids provided' });
     const allowed = ['role', 'is_active', 'assigned_state', 'assigned_district'];
     const safeUpdates = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)));
@@ -142,15 +189,16 @@ router.post('/bulk-update', requirePerm('perm_create_users'), async (req, res) =
 
 router.post('/bulk-delete', requirePerm('perm_create_users'), async (req, res) => {
   try {
-    const ids = req.body.ids || [];
-    if (!ids.length) return res.status(400).json({ error: 'No user ids provided' });
+    const ids = (req.body.ids || []).filter(id => id !== req.user.id);
+    if (!ids.length) return res.status(400).json({ error: 'No user ids provided (you cannot remove yourself)' });
     const db = getFirestore();
     const batch = db.batch();
+    // Deactivate (reversible) — the dashboard button says "Deactivate".
     ids.forEach(id => {
-      batch.delete(db.collection('dashboard_users').doc(id));
+      batch.update(db.collection('dashboard_users').doc(id), { is_active: false, deactivated_by: req.user.id, deactivated_at: new Date() });
     });
     await batch.commit();
-    res.json({ success: true, message: 'Users deleted', count: ids.length });
+    res.json({ success: true, message: 'Users deactivated', count: ids.length });
   } catch (err) {
     log.error({ err: err.message }, 'bulk-delete error');
     res.status(500).json({ error: 'Bulk delete failed' });

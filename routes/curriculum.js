@@ -1,6 +1,7 @@
 /**
  * routes/curriculum.js — Curriculum Taxonomy CRUD + AR/Quiz Linking
- * MODIFIED: GET /tree reads from Firestore. Write operations return success mocks.
+ * GET /tree reads from Firestore. /ar-topics is the app's lesson feed and only
+ * returns content that is published AND released (lib/release.js).
  */
 'use strict';
 
@@ -8,7 +9,8 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
-const { visibleInState } = require('../lib/stateScope');
+const { visibleInState, canAccessState } = require('../lib/stateScope');
+const { isAppCaller, isReleased } = require('../lib/release');
 const log = require('../lib/logger');
 router.use(authenticate);
 
@@ -24,16 +26,8 @@ async function getCurriculumNodes() {
   if (snap && !snap.empty) {
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   }
-  // Fallback mock — shown until real curriculum is added via dashboard, or if the read above failed (see log)
-  return [
-    { id: 'sub-science', node_type: 'subject', name: 'Science', icon: '🔬', sort_order: 1, is_active: true, parent_id: null },
-    { id: 'sub-maths',   node_type: 'subject', name: 'Mathematics', icon: '📐', sort_order: 2, is_active: true, parent_id: null },
-    { id: 'sub-social',  node_type: 'subject', name: 'Social Science', icon: '🌍', sort_order: 3, is_active: true, parent_id: null },
-    { id: 'sub-english', node_type: 'subject', name: 'English', icon: '📚', sort_order: 4, is_active: true, parent_id: null },
-    { id: 'ch-sci-1', node_type: 'chapter', name: 'Chapter 1: Cell Structure', icon: '🧬', sort_order: 1, is_active: true, parent_id: 'sub-science' },
-    { id: 'ch-sci-2', node_type: 'chapter', name: 'Chapter 2: Photosynthesis', icon: '🌿', sort_order: 2, is_active: true, parent_id: 'sub-science' },
-    { id: 'ch-sci-3', node_type: 'chapter', name: 'Chapter 3: Human Body Systems', icon: '🫀', sort_order: 3, is_active: true, parent_id: 'sub-science' },
-  ];
+  // Nothing added yet — return an empty tree (no invented chapters on students' phones).
+  return [];
 }
 
 router.get('/', async (req, res) => {
@@ -99,7 +93,9 @@ router.get('/ar-topics', async (req, res) => {
   if (snap && !snap.empty) {
     let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     rows     = visibleInState(rows, req.query.state); // geofence: national + requested state
-    return res.json(rows.map(r => ({
+    // Release control: students only get lessons that have been released for their state.
+    if (isAppCaller(req)) rows = rows.filter(r => isReleased(r, req.query.state || req.user.state));
+    const data = rows.map(r => ({
       id:         r.id,
       topic:      r.topic      || '',
       class_name: r.class_name || '',
@@ -112,24 +108,46 @@ router.get('/ar-topics', async (req, res) => {
       audio_url:        r.audio_url        || null,
       target_image_url: r.target_image_url || null,
       ar_mode:          r.ar_mode          || null,
-    })));
+    }));
+    // The app reads res.data['data'] — it was getting a bare array, so it always
+    // fell back to its built-in demo list.
+    return res.json({ data, total: data.length });
   }
-  // No published AR assets yet — return an empty list so the app shows no
-  // phantom topics. (Removed demo placeholders that pointed to null URLs.)
-  res.json([]);
+  // No published AR assets yet — empty list (no phantom topics).
+  res.json({ data: [], total: 0 });
 });
 
 // ── State Hierarchy ────────────────────────────────────────────────────────────
-router.post('/hierarchy', async (req, res) => {
+router.post('/hierarchy', requirePerm('perm_edit_curriculum'), async (req, res) => {
   try {
     const { state_code, structure } = req.body;
     if (!state_code) return res.status(400).json({ error: 'state_code required' });
+    if (!canAccessState(req, req.body.state_name || state_code) && !canAccessState(req, state_code)) {
+      return res.status(403).json({ error: 'Your account cannot edit this state\'s curriculum.' });
+    }
+    if (!Array.isArray(structure)) return res.status(400).json({ error: 'structure must be a list' });
     const db = getFirestore();
-    await db.collection('curriculum_hierarchy').doc(state_code).set({ state_code, structure, updated_by: req.user?.id, updated_at: new Date() }, { merge: true });
-    res.json({ message: 'Hierarchy saved', state_code });
+    await db.collection('curriculum_hierarchy').doc(state_code).set({ state_code, state_name: req.body.state_name || state_code, structure, updated_by: req.user?.id, updated_at: new Date() }, { merge: true });
+    res.json({ success: true, message: 'Hierarchy saved', state_code });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to save curriculum hierarchy');
     res.status(500).json({ error: 'Failed to save hierarchy' });
+  }
+});
+
+// ── GET /hierarchy ─── every saved state (the Curriculum page loads this) ────
+router.get('/hierarchy', async (req, res) => {
+  try {
+    const snap = await getFirestore().collection('curriculum_hierarchy').get();
+    const data = snap.docs.map(d => d.data())
+      .filter(h => Array.isArray(h.structure) && h.structure.length)
+      .filter(h => canAccessState(req, h.state_name || h.state_code) || canAccessState(req, h.state_code))
+      .map(h => ({ state_code: h.state_code, state_name: h.state_name || h.state_code, structure: h.structure,
+                   updated_at: h.updated_at && h.updated_at.toDate ? h.updated_at.toDate().toISOString() : null }));
+    res.json({ data, total: data.length });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load curriculum hierarchies');
+    res.status(500).json({ error: 'Failed to load curriculum' });
   }
 });
 

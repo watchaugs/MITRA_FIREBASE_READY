@@ -4,71 +4,36 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
 const XLSX = require('xlsx');
 const log = require('../lib/logger');
+
+// The score shown on the Compliance page now comes from the LIVE engine
+// (lib/complianceEngine.js). The old list below had 8 of 10 checks hard-coded
+// to "pass", and an error fallback that showed 80%.
+// (evaluateCompliance is required further down, next to GET /status.)
+async function liveScore() {
+  const r = await evaluateCompliance();
+  return {
+    score: r.score, passed: r.passed, total: r.total, critical_ok: r.critical_ok,
+    checks: r.checks.map(c => ({ key: c.key, label: c.title, severity: c.severity, pass: !!c.status, description: c.description })),
+    audited_at: r.audited_at,
+  };
+}
 router.use(authenticate);
 
 // ── Compliance score calculation ───────────────────────────────────────────
-// Checks 10 standard DPDPA compliance items and returns a score.
-// Cached in Firestore for 30 days — auto-refreshed when stale.
-async function calculateComplianceScore(db) {
-  const checks = [
-    { key: 'privacy_policy',     label: 'Privacy Policy published',           severity: 'high',     pass: true },
-    { key: 'consent_mechanism',  label: 'Consent mechanism active',           severity: 'critical', pass: true },
-    { key: 'data_minimisation',  label: 'Data minimisation policy in place',  severity: 'medium',   pass: true },
-    { key: 'purpose_limitation', label: 'Purpose limitation documented',      severity: 'medium',   pass: true },
-    { key: 'retention_policy',   label: 'Data retention policy set',          severity: 'medium',   pass: true },
-    { key: 'breach_procedure',   label: 'Breach notification procedure ready',severity: 'high',     pass: true },
-    { key: 'dpo_appointed',      label: 'Data Protection Officer appointed',  severity: 'critical', pass: false },
-    { key: 'parental_consent',   label: 'Parental consent workflow active',   severity: 'critical', pass: true },
-    { key: 'grievance_officer',  label: 'Grievance officer configured',       severity: 'high',     pass: false },
-    { key: 'audit_log_active',   label: 'Audit logging active',               severity: 'medium',   pass: true },
-  ];
-
-  // Check Firestore for DPO and grievance officer
-  try {
-    const settingsSnap = await db.collection('compliance_settings').get();
-    settingsSnap.forEach(doc => {
-      if (doc.id === 'dpo_info' && doc.data()?.value) {
-        checks.find(c => c.key === 'dpo_appointed').pass = true;
-      }
-      if (doc.id === 'grievance_officer' && doc.data()?.value) {
-        checks.find(c => c.key === 'grievance_officer').pass = true;
-      }
-    });
-  } catch (err) {
-    log.error({ err: err.message }, 'Failed to read compliance settings — score may be understated');
-  }
-
-  const passed = checks.filter(c => c.pass).length;
-  const score  = Math.round((passed / checks.length) * 100);
-  return { score, passed, total: checks.length, checks, audited_at: new Date().toISOString() };
-}
 
 router.get('/score', requirePerm('perm_view_legal'), async (req, res) => {
   try {
-    const db  = getFirestore();
-    const ref = db.collection('compliance_settings').doc('_audit_score');
-    const doc = await ref.get();
-
-    // Return cached score if less than 30 days old
-    if (doc.exists) {
-      const data = doc.data();
-      const age  = Date.now() - new Date(data.audited_at).getTime();
-      if (age < 30 * 24 * 60 * 60 * 1000) return res.json(data);
-    }
-
-    // Score is stale or missing — recompute and cache
-    const result = await calculateComplianceScore(db);
-    await ref.set(result);
-    res.json(result);
+    res.json(await liveScore());
   } catch (err) {
-    res.json({ score: 80, passed: 8, total: 10, checks: [], audited_at: new Date().toISOString(), is_fallback: true });
+    log.error({ err: err.message }, 'compliance score failed');
+    res.status(500).json({ error: 'Could not evaluate compliance right now' });
   }
 });
 
 router.post('/run-audit', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
     const db     = getFirestore();
-    const result = await calculateComplianceScore(db);
+    const result = await liveScore();
     await db.collection('compliance_settings').doc('_audit_score').set(result);
     res.json({ success: true, ...result });
   } catch (err) {
@@ -91,13 +56,27 @@ router.get('/audit-log', requirePerm('perm_manage_compliance'), async (req, res)
 });
 router.get('/audit-logs', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
+    // Latest 500 entries, filtered and paged in memory (no extra indexes needed).
     const db   = getFirestore();
-    const snap = await db.collection('audit_log')
-      .orderBy('created_at', 'desc').limit(200).get();
-    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    res.json({ data, total: data.length });
+    const snap = await db.collection('audit_log').orderBy('created_at', 'desc').limit(500).get();
+    const ms = (v) => (v && typeof v.toDate === 'function') ? v.toDate().getTime() : (v ? new Date(v).getTime() : 0);
+    const { user_id, action, date_from, date_to } = req.query;
+    const from = date_from ? new Date(date_from).getTime() : 0;
+    const to   = date_to ? new Date(date_to).getTime() + 86400000 : Infinity;
+    let rows = snap.docs.map(d => { const x = d.data(); return {
+      id: d.id, user_id: x.actor || x.user_id || null, email: x.email || null,
+      action: x.action || '—', resource_type: x.resource_type || (x.detail && Object.keys(x.detail)[0]) || null,
+      ip_address: x.ip || x.ip_address || null, details: x.detail || x.details || null,
+      created_at: ms(x.created_at) ? new Date(ms(x.created_at)).toISOString() : null,
+    }; });
+    if (user_id) rows = rows.filter(r => String(r.user_id || '').includes(user_id));
+    if (action)  rows = rows.filter(r => String(r.action).toLowerCase().includes(String(action).toLowerCase()));
+    rows = rows.filter(r => { const t = ms(r.created_at); return t >= from && t < to; });
+    const limit = Math.min(100, parseInt(req.query.limit, 10) || 50);
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    res.json({ data: rows.slice((page - 1) * limit, page * limit), total: rows.length, page });
   } catch (_) {
-    res.json({ data: [], total: 0 });
+    res.json({ data: [], total: 0, page: 1 });
   }
 });
 router.get('/officers', requirePerm('perm_manage_compliance'), async (req, res) => {
@@ -166,7 +145,8 @@ router.get('/dpdpa-report', requirePerm('perm_view_legal'), async (req, res) => 
 });
 router.post('/purge-user', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
-    const { student_id, reason = 'Manual purge request' } = req.body;
+    const student_id = String(req.body?.student_id || req.body?.user_id || '').trim();
+    const reason = req.body?.reason || 'Manual purge request';
     if (!student_id) return res.status(400).json({ error: 'student_id required' });
     const db    = getFirestore();
     const batch = db.batch();
@@ -216,40 +196,50 @@ router.post('/purge-user', requirePerm('perm_manage_compliance'), async (req, re
 router.post('/run-auto-purge', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
     const db = getFirestore();
-    // Find consent records inactive for 12+ months (no telemetry in that period)
-    const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+    const dryRun = req.body?.dry_run === true;
+    // SAFETY: a student counts as inactive only when we can PROVE it — their last
+    // app sign-in (users/{id}.last_login) and their consent record are both older
+    // than 12 months. Students with no timestamps are never purged.
+    // (The old version checked a collection the app never writes to, so it would
+    // have anonymised every student.)
+    const cutoff = Date.now() - 365 * 24 * 60 * 60 * 1000;
+    const ms = (v) => (v && typeof v.toDate === 'function') ? v.toDate().getTime() : (v ? new Date(v).getTime() : 0);
     const consentSnap = await db.collection('consent_records').get();
+    const candidates = consentSnap.docs.filter(d => !d.data().purged);
+    const toPurge = [];
+    for (let i = 0; i < candidates.length; i += 100) {
+      const chunk = candidates.slice(i, i + 100);
+      const users = await db.getAll(...chunk.map(d => db.collection('users').doc(d.id)));
+      chunk.forEach((d, k) => {
+        const c = d.data();
+        const u = users[k].exists ? users[k].data() : null;
+        const lastSeen = Math.max(ms(u && (u.last_login || u.last_login_at)), ms(c.granted_at), ms(c.revoked_at));
+        if (lastSeen > 0 && lastSeen < cutoff) toPurge.push(d);
+      });
+    }
+    if (dryRun) {
+      return res.json({ success: true, dry_run: true, would_purge: toPurge.length, checked: candidates.length });
+    }
     let purged = 0;
-
-    for (const doc of consentSnap.docs) {
-      const data = doc.data();
-      if (data.purged) continue;
-      // Check if any telemetry in last 12 months
-      const recentSnap = await db.collection('telemetry_sessions')
-        .where('student_id', '==', data.student_id)
-        .where('created_at', '>=', cutoff)
-        .limit(1).get();
-      if (!recentSnap.empty) continue;
-
-      // No activity in 12 months — anonymise
+    for (const doc of toPurge) {
       await doc.ref.set({
-        student_id: `AUTOPURGED_${Date.now()}`,
+        student_id: `AUTOPURGED_${Date.now()}_${purged}`,
         granted: false, purged: true,
-        purged_at: new Date(), purged_by: 'auto_purge_system',
+        purged_at: new Date(), purged_by: 'auto_purge_manual_run',
       }, { merge: false });
       purged++;
     }
 
     // Record run
     await db.collection('compliance_settings').doc('_auto_purge_status').set({
-      last_run: new Date(), purged_count: purged, enabled: true,
+      last_run: new Date(), purged_count: purged,
     }, { merge: true });
     await db.collection('audit_log').add({
       action: 'auto_purge_run', actor: req.user.id,
       detail: { purged }, created_at: new Date(),
     });
 
-    res.json({ success: true, purged, message: `Auto-purge completed. ${purged} accounts anonymised.` });
+    res.json({ success: true, purged, purged_count: purged, message: `Purge completed. ${purged} inactive account(s) anonymised.` });
   } catch (err) {
     res.status(500).json({ error: 'Auto-purge failed', detail: err.message });
   }
@@ -280,12 +270,18 @@ router.get('/reports/summary', requirePerm('perm_manage_compliance'), async (req
     const scoreDoc  = await db.collection('compliance_settings').doc('_audit_score').get();
     const last_audit = scoreDoc.exists ? scoreDoc.data().audited_at : null;
 
+    // Cheap count() aggregations (about 1 read per 1,000 documents)
+    let audit_events_recent = null, mfa_enabled_users = null;
+    try { audit_events_recent = (await db.collection('audit_log').count().get()).data().count; } catch (_) {}
+    try { mfa_enabled_users = (await db.collection('dashboard_users').where('mfa_required', '==', true).count().get()).data().count; } catch (_) {}
     res.json({
       total_users: all.length,
       consented,
       pending,
       purged,
-      last_audit: last_audit || new Date().toISOString(),
+      audit_events_recent,
+      mfa_enabled_users,
+      last_audit: last_audit || null,
     });
   } catch (_) {
     res.json({ total_users: 0, consented: 0, pending: 0, purged: 0, last_audit: new Date().toISOString() });
@@ -299,6 +295,7 @@ router.get('/auto-purge-status', requirePerm('perm_manage_compliance'), async (r
       const d = doc.data();
       res.json({
         enabled:      d.enabled || false,
+        auto_purge_enabled: d.enabled || false,
         last_run:     d.last_run ? d.last_run.toDate().toISOString() : null,
         next_run:     null,
         purged_count: d.purged_count || 0,
@@ -316,6 +313,8 @@ router.post('/auto-purge-toggle', requirePerm('perm_manage_compliance'), async (
     const db = getFirestore();
     await db.collection('compliance_settings').doc('_auto_purge_status')
       .set({ enabled: !!enabled, toggled_by: req.user.id, toggled_at: new Date() }, { merge: true });
+    // The live compliance engine reads _global_settings.auto_purge — keep it in sync.
+    await db.collection('compliance_settings').doc('_global_settings').set({ auto_purge: !!enabled }, { merge: true });
     await db.collection('audit_log').add({
       action: enabled ? 'auto_purge_enabled' : 'auto_purge_disabled',
       actor: req.user.id, created_at: new Date(),
@@ -325,8 +324,29 @@ router.post('/auto-purge-toggle', requirePerm('perm_manage_compliance'), async (
     res.status(500).json({ error: 'Toggle failed' });
   }
 });
+// Turn the email sign-in code on/off for one dashboard account (by id or email).
 router.post('/enforce-mfa', requirePerm('perm_manage_compliance'), async (req, res) => {
-  res.json({ success: true, message: 'MFA enforcement queued' });
+  try {
+    const { user_id, enforce = true } = req.body || {};
+    const key = String(user_id || '').trim();
+    if (!key) return res.status(400).json({ error: 'user_id (or email) required' });
+    const db = getFirestore();
+    let ref = db.collection('dashboard_users').doc(key);
+    let doc = key.includes('@') ? null : await ref.get();
+    if (!doc || !doc.exists) {
+      const snap = await db.collection('dashboard_users').where('email', '==', key.toLowerCase()).limit(1).get();
+      if (snap.empty) return res.status(404).json({ error: 'No dashboard user with that id or email' });
+      doc = snap.docs[0]; ref = doc.ref;
+    }
+    await ref.update({ mfa_required: !!enforce, updated_at: new Date() });
+    await db.collection('audit_log').add({
+      action: enforce ? 'mfa_enforced' : 'mfa_removed', actor: req.user.id,
+      detail: { user_id: doc.id }, created_at: new Date(),
+    });
+    res.json({ success: true, message: `${enforce ? 'MFA required' : 'MFA removed'} for ${doc.data().email}` });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not update MFA', detail: err.message });
+  }
 });
 router.get('/data-export/:userId', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
@@ -368,7 +388,11 @@ router.post('/incident-report', requirePerm('perm_manage_compliance'), async (re
       action: 'incident_reported', actor: req.user.id,
       detail: { incident_id: id, type: req.body.type }, created_at: new Date(),
     });
-    res.json({ success: true, id });
+    // CERT-In Directions (2022): report within 6 hours of noticing the incident.
+    const detected = new Date(req.body.detected_at || Date.now());
+    const deadline = new Date(detected.getTime() + 6 * 60 * 60 * 1000);
+    res.json({ success: true, id, incident_id: id,
+      cert_in_deadline: deadline.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST' });
   } catch (err) {
     res.status(500).json({ error: 'Incident report failed' });
   }
@@ -400,6 +424,11 @@ router.get('/settings', requirePerm('perm_manage_compliance'), async (req, res) 
 
 router.put('/settings', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
+    // Safety: switching the email sign-in code on for everyone without working
+    // email would lock every admin out.
+    if (req.body && req.body.mfa_required === true && !(process.env.SMTP_USER && process.env.SMTP_PASSWORD)) {
+      return res.status(400).json({ error: 'Set SMTP_USER and SMTP_PASSWORD on the server first — otherwise nobody could receive a sign-in code.' });
+    }
     const db = getFirestore();
     await db.collection('compliance_settings').doc('_global_settings')
       .set({ ...req.body, updated_by: req.user.id, updated_at: new Date() }, { merge: true });
@@ -414,28 +443,17 @@ router.put('/settings', requirePerm('perm_manage_compliance'), async (req, res) 
 });
 router.get('/audit-findings', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
-    const db   = getFirestore();
-    const snap = await db.collection('audit_findings')
-      .orderBy('created_at', 'desc').limit(100).get();
-    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    // Auto-generate findings from the compliance score checks
-    if (data.length === 0) {
-      const scoreDoc = await db.collection('compliance_settings').doc('_audit_score').get();
-      if (scoreDoc.exists) {
-        const failed = (scoreDoc.data().checks || []).filter(c => !c.pass);
-        return res.json({
-          data: failed.map((c, i) => ({
-            id: `auto-${i}`, key: c.key, label: c.label,
-            severity: c.severity, status: 'open',
-            created_at: scoreDoc.data().audited_at,
-          })),
-          total: failed.length,
-        });
-      }
-    }
-    res.json({ data, total: data.length });
-  } catch (_) {
-    res.json({ data: [], total: 0 });
+    // Findings = live checks that currently fail. A finding disappears by
+    // itself once the underlying check passes (e.g. after saving the DPO).
+    const r = await liveScore();
+    const data = r.checks.filter(c => !c.pass).map(c => ({
+      id: c.key, key: c.key, label: c.label, severity: c.severity,
+      description: c.description, status: 'open', created_at: r.audited_at,
+    }));
+    res.json({ data, total: data.length, checked: r.total, audited_at: r.audited_at });
+  } catch (err) {
+    log.error({ err: err.message }, 'audit findings failed');
+    res.status(500).json({ error: 'Could not evaluate findings right now' });
   }
 });
 
