@@ -286,7 +286,8 @@ router.put('/me/mfa', authenticate, async (req, res) => {
   }
 });
 
-// ── POST /api/auth/verify-otp (Mobile App) ───────────────────────────────────router.post('/verify-otp', async (req, res) => {
+// ── POST /api/auth/verify-otp (Mobile App) ───────────────────────────────────
+router.post('/verify-otp', async (req, res) => {
   try {
     const { phone, otp, role } = req.body;
 
