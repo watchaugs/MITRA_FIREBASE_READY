@@ -5794,11 +5794,12 @@ async function publishArAsset(id) {
 }
 
 async function deleteArAsset(id, btn) {
-  if (!confirm('Archive this AR asset? Students will no longer see it.')) return;
+  if (!confirm('Permanently delete this AR asset and its uploaded files? This cannot be undone.')) return;
   const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!d) return;                      // safeFetch already showed the error
   btn?.closest('tr')?.remove();
-  showToast('🗄️ Asset archived');
+  delete (window._arRows || {})[id];
+  showToast('🗑️ Asset deleted');
 }
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CURRICULUM SUMMARY — Build, filter, export

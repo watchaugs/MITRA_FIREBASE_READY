@@ -135,15 +135,59 @@ router.post('/hierarchy', requirePerm('perm_edit_curriculum'), async (req, res) 
   }
 });
 
+// ── Auto-match AR assets to curriculum topics by their tags ──────────────────
+// An uploaded AR asset already carries class_name / subject / topic / target_states.
+// We attach each live (non-app) asset to the matching topic in that state so the
+// Curriculum page shows it automatically — no manual linking table needed.
+const _norm = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
+function _assetTargetsState(a, stateName, stateCode) {
+  const ts = Array.isArray(a.target_states) ? a.target_states : [];
+  if (!ts.length) return true;                       // national asset → every state
+  const want = new Set([_norm(stateName), _norm(stateCode)]);
+  return ts.some(t => want.has(_norm(t)));
+}
+
 // ── GET /hierarchy ─── every saved state (the Curriculum page loads this) ────
 router.get('/hierarchy', async (req, res) => {
   try {
-    const snap = await getFirestore().collection('curriculum_hierarchy').get();
+    const db = getFirestore();
+    const snap = await db.collection('curriculum_hierarchy').get();
+
+    // Load all AR assets once and index them by class|subject|topic for fast lookup.
+    let assets = [];
+    try {
+      const aSnap = await db.collection('ar_assets').limit(1000).get();
+      assets = aSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+                         .filter(a => a.status !== 'archived');   // archived/deleted never show
+    } catch (e) { log.error({ err: e.message }, 'hierarchy: AR asset load failed (topics will show without assets)'); }
+
     const data = snap.docs.map(d => d.data())
       .filter(h => Array.isArray(h.structure) && h.structure.length)
       .filter(h => canAccessState(req, h.state_name || h.state_code) || canAccessState(req, h.state_code))
-      .map(h => ({ state_code: h.state_code, state_name: h.state_name || h.state_code, structure: h.structure,
-                   updated_at: h.updated_at && h.updated_at.toDate ? h.updated_at.toDate().toISOString() : null }));
+      .map(h => {
+        const stateName = h.state_name || h.state_code;
+        const structure = (h.structure || []).map(c => ({
+          ...c,
+          subjects: (c.subjects || []).map(sj => ({
+            ...sj,
+            topics: (sj.topics || []).map(t => {
+              const matched = assets.filter(a =>
+                _assetTargetsState(a, stateName, h.state_code) &&
+                _norm(a.class_name) === _norm(c.class_name) &&
+                _norm(a.subject)    === _norm(sj.subject) &&
+                _norm(a.topic)      === _norm(t.topic)
+              ).map(a => ({ id: a.id, title: a.title || a.original_name || a.topic || a.id, status: a.status || 'uploaded' }));
+              // Keep any assets the saved structure already had; add matched ones without duplicates.
+              const existing = Array.isArray(t.ar_assets) ? t.ar_assets : [];
+              const seen = new Set(existing.map(x => x.id));
+              const ar_assets = existing.concat(matched.filter(m => !seen.has(m.id)));
+              return { ...t, ar_assets };
+            }),
+          })),
+        }));
+        return { state_code: h.state_code, state_name: stateName, structure,
+                 updated_at: h.updated_at && h.updated_at.toDate ? h.updated_at.toDate().toISOString() : null };
+      });
     res.json({ data, total: data.length });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load curriculum hierarchies');

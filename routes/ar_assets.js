@@ -259,10 +259,22 @@ router.put('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => 
 
 router.delete('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => {
   try {
-    const db = getFirestore();
-    await db.collection('ar_assets').doc(req.params.id).update({ status: 'archived' });
-    res.json({ message: 'Asset archived' });
-  } catch { res.status(500).json({ error: 'Failed to archive asset' }); }
+    const db  = getFirestore();
+    const ref = db.collection('ar_assets').doc(req.params.id);
+    const doc = await ref.get();
+    if (!doc.exists) return res.status(404).json({ error: 'Asset not found' });
+    const a = doc.data();
+    // Best-effort delete of the stored files (lite GLB + any side files). Never
+    // let a missing file block the record delete.
+    const keys = [
+      `ar_assets/${req.params.id}_lite.glb`,
+      a.mind_url && `ar_assets/${req.params.id}_targets.mind`,
+    ].filter(Boolean);
+    for (const k of keys) { try { await storage.delete(k); } catch (_) { /* ignore */ } }
+    await ref.delete();
+    await db.collection('audit_log').add({ action: 'ar_asset_deleted', actor: req.user.id, detail: { asset_id: req.params.id, title: a.title || a.original_name || null }, created_at: new Date() }).catch(() => {});
+    res.json({ message: 'Asset deleted', id: req.params.id });
+  } catch (err) { log.error({ err: err.message }, 'AR asset delete failed'); res.status(500).json({ error: 'Failed to delete asset' }); }
 });
 
 router.post('/assets/:id/publish', requirePerm('perm_approve_content'), async (req, res) => {
