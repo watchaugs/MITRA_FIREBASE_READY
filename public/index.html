@@ -2902,8 +2902,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 <div class="page" id="page-ar-assets">
   <div class="hero" style="background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(6,182,212,.07),rgba(99,102,241,.06));border-color:rgba(16,185,129,.25);margin-bottom:20px">
-    <div class="hero-title"><span class="grad2">AR Asset Library</span> — Unity Bundle Manager</div>
-    <div style="font-size:13px;color:var(--text2);max-width:600px;line-height:1.6">Upload Unity AR bundles and packages — tag by Class, Subject, Topic &amp; Language for targeted delivery to student apps.</div>
+    <div class="hero-title"><span class="grad2">3D &amp; AR Lesson Manager</span></div>
+    <div style="font-size:13px;color:var(--text2);max-width:600px;line-height:1.6">Upload a 3D model (GLB/FBX/OBJ), add a textbook-page image for marker AR and a narration clip — tag by Class, Subject, Topic &amp; Language for targeted delivery to the student app.</div>
     <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
       <button class="btn btn-p" onclick="document.getElementById('ar-file-input').click()">📦 Upload Asset</button>
       <button class="btn btn-s btn-sm" onclick="refreshArAssetList()">↻ Refresh</button>
@@ -2913,8 +2913,8 @@ document.addEventListener('DOMContentLoaded', () => {
   <!-- UPLOAD SECTION -->
   <div style="width:100%;max-width:100%;display:flex;flex-direction:column;align-items:flex-start">
   <div class="card" style="margin-bottom:20px;width:100%">
-    <div class="card-title">📦 Upload Unity AR Asset</div>
-    <div class="card-sub">Supports all Unity export formats. No file size limit. Tag assets before uploading for automatic curriculum association.</div>
+    <div class="card-title">📦 Upload 3D / AR Lesson</div>
+    <div class="card-sub">GLB/FBX/OBJ model + optional page image (marker AR) + optional narration. Tag before uploading for automatic curriculum association.</div>
 
     <!-- Tags BEFORE upload -->
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin:16px 0">
@@ -2969,20 +2969,28 @@ document.addEventListener('DOMContentLoaded', () => {
     <!-- Upload Zone -->
     <div class="upload-zone" id="ar-uzone" style="margin-bottom:12px" onclick="document.getElementById('ar-file-input').click()">
       <input type="file" id="ar-file-input" style="display:none"
-        accept=".unitypackage,.assetbundle,.unity,.bytes,.zip,.tar,.gz,.asset,.prefab,.scene,.shader,.mat,.fbx,.obj,.glb,.gltf"
+        accept=".glb,.gltf,.fbx,.obj,.zip"
         onchange="handleArFileSelect(event)">
-      <div class="uz-icon">🎮</div>
-      <div class="uz-title">Click or Drag Unity Files Here</div>
-      <div class="uz-sub">No size limit · All Unity-supported formats accepted</div>
+      <div class="uz-icon">🧊</div>
+      <div class="uz-title">Click or Drag a 3D Model Here</div>
+      <div class="uz-sub">Keep models lean — ideally under ~5 MB. FBX/OBJ are auto-converted to GLB in your browser.</div>
       <div class="uz-formats" style="flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px">
-        <span class="tag tag-b">.unitypackage</span>
-        <span class="tag tag-c">.assetbundle</span>
-        <span class="tag tag-b">.unity</span>
-        <span class="tag tag-g">.bytes</span>
-        <span class="tag tag-c">.prefab</span>
-        <span class="tag tag-b">.fbx</span>
         <span class="tag tag-g">.glb / .gltf</span>
+        <span class="tag tag-b">.fbx</span>
+        <span class="tag tag-b">.obj</span>
         <span class="tag tag-c">.zip</span>
+      </div>
+    </div>
+
+    <!-- AR pipeline extras (optional) — page image enables marker AR, audio adds narration -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="lbl">Textbook Page Image <span style="color:var(--text2);font-weight:400">(optional — enables marker AR)</span></label>
+        <input class="inp" type="file" id="ar-up-image" accept="image/*" onchange="handleArExtraSelect('image',event)">
+      </div>
+      <div>
+        <label class="lbl">Narration Audio <span style="color:var(--text2);font-weight:400">(optional — .mp3/.aac/.wav)</span></label>
+        <input class="inp" type="file" id="ar-up-audio" accept="audio/*" onchange="handleArExtraSelect('audio',event)">
       </div>
     </div>
 
@@ -5792,7 +5800,7 @@ async function quickPublishQuiz(id) {
     const res = await fetch(`/api/quiz/${id}/publish`, { method:'POST', headers: authHeaders() });
     if (res.ok) { showToast('Quiz is now LIVE!'); loadQuizList(); loadQuizManagerStats(); }
     else showToast('Publish failed — check backend');
-  } catch(e) { showToast('⚡ Quiz published (demo mode)'); }
+  } catch(e) { showToast('Publish failed — network error'); }
 }
 
 async function quickPauseQuiz(id) {
@@ -5800,7 +5808,7 @@ async function quickPauseQuiz(id) {
     const res = await fetch(`/api/quiz/${id}/pause`, { method:'POST', headers: authHeaders() });
     if (res.ok) { showToast('Quiz paused'); loadQuizList(); }
     else showToast('Pause failed');
-  } catch(e) { showToast('Quiz paused (demo mode)'); }
+  } catch(e) { showToast('Pause failed — network error'); }
 }
 
 async function publishQuizNow() {
@@ -5897,7 +5905,7 @@ async function submitQuizBulkUpload() {
       statusEl.innerHTML = '<span style="color:var(--red)">❌ Upload failed — check backend connection</span>';
     }
   } catch(e) {
-    statusEl.innerHTML = '<span style="color:var(--yellow)">⚠ Demo mode: file would be processed when backend is connected</span>';
+    statusEl.innerHTML = '<span style="color:var(--red)">❌ Upload failed — network error. Please retry.</span>';
   }
 }
 
@@ -7007,10 +7015,7 @@ async function saveArLinks() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let arUploadFile = null;
-const AR_FORMATS = [
-  '.unitypackage','.assetbundle','.unity','.bytes','.asset','.prefab',
-  '.scene','.shader','.mat','.fbx','.obj','.glb','.gltf','.zip','.tar','.gz'
-];
+const AR_FORMATS = ['.glb','.gltf','.fbx','.obj','.zip'];
 
 function handleArFileSelect(event) {
   const file = event.target.files[0];
@@ -7058,6 +7063,57 @@ function populateArUploadDropdowns() {
   }
 }
 
+// ── AR pipeline: browser-side engines (assimp WASM + MindAR compiler) ────────
+// Lazy-loaded only when a model/page-image actually needs them, so the
+// dashboard's normal load stays light. Files live in /public/ar-engine/.
+let _arEnginesPromise = null;
+function ensureArEngines() {
+  if (_arEnginesPromise) return _arEnginesPromise;
+  const load = (src) => new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Failed to load ' + src));
+    document.head.appendChild(s);
+  });
+  _arEnginesPromise = Promise.all([
+    load('/ar-engine/assimpjs.js'),
+    load('/ar-engine/studio_compiler.js'),
+  ]);
+  return _arEnginesPromise;
+}
+
+// Pre-warm the engines as soon as a page image is chosen.
+function handleArExtraSelect(kind, ev) {
+  if (kind === 'image' && ev.target.files[0]) ensureArEngines().catch(() => {});
+}
+
+const AR3D_FORMATS = ['.glb', '.gltf', '.fbx', '.obj'];
+function _arExt(name) { return '.' + (name.split('.').pop() || '').toLowerCase(); }
+
+// FBX/OBJ → GLB in the browser (assimp WASM). GLB passes through untouched.
+async function _arToGlb(file) {
+  if (_arExt(file.name) === '.glb') return new Uint8Array(await file.arrayBuffer());
+  await ensureArEngines();
+  const ajs = await assimpjs({ locateFile: (p) => '/ar-engine/' + p });
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const list = new ajs.FileList();
+  list.AddFile(file.name, bytes);
+  const result = ajs.ConvertFileList(list, 'glb2');
+  if (!result.IsSuccess()) throw new Error('Model conversion failed: ' + result.GetErrorCode());
+  return result.GetFile(0).GetContent();
+}
+
+// Textbook page image → compiled MindAR .mind target in the browser.
+async function _arToMind(file) {
+  await ensureArEngines();
+  const img = new Image();
+  img.src = URL.createObjectURL(file);
+  await img.decode();
+  const buf = await window.mitraCompileTarget(img, () => {});
+  return buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+}
+
 async function submitArUpload() {
   if (!arUploadFile) return showToast('No file selected');
 
@@ -7067,107 +7123,113 @@ async function submitArUpload() {
   const lang  = document.getElementById('ar-up-language').value;
   if (!cls || !subj || !topic) return showToast('Class, Subject and AR Topic are required');
 
-  const title  = document.getElementById('ar-up-title').value.trim() || topic;
+  const title = document.getElementById('ar-up-title').value.trim() || topic;
   const statesSel = document.getElementById('ar-up-states');
   const targetStates = [...statesSel.selectedOptions].map(o => o.value).filter(Boolean);
 
-  // Show progress bar
+  const ext = _arExt(arUploadFile.name);
+  const isAr3D = AR3D_FORMATS.includes(ext); // Flutter-AR track vs Unity track
+
   document.getElementById('ar-uprogress').style.display = 'block';
   const statusEl = document.getElementById('ar-upload-status');
-  statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Uploading — large files may take a moment…</span>';
 
-  const formData = new FormData();
-  formData.append('file', arUploadFile);
-  formData.append('class_name', cls);
-  formData.append('subject', subj);
-  formData.append('topic', topic);
-  formData.append('language', lang);
-  formData.append('title', title);
-  if (targetStates.length) formData.append('target_states', JSON.stringify(targetStates));
-
-  // Simulate progress for large files
-  let pct = 0;
-  const ticker = setInterval(() => {
-    pct = Math.min(pct + Math.random() * 8, 92);
-    document.getElementById('ar-upfill').style.width = pct + '%';
-    document.getElementById('ar-upct').textContent = Math.round(pct) + '%';
-  }, 400);
-
+  let ticker = null;
   try {
+    const formData = new FormData();
+    let endpoint;
+
+    if (isAr3D) {
+      // ── Flutter AR pipeline: convert + compile in the browser, then upload ──
+      statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Preparing model in your browser…</span>';
+      const glb = await _arToGlb(arUploadFile);
+
+      const imageFile = document.getElementById('ar-up-image').files[0];
+      const audioFile = document.getElementById('ar-up-audio').files[0];
+      let mind = null;
+      if (imageFile) {
+        statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Compiling AR target from the page image…</span>';
+        mind = await _arToMind(imageFile);
+      }
+
+      formData.append('model', new Blob([glb], { type: 'model/gltf-binary' }), 'model.glb');
+      if (imageFile) formData.append('image', imageFile, imageFile.name);
+      if (audioFile) formData.append('audio', audioFile, audioFile.name);
+      if (mind) formData.append('mind', new Blob([mind], { type: 'application/octet-stream' }), 'targets.mind');
+      endpoint = '/api/ar/upload-rich';
+    } else {
+      // ── Existing Unity bundle path — unchanged ──
+      formData.append('file', arUploadFile);
+      endpoint = '/api/unity/upload';
+    }
+
+    formData.append('class_name', cls);
+    formData.append('subject', subj);
+    formData.append('topic', topic);
+    formData.append('language', lang);
+    formData.append('title', title);
+    if (targetStates.length) formData.append('target_states', JSON.stringify(targetStates));
+
+    statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Uploading…</span>';
+    let pct = 0;
+    ticker = setInterval(() => {
+      pct = Math.min(pct + Math.random() * 8, 92);
+      document.getElementById('ar-upfill').style.width = pct + '%';
+      document.getElementById('ar-upct').textContent = Math.round(pct) + '%';
+    }, 400);
+
     const token = localStorage.getItem('mitra_token') || '';
-    const res = await fetch('/api/unity/upload', {
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: token ? { 'Authorization': 'Bearer ' + token } : {},
-      body: formData
+      body: formData,
     });
 
-    clearInterval(ticker);
+    clearInterval(ticker); ticker = null;
     document.getElementById('ar-upfill').style.width = '100%';
     document.getElementById('ar-upct').textContent = '100%';
 
+    const data = await res.json().catch(() => ({}));
     if (res.ok) {
-      const data = await res.json();
-      statusEl.innerHTML = `<span style="color:var(--accent3)">✅ Uploaded: ${data.original_name || arUploadFile.name} · Tagged to ${cls} › ${subj} › ${topic}</span>`;
+      const asset = data.asset || {};
+      const modeTag = isAr3D ? (asset.mind_url ? ' · marker AR' : ' · overlay AR') : '';
+      statusEl.innerHTML = `<span style="color:var(--accent3)">✅ Uploaded: ${asset.title || data.original_name || arUploadFile.name} · ${cls} › ${subj} › ${topic}${modeTag}</span>`;
       arUploadFile = null;
       document.getElementById('ar-upload-btn').style.display = 'none';
+      const sab = document.getElementById('ar-save-apply-btn'); if (sab) sab.style.display = 'none';
       setTimeout(() => { document.getElementById('ar-uprogress').style.display = 'none'; }, 2000);
       refreshArAssetList();
-      // Reset form
-      ['ar-up-class','ar-up-subject','ar-up-language'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
-      document.getElementById('ar-up-topic').value = '';
-      document.getElementById('ar-up-title').value = '';
+      ['ar-up-class', 'ar-up-subject', 'ar-up-language'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      ['ar-up-topic', 'ar-up-title', 'ar-up-image', 'ar-up-audio'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      return asset; // hand the asset back so "Save & Apply" can link it
     } else {
-      statusEl.innerHTML = '<span style="color:var(--red)">❌ Upload failed — check backend connection and multer config</span>';
+      statusEl.innerHTML = `<span style="color:var(--red)">❌ ${data.error || 'Upload failed'}</span>`;
     }
-  } catch(e) {
-    clearInterval(ticker);
-    document.getElementById('ar-upfill').style.width = '100%';
-    document.getElementById('ar-upct').textContent = '✓';
-    statusEl.innerHTML = `<span style="color:var(--yellow)">⚠ Demo mode — "${arUploadFile?.name}" would be uploaded when backend is connected. Tagged: ${cls} › ${subj} › ${topic} · ${lang}</span>`;
-    document.getElementById('ar-upload-btn').style.display = 'none';
-    arUploadFile = null;
+  } catch (e) {
+    if (ticker) clearInterval(ticker);
+    statusEl.innerHTML = `<span style="color:var(--red)">✗ ${e && e.message ? e.message : e}</span>`;
     setTimeout(() => { document.getElementById('ar-uprogress').style.display = 'none'; }, 2000);
-    refreshArAssetList(true); // show demo row
   }
 }
 
 let demoArAssets = [];
 
-async function refreshArAssetList(addDemo = false) {
+async function refreshArAssetList() {
   const tbody = document.getElementById('ar-assets-tbody');
   if (!tbody) return;
-
-  if (addDemo) {
-    demoArAssets.push({
-      id: 'demo-' + Date.now(),
-      title: document.getElementById('ar-up-title')?.value || 'Demo Asset',
-      class_name: document.getElementById('ar-up-class')?.value || 'Class 10',
-      subject: document.getElementById('ar-up-subject')?.value || 'Science',
-      topic: document.getElementById('ar-up-topic')?.value || 'Demo Topic',
-      language: document.getElementById('ar-up-language')?.value || 'Hindi',
-      file_format: arUploadFile?.name?.split('.').pop() || 'unitypackage',
-      file_size_mb: '—',
-      status: 'uploaded',
-      created_at: new Date().toISOString()
-    });
-  }
-
   try {
     const cls = document.getElementById('ar-filter-class')?.value || '';
     const subj = document.getElementById('ar-filter-subject')?.value || '';
     const params = new URLSearchParams();
     if (cls) params.append('class_name', cls);
     if (subj) params.append('subject', subj);
-    const res = await fetch('/api/unity/assets?' + params, { headers: authHeaders() });
+    const res = await fetch('/api/ar/assets?' + params, { headers: authHeaders() });
     if (res.ok) {
       const data = await res.json();
-      const assets = [...(data.data || data || []), ...demoArAssets];
-      renderArAssetsTable(assets);
+      renderArAssetsTable(data.data || data || []);
       return;
     }
-  } catch(e) {}
-
-  renderArAssetsTable(demoArAssets);
+  } catch (e) {}
+  renderArAssetsTable([]);
 }
 
 function filterArAssets() { refreshArAssetList(); }
@@ -7204,7 +7266,7 @@ async function publishArAsset(id) {
     const res = await fetch(`/api/unity/assets/${id}/publish`, { method:'POST', headers: authHeaders() });
     if (res.ok) { showToast('AR Asset published!'); refreshArAssetList(); }
     else showToast('Publish failed — connect backend');
-  } catch(e) { showToast('Published (demo mode)'); }
+  } catch(e) { showToast('Publish failed'); }
 }
 
 async function deleteArAsset(id, btn) {
@@ -7868,9 +7930,16 @@ function amUiuxComment() {
 function amRefreshUiuxList() { amRenderUiuxGrid(); showToast('↻ Gallery refreshed'); }
 
 // ── Database Panel ────────────────────────────────────────────────
-function amTestDbConnection() {
+async function amTestDbConnection() {
   showToast('🔌 Testing connection...');
-  setTimeout(() => showToast('✅ Connection OK — 4ms latency'), 1200);
+  const t0 = performance.now();
+  try {
+    const res = await fetch('/api/health', { cache: 'no-store' });
+    const ms = Math.round(performance.now() - t0);
+    showToast(res.ok ? ('✅ Backend reachable — ' + ms + 'ms') : ('❌ Backend returned ' + res.status));
+  } catch (_) {
+    showToast('❌ Backend unreachable');
+  }
 }
 
 function amLinkDatabase() {
@@ -8199,26 +8268,28 @@ function ctrlLoadStorageStats() {
 }
 
 // ── AR Asset Save & Apply ─────────────────────────────────────────
-function saveAndApplyArAsset() {
+async function saveAndApplyArAsset() {
+  // Real "Apply to Curriculum": upload the asset (its tags associate it to the
+  // app's curriculum) AND record a curriculum_ar_links entry keyed by AR topic.
+  const topic = document.getElementById('ar-up-topic')?.value.trim();
   const cls   = document.getElementById('ar-up-class')?.value;
   const subj  = document.getElementById('ar-up-subject')?.value;
-  const topic = document.getElementById('ar-up-topic')?.value;
-  const lang  = document.getElementById('ar-up-language')?.value;
-  const title = document.getElementById('ar-up-title')?.value;
-
   if (!cls || !subj || !topic) { showToast('⚠️ Fill Class, Subject, and AR Topic before applying'); return; }
-  showToast('💾 Saving AR asset tags...');
-  setTimeout(() => {
-    showToast('✅ AR Asset saved and applied to Curriculum: ' + (title||topic));
-    // Reset the form
-    if (document.getElementById('ar-up-class')) document.getElementById('ar-up-class').value = '';
-    if (document.getElementById('ar-up-subject')) document.getElementById('ar-up-subject').value = '';
-    if (document.getElementById('ar-up-topic')) document.getElementById('ar-up-topic').value = '';
-    if (document.getElementById('ar-up-title')) document.getElementById('ar-up-title').value = '';
-    document.getElementById('ar-upload-btn').style.display = 'none';
-    document.getElementById('ar-save-apply-btn').style.display = 'none';
-    refreshArAssetList();
-  }, 1500);
+
+  const asset = await submitArUpload(); // returns the uploaded asset on success
+  if (asset && asset.id) {
+    try {
+      const token = localStorage.getItem('mitra_token') || '';
+      await fetch('/api/curriculum/ar-links', {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { 'Authorization': 'Bearer ' + token } : {}),
+        body: JSON.stringify({ curriculum_node_id: topic, asset_id: asset.id }),
+      });
+      showToast('✅ Uploaded and applied to curriculum: ' + topic);
+    } catch (_) {
+      showToast('Uploaded — but the curriculum link could not be saved');
+    }
+  }
 }
 
 // Show Save & Apply button when file is selected (hook into existing handler)

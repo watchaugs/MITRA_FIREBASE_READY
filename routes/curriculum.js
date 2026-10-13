@@ -108,13 +108,15 @@ router.get('/ar-topics', async (req, res) => {
       status:     r.status     || 'live',
       unity_url:  r.unity_url  || null,
       flutter_url:r.flutter_url|| null,
+      mind_url:         r.mind_url         || null,
+      audio_url:        r.audio_url        || null,
+      target_image_url: r.target_image_url || null,
+      ar_mode:          r.ar_mode          || null,
     })));
   }
-  // Fallback — shown until first asset is published via dashboard, or if the read above failed (see log)
-  res.json([
-    { id: 'demo-1', topic: 'Cell Division', class_name: 'Class 9', subject: 'Science', language: 'English', status: 'live', unity_url: null, flutter_url: null },
-    { id: 'demo-2', topic: 'Photosynthesis', class_name: 'Class 8', subject: 'Science', language: 'English', status: 'live', unity_url: null, flutter_url: null },
-  ]);
+  // No published AR assets yet — return an empty list so the app shows no
+  // phantom topics. (Removed demo placeholders that pointed to null URLs.)
+  res.json([]);
 });
 
 // ── State Hierarchy ────────────────────────────────────────────────────────────
