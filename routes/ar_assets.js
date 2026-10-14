@@ -22,6 +22,44 @@ const arUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5
   }
 });
 
+// ── GET /file/:name ─── public read of a stored AR file (model / audio / mind) ─
+// model_viewer_plus and the in-app WebView fetch these URLs directly, with no
+// Authorization header, so this route is mounted BEFORE authenticate. Keys are
+// confined to the ar_assets/ prefix and the name is sanitised against traversal.
+const AR_FILE_TYPES = {
+  '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json',
+  '.mind': 'application/octet-stream',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
+  '.mp3': 'audio/mpeg', '.aac': 'audio/aac', '.m4a': 'audio/aac', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+};
+router.get('/file/:name', async (req, res) => {
+  try {
+    const name = String(req.params.name || '');
+    if (!name || name.includes('/') || name.includes('..') || name.includes('\\')) {
+      return res.status(400).json({ error: 'Bad file name' });
+    }
+    const ext = path.extname(name).toLowerCase();
+    const contentType = AR_FILE_TYPES[ext];
+    if (!contentType) return res.status(400).json({ error: 'Unsupported file type' });
+    const key = `ar_assets/${name}`;
+    let stream;
+    try {
+      stream = await storage.getStream(key);
+    } catch (e) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.set('Access-Control-Allow-Origin', '*');
+    stream.on('error', () => { if (!res.headersSent) res.status(500).end(); });
+    stream.pipe(res);
+  } catch (err) {
+    log.error({ err: err.message }, 'AR file serve failed');
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to serve file' });
+  }
+});
+
+
 router.use(authenticate);
 
 router.post('/upload', requirePerm('perm_upload_unity'),

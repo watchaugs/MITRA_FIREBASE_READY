@@ -82,6 +82,25 @@ router.delete('/:id', requirePerm('perm_edit_curriculum'), async (req, res) => {
 // ── AR Topics ──────────────────────────────────────────────────────────────────
 // Returns published AR assets as "topics" — what the Flutter app uses to
 // display the lesson list and request the CDN URL for the GLB file.
+// Is the requested state inside MITRA's approved territory? A state is
+// "supported" once the dashboard has saved a curriculum for it.
+async function _territorySupported(db, state) {
+  const s = String(state || '').trim();
+  if (!s) return true;
+  try {
+    const snap = await db.collection('curriculum_hierarchy').get();
+    return snap.docs.some(d => {
+      const h = d.data() || {};
+      const a = String(h.state_name || '').trim().toLowerCase();
+      const b = String(h.state_code || '').trim().toLowerCase();
+      const want = s.toLowerCase();
+      return a === want || b === want;
+    });
+  } catch (_) {
+    return true;
+  }
+}
+
 router.get('/ar-topics', async (req, res) => {
   const db = getFirestore();
   let snap = null;
@@ -111,10 +130,12 @@ router.get('/ar-topics', async (req, res) => {
     }));
     // The app reads res.data['data'] — it was getting a bare array, so it always
     // fell back to its built-in demo list.
-    return res.json({ data, total: data.length });
+    return res.json({ data, total: data.length, territory_supported: true });
   }
-  // No published AR assets yet — empty list (no phantom topics).
-  res.json({ data: [], total: 0 });
+  // No published AR assets yet — empty list. territory_supported tells the app
+  // whether to say "coming soon" (true) or "not in your area yet" (false).
+  const territory_supported = await _territorySupported(db, req.query.state);
+  res.json({ data: [], total: 0, territory_supported });
 });
 
 // ── State Hierarchy ────────────────────────────────────────────────────────────
