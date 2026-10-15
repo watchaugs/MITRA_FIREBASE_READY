@@ -101,6 +101,78 @@ async function _territorySupported(db, state) {
   }
 }
 
+// ── Curriculum manifest (scaling cost-shield) ───────────────────────────────
+// At lakhs of DAU, every student querying several collections per launch makes
+// Firestore the biggest bill. Instead we build ONE compact JSON per state
+// (classes → subjects → topics → released AR lessons + model URLs), cache it
+// hard, and let the app read just this. Regenerated when an admin saves a
+// state's curriculum; served with a long Cache-Control so repeat reads are free
+// at the CDN/proxy. (Later: push the same JSON to R2 — format stays identical.)
+async function buildStateManifest(db, stateCode, stateName) {
+  const hDoc = await db.collection('curriculum_hierarchy').doc(stateCode).get();
+  const structure = hDoc.exists ? (hDoc.data().structure || []) : [];
+  // Published AR assets visible to this state, keyed for quick topic lookup.
+  let assets = [];
+  try {
+    const aSnap = await db.collection('ar_assets').where('status', '==', 'published').limit(1000).get();
+    assets = aSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .filter(a => {
+        const ts = Array.isArray(a.target_states) ? a.target_states : [];
+        if (!ts.length) return true; // national
+        const want = String(stateName || stateCode).trim().toUpperCase();
+        return ts.map(x => String(x).trim().toUpperCase()).includes(want);
+      });
+  } catch (_) {}
+  const nrm = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const lessonsFor = (cls, subj, topic) => assets
+    .filter(a => nrm(a.class_name) === nrm(cls) && nrm(a.subject) === nrm(subj) && nrm(a.topic) === nrm(topic))
+    .map(a => ({ id: a.id, title: a.title || a.topic || a.id,
+                 flutter_url: a.flutter_url || null, audio_url: a.audio_url || null,
+                 mind_url: a.mind_url || null, video_url: a.video_url || null,
+                 chroma_enabled: a.chroma_enabled === true, chroma_color: a.chroma_color || null,
+                 ar_mode: a.ar_mode || null }));
+  return {
+    version: 1,
+    state_code: stateCode,
+    state_name: stateName || stateCode,
+    generated_at: new Date().toISOString(),
+    classes: structure.map(c => ({
+      class_name: c.class_name,
+      subjects: (c.subjects || []).map(sj => ({
+        subject: sj.subject,
+        topics: (sj.topics || []).map(t => ({
+          topic: t.topic,
+          ar_lessons: lessonsFor(c.class_name, sj.subject, t.topic),
+        })),
+      })),
+    })),
+  };
+}
+
+// GET /manifest/:state — the app reads this ONCE per launch instead of querying
+// several collections. Cached hard; recomputed only if no cached copy exists.
+router.get('/manifest/:state', async (req, res) => {
+  try {
+    const db = getFirestore();
+    const stateKey = req.params.state;
+    // Serve a stored copy if present (written on publish); else build on demand.
+    let manifest = null;
+    try {
+      const cached = await db.collection('curriculum_manifests').doc(stateKey).get();
+      if (cached.exists) manifest = cached.data();
+    } catch (_) {}
+    if (!manifest) {
+      manifest = await buildStateManifest(db, stateKey, req.query.state_name || stateKey);
+      try { await db.collection('curriculum_manifests').doc(stateKey).set(manifest); } catch (_) {}
+    }
+    res.set('Cache-Control', 'public, max-age=3600'); // 1h at the edge/proxy
+    res.json(manifest);
+  } catch (err) {
+    log.error({ err: err.message }, 'manifest build failed');
+    res.status(500).json({ error: 'Failed to build manifest' });
+  }
+});
+
 router.get('/ar-topics', async (req, res) => {
   const db = getFirestore();
   let snap = null;
@@ -126,6 +198,9 @@ router.get('/ar-topics', async (req, res) => {
       mind_url:         r.mind_url         || null,
       audio_url:        r.audio_url        || null,
       target_image_url: r.target_image_url || null,
+      video_url:        r.video_url        || null,
+      chroma_enabled:   r.chroma_enabled   === true,
+      chroma_color:     r.chroma_color     || null,
       ar_mode:          r.ar_mode          || null,
     }));
     // The app reads res.data['data'] — it was getting a bare array, so it always
@@ -149,6 +224,11 @@ router.post('/hierarchy', requirePerm('perm_edit_curriculum'), async (req, res) 
     if (!Array.isArray(structure)) return res.status(400).json({ error: 'structure must be a list' });
     const db = getFirestore();
     await db.collection('curriculum_hierarchy').doc(state_code).set({ state_code, state_name: req.body.state_name || state_code, structure, updated_by: req.user?.id, updated_at: new Date() }, { merge: true });
+    // Rebuild this state's cached manifest so the app's next read is instant and DB-free.
+    try {
+      const manifest = await buildStateManifest(db, state_code, req.body.state_name || state_code);
+      await db.collection('curriculum_manifests').doc(state_code).set(manifest);
+    } catch (e) { log.error({ err: e.message }, 'manifest regen after save failed (non-fatal)'); }
     res.json({ success: true, message: 'Hierarchy saved', state_code });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to save curriculum hierarchy');

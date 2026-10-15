@@ -2104,6 +2104,15 @@ document.addEventListener('DOMContentLoaded', () => {
         <label class="lbl">Narration Audio <span style="color:var(--text2);font-weight:400">(optional — .mp3/.aac/.wav)</span></label>
         <input class="inp" type="file" id="ar-up-audio" accept="audio/*" onchange="handleArExtraSelect('audio',event)">
       </div>
+      <div>
+        <label class="lbl">AR Video <span style="color:var(--text2);font-weight:400">(optional — plays on a plane in AR, .mp4/.webm)</span></label>
+        <input class="inp" type="file" id="ar-up-video" accept="video/*">
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:var(--text2)">
+          <input type="checkbox" id="ar-up-chroma" style="width:auto">
+          Green-screen video (remove background)
+          <input class="inp" type="color" id="ar-up-chroma-color" value="#00ff00" style="width:44px;height:28px;padding:2px;margin-left:4px" title="Key colour to remove">
+        </label>
+      </div>
     </div>
 
     <!-- Upload Progress -->
@@ -5682,6 +5691,10 @@ async function submitArUpload() {
       if (imageFile) formData.append('image', imageFile, imageFile.name);
       if (audioFile) formData.append('audio', audioFile, audioFile.name);
       if (mind) formData.append('mind', new Blob([mind], { type: 'application/octet-stream' }), 'targets.mind');
+      const videoFile = document.getElementById('ar-up-video')?.files[0];
+      if (videoFile) formData.append('video', videoFile, videoFile.name);
+      formData.append('chroma_enabled', document.getElementById('ar-up-chroma')?.checked ? 'true' : 'false');
+      formData.append('chroma_color', document.getElementById('ar-up-chroma-color')?.value || '#00ff00');
       endpoint = '/api/ar/upload-rich';
     } else {
       // ── Existing Unity bundle path — unchanged ──
@@ -5726,7 +5739,7 @@ async function submitArUpload() {
       setTimeout(() => { document.getElementById('ar-uprogress').style.display = 'none'; }, 2000);
       refreshArAssetList();
       ['ar-up-class', 'ar-up-subject', 'ar-up-language'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-      ['ar-up-topic', 'ar-up-title', 'ar-up-image', 'ar-up-audio'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      ['ar-up-topic', 'ar-up-title', 'ar-up-image', 'ar-up-audio', 'ar-up-video'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
       return asset; // hand the asset back so "Save & Apply" can link it
     } else {
       statusEl.innerHTML = `<span style="color:var(--red)">❌ ${data.error || 'Upload failed'}</span>`;

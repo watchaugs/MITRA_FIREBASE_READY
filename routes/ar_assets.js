@@ -14,7 +14,7 @@ const log = require('../lib/logger');
 // In dev (no STORAGE_BUCKET set): files save to ./uploads/ on local disk
 // In prod (STORAGE_BUCKET set):   files save to GCS bucket → later swapped to R2
 
-const ALLOWED_EXTENSIONS = new Set(['.unitypackage','.assetbundle','.unity','.glb','.gltf','.fbx','.obj','.zip','.png','.jpg','.jpeg','.webp','.mind','.mp3','.aac','.m4a','.wav','.ogg']);
+const ALLOWED_EXTENSIONS = new Set(['.unitypackage','.assetbundle','.unity','.glb','.gltf','.fbx','.obj','.zip','.png','.jpg','.jpeg','.webp','.mind','.mp3','.aac','.m4a','.wav','.ogg','.mp4','.webm','.mov','.m4v']);
 const arUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
@@ -31,6 +31,7 @@ const AR_FILE_TYPES = {
   '.mind': 'application/octet-stream',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   '.mp3': 'audio/mpeg', '.aac': 'audio/aac', '.m4a': 'audio/aac', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/mp4',
 };
 router.get('/file/:name', async (req, res) => {
   try {
@@ -146,6 +147,7 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
     { name: 'image', maxCount: 1 },
     { name: 'audio', maxCount: 1 },
     { name: 'mind',  maxCount: 1 },
+    { name: 'video', maxCount: 1 },
   ])(req, res, err => err ? res.status(400).json({ error: err.message }) : next()),
   async (req, res) => {
     const files = req.files || {};
@@ -180,16 +182,19 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
       return process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${key}` : `/api/ar/file/${id}_${keySuffix}`;
     };
 
-    let target_image_url = null, audio_url = null, mind_url = null;
+    let target_image_url = null, audio_url = null, mind_url = null, video_url = null;
     try {
       const img = files.image && files.image[0];
       const aud = files.audio && files.audio[0];
       const mnd = files.mind  && files.mind[0];
+      const vid = files.video && files.video[0];
       const imgExt = img ? path.extname(img.originalname).toLowerCase() : '.png';
       const audExt = aud ? path.extname(aud.originalname).toLowerCase() : '.mp3';
+      const vidExt = vid ? path.extname(vid.originalname).toLowerCase() : '.mp4';
       target_image_url = await storeSide(img, `target${imgExt}`, imgExt === '.jpg' || imgExt === '.jpeg' ? 'image/jpeg' : (imgExt === '.webp' ? 'image/webp' : 'image/png'));
       audio_url        = await storeSide(aud, `audio${audExt}`,  audExt === '.aac' || audExt === '.m4a' ? 'audio/aac' : (audExt === '.wav' ? 'audio/wav' : (audExt === '.ogg' ? 'audio/ogg' : 'audio/mpeg')));
       mind_url         = await storeSide(mnd, 'targets.mind', 'application/octet-stream');
+      video_url        = await storeSide(vid, `video${vidExt}`, vidExt === '.webm' ? 'video/webm' : (vidExt === '.mov' ? 'video/quicktime' : 'video/mp4'));
     } catch (sideErr) {
       return res.status(500).json({ error: 'Failed to store AR side files', detail: sideErr.message });
     }
@@ -217,6 +222,10 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
       target_image_url,
       audio_url,
       mind_url,
+      video_url,
+      // Green-screen (ChromaKey) settings for the AR video plane, from the form.
+      chroma_enabled: req.body.chroma_enabled === 'true' || req.body.chroma_enabled === true,
+      chroma_color:   req.body.chroma_color || '#00ff00',
       ar_mode: mind_url ? 'marker' : 'overlay', // hint for the app's tier router
     };
 
@@ -267,6 +276,9 @@ router.get('/topics', async (req, res) => {
       audio_url:        r.audio_url        || null,
       mind_url:         r.mind_url         || null,
       target_image_url: r.target_image_url || null,
+      video_url:        r.video_url        || null,
+      chroma_enabled:   r.chroma_enabled   === true,
+      chroma_color:     r.chroma_color     || null,
       ar_mode:          r.ar_mode          || null,
     })));
   } catch (err) {
