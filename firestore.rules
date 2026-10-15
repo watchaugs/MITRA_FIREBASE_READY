@@ -23,14 +23,27 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Get the user's role from their document
-    function userRole() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    // True only when the caller already has a profile document. On a first-ever
+    // login the doc does NOT exist yet, so get().data would error and DENY the
+    // whole rule — every role check below must stay safe in that case.
+    function hasProfile() {
+      return isAuth()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
-    // Get the user's assigned state
+    // Get the user's role from their document. Returns '' when the profile does
+    // not exist yet, so role checks evaluate to false instead of erroring.
+    function userRole() {
+      return hasProfile()
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : '';
+    }
+
+    // Get the user's assigned state (null-safe, same reasoning as userRole).
     function userState() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assigned_state;
+      return hasProfile()
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assigned_state
+        : '';
     }
 
     // Role checks
@@ -62,33 +75,55 @@ service cloud.firestore {
            );
     }
 
-    match /users/{userId} {
-      // User can read their own profile; admins can read all
-      allow read: if isAuth() && (request.auth.uid == userId || isAdmin());
+    // ── app_users = APP (student / app-teacher) profiles ──────────────────────
+    // IMPORTANT: this collection holds the STUDENT/app profiles created from the
+    // mobile app. Dashboard STAFF (admin/content/district/viewer) live in a
+    // SEPARATE collection, `dashboard_users`, which is reached only through the
+    // backend Admin SDK (see below) — never written here. So these rules are
+    // pure self-service: a signed-in app user owns exactly their own
+    // app_users/{uid} document, and can never create a staff/admin account or
+    // grant permissions.
+    match /app_users/{userId} {
+      // Read only your own profile. (Staff tooling reads via the Admin SDK,
+      // which bypasses rules, so no admin branch is needed here.)
+      allow read: if isAuth() && request.auth.uid == userId;
 
-      // Admins can create any user. A signed-in app user may create ONLY their
-      // own profile (login writes users/{uid}), and only as a non-privileged app
-      // role (student/teacher) with no permission fields — so a modified app can
-      // never self-grant admin access.
-      allow create: if isAdmin() ||
-        (isAuth() && request.auth.uid == userId &&
-         (!('role' in request.resource.data) ||
-           request.resource.data.role in ['student', 'teacher']) &&
-         !request.resource.data.keys().hasAny(['perm_publish_apps',
-           'perm_upload_unity', 'perm_manage_geo', 'perm_view_analytics',
-           'perm_create_users', 'perm_edit_curriculum', 'perm_approve_content',
-           'perm_export_data', 'perm_manage_ads']));
-      // users can update their own non-role fields
-      allow update: if isAdmin() ||
-        (isAuth() && request.auth.uid == userId &&
-         !request.resource.data.keys().hasAny(['role', 'perm_publish_apps',
-           'perm_upload_unity', 'perm_manage_geo', 'perm_view_analytics',
-           'perm_create_users', 'perm_edit_curriculum', 'perm_approve_content',
-           'perm_export_data', 'perm_manage_ads']) &&
-         classChangeAllowed());
+      // Create ONLY your own profile, ONLY as a non-privileged app role
+      // (student/teacher), with NO permission fields. No get() is used, so a
+      // first-ever login (where the doc doesn't exist yet) is never denied.
+      allow create: if isAuth()
+        && request.auth.uid == userId
+        && (!('role' in request.resource.data)
+            || request.resource.data.role in ['student', 'teacher'])
+        && !request.resource.data.keys().hasAny(['perm_publish_apps',
+             'perm_upload_unity', 'perm_manage_geo', 'perm_view_analytics',
+             'perm_create_users', 'perm_edit_curriculum', 'perm_approve_content',
+             'perm_export_data', 'perm_manage_ads']);
 
-      // Only superadmin can permanently delete; others can only deactivate
-      allow delete: if isSuperAdmin();
+      // Update your own profile, but never change role into a privileged one and
+      // never add permission fields. Class-change lock still applies.
+      allow update: if isAuth()
+        && request.auth.uid == userId
+        && (!('role' in request.resource.data)
+            || request.resource.data.role in ['student', 'teacher'])
+        && !request.resource.data.keys().hasAny(['perm_publish_apps',
+             'perm_upload_unity', 'perm_manage_geo', 'perm_view_analytics',
+             'perm_create_users', 'perm_edit_curriculum', 'perm_approve_content',
+             'perm_export_data', 'perm_manage_ads'])
+        && classChangeAllowed();
+
+      // App users don't delete their own profile from the client; erasure runs
+      // through the backend (DPDPA flow) with the Admin SDK.
+      allow delete: if false;
+    }
+
+    // ── Dashboard staff profiles — backend-only ───────────────────────────────
+    // Staff (admin/content/district/viewer/teacher-of-dashboard) live here and
+    // are managed exclusively through the backend API (Admin SDK bypasses these
+    // rules). No client — app or dashboard web — may touch this collection
+    // directly, so it is locked to deny-all here.
+    match /dashboard_users/{staffId} {
+      allow read, write: if false;
     }
 
     // ── AR Assets ─────────────────────────────────────────────────────────────

@@ -209,7 +209,7 @@ router.post('/run-auto-purge', requirePerm('perm_manage_compliance'), async (req
     const toPurge = [];
     for (let i = 0; i < candidates.length; i += 100) {
       const chunk = candidates.slice(i, i + 100);
-      const users = await db.getAll(...chunk.map(d => db.collection('users').doc(d.id)));
+      const users = await db.getAll(...chunk.map(d => db.collection('app_users').doc(d.id)));
       chunk.forEach((d, k) => {
         const c = d.data();
         const u = users[k].exists ? users[k].data() : null;

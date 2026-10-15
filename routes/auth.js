@@ -383,7 +383,7 @@ router.post('/firebase', async (req, res) => {
 
     let userData = {};
     try {
-      const doc = await db.collection('users').doc(userId).get();
+      const doc = await db.collection('app_users').doc(userId).get();
       if (doc.exists) userData = doc.data();
     } catch { /* profile may not exist yet — proceed with minimal claims */ }
 
