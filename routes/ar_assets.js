@@ -43,15 +43,51 @@ router.get('/file/:name', async (req, res) => {
     const contentType = AR_FILE_TYPES[ext];
     if (!contentType) return res.status(400).json({ error: 'Unsupported file type' });
     const key = `ar_assets/${name}`;
-    let stream;
-    try {
-      stream = await storage.getStream(key);
-    } catch (e) {
-      return res.status(404).json({ error: 'File not found' });
-    }
+
+    // Common headers — the video/audio player needs Accept-Ranges to know it may seek.
     res.set('Content-Type', contentType);
     res.set('Cache-Control', 'public, max-age=31536000, immutable');
     res.set('Access-Control-Allow-Origin', '*');
+    res.set('Accept-Ranges', 'bytes');
+
+    // Parse an optional "Range: bytes=START-END" request from the player.
+    const parseRange = (header, size) => {
+      const m = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+      if (!m) return null;
+      let start = m[1] === '' ? null : parseInt(m[1], 10);
+      let end   = m[2] === '' ? null : parseInt(m[2], 10);
+      if (start == null && end == null) return null;
+      if (start == null) { start = size - end; end = size - 1; }   // suffix: last N bytes
+      else if (end == null || end >= size) { end = size - 1; }
+      if (!(start >= 0) || start > end) return null;
+      return { start, end };
+    };
+
+    let total;
+    try {
+      // Peek size first (cheap) so we can answer a Range correctly.
+      const head = await storage.statStream(key, {});
+      total = head.size;
+      // We only needed the size; drop this probe stream.
+      if (head.stream && head.stream.destroy) head.stream.destroy();
+    } catch (e) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    const range = parseRange(req.headers.range, total);
+    if (range) {
+      const { start, end } = range;
+      const { stream } = await storage.statStream(key, { start, end });
+      res.status(206);
+      res.set('Content-Range', `bytes ${start}-${end}/${total}`);
+      res.set('Content-Length', String(end - start + 1));
+      stream.on('error', () => { if (!res.headersSent) res.status(500).end(); });
+      return stream.pipe(res);
+    }
+
+    // No Range → whole file.
+    const { stream } = await storage.statStream(key, {});
+    res.set('Content-Length', String(total));
     stream.on('error', () => { if (!res.headersSent) res.status(500).end(); });
     stream.pipe(res);
   } catch (err) {
