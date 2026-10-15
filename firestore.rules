@@ -66,8 +66,19 @@ service cloud.firestore {
       // User can read their own profile; admins can read all
       allow read: if isAuth() && (request.auth.uid == userId || isAdmin());
 
-      // Only admins can create/update users; users can update their own non-role fields
-      allow create: if isAdmin();
+      // Admins can create any user. A signed-in app user may create ONLY their
+      // own profile (login writes users/{uid}), and only as a non-privileged app
+      // role (student/teacher) with no permission fields — so a modified app can
+      // never self-grant admin access.
+      allow create: if isAdmin() ||
+        (isAuth() && request.auth.uid == userId &&
+         (!('role' in request.resource.data) ||
+           request.resource.data.role in ['student', 'teacher']) &&
+         !request.resource.data.keys().hasAny(['perm_publish_apps',
+           'perm_upload_unity', 'perm_manage_geo', 'perm_view_analytics',
+           'perm_create_users', 'perm_edit_curriculum', 'perm_approve_content',
+           'perm_export_data', 'perm_manage_ads']));
+      // users can update their own non-role fields
       allow update: if isAdmin() ||
         (isAuth() && request.auth.uid == userId &&
          !request.resource.data.keys().hasAny(['role', 'perm_publish_apps',
