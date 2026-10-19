@@ -39,6 +39,12 @@ router.post('/grant', consentLimiter, async (req, res) => {
   try {
     const { student_id, consents, version } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id required' });
+    if (!Array.isArray(consents) || consents.length === 0) {
+      return res.status(400).json({ error: 'consents must be a non-empty array' });
+    }
+    if (typeof version !== 'string' || !version.trim()) {
+      return res.status(400).json({ error: 'version is required' });
+    }
     const uid = await callerUid(req);
     if (!uid || uid !== student_id) return res.status(401).json({ error: 'Sign in to record your own consent' });
     const db = getFirestore();
@@ -51,10 +57,19 @@ router.post('/grant', consentLimiter, async (req, res) => {
       const u = await db.collection('app_users').doc(student_id).get();
       if (u.exists) guardian = u.data().mobile_belongs_to || null;
     } catch (_) {}
-    await db.collection('consent_records').doc(student_id).set({
+    // Encrypt guardian PII at rest when a field-encryption key is configured.
+    // If no key is set we fall back to the previous plaintext behaviour rather
+    // than breaking consent saves — so this is safe to deploy before the key.
+    let record = {
       student_id, consents, version, granted: true, granted_at: new Date(),
       parental_consent: true, guardian_name: guardian
-    }, { merge: true });
+    };
+    try {
+      if (process.env.FIELD_ENCRYPTION_KEY) {
+        record = encryptFields(record, SENSITIVE_CONSENT_FIELDS);
+      }
+    } catch (e) { /* key misconfigured → store plaintext, never block consent */ }
+    await db.collection('consent_records').doc(student_id).set(record, { merge: true });
     res.json({ success: true, student_id });
   } catch { res.status(500).json({ error: 'Consent save failed' }); }
 });
@@ -63,6 +78,11 @@ router.post('/revoke', authenticate, async (req, res) => {
   try {
     const { student_id } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id required' });
+    // You may only revoke your own consent (admins/staff may revoke any).
+    const isStaff = !!(req.user && (req.user.role || req.user.perm_manage_compliance));
+    if (!isStaff && req.user?.id !== student_id) {
+      return res.status(403).json({ error: 'You can only revoke your own consent' });
+    }
     const db = getFirestore();
     await db.collection('consent_records').doc(student_id).set(
       { student_id, granted: false, revoked_at: new Date() },

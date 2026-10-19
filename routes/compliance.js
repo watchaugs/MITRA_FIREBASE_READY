@@ -215,7 +215,8 @@ router.post('/purge-user', requirePerm('perm_manage_compliance'), async (req, re
       records_deleted: sessSnap.size + quizSnap.size,
     });
   } catch (err) {
-    res.status(500).json({ error: 'Purge failed', detail: err.message });
+    log.error({ err: err.message, student_id: req.body?.student_id }, 'Purge failed');
+    res.status(500).json({ error: 'Purge failed' });
   }
 });
 router.post('/run-auto-purge', requirePerm('perm_manage_compliance'), async (req, res) => {

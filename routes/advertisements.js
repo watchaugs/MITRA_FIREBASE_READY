@@ -50,10 +50,10 @@ router.get('/', async (req, res) => {
 router.post('/upload', requirePerm('perm_manage_ads'), memUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
   try {
-    const result = await storage.put('ad_creative', req.file.originalname, req.file.buffer);
+    const result = await storage.put('ad_media', req.file.originalname, req.file.buffer);
     const id = uuidv4();
     const doc = {
-      id, category: 'ad_creative',
+      id, category: 'ad_media',
       storage_key: result.key,
       original_name: result.originalName,
       size: result.size,
@@ -209,12 +209,35 @@ router.get('/:id', async (req, res) => {
 });
 
 // ── POST /  — Create ad campaign ─────────────────────────────────────────────
+// ── Departmental-notice guardrail (DPDPA / scope) ────────────────────────────
+// This module is ONLY for school/departmental information — quiz competitions,
+// exams, official declarations — NOT product or service promotions. This check
+// blocks obvious commercial campaigns before they can be created or published.
+const COMMERCIAL_TERMS = [
+  'buy now', 'discount', 'sale', 'offer', 'coupon', 'cashback', 'shop',
+  'order now', 'price', '% off', 'limited offer', 'subscribe', 'free trial',
+  'brand', 'sponsor', 'promo code', 'lowest price', 'book now', 'deal'
+];
+function noticeScopeError(b) {
+  const hay = [b.name, b.title, b.description, b.cta_text, b.body]
+    .filter(Boolean).join(' ').toLowerCase();
+  const hit = COMMERCIAL_TERMS.find(t => hay.includes(t));
+  if (hit) {
+    return 'This module is for departmental notices only (quiz competitions, '
+      + 'exams, official school declarations). Content that reads as a product '
+      + 'or service promotion ("' + hit + '") is not allowed.';
+  }
+  return null;
+}
+
 router.post('/', requirePerm('perm_manage_ads'), async (req, res) => {
   try {
     const db  = getFirestore();
     const id  = uuidv4();
     const b = req.body || {};
     if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Campaign name is required' });
+    const scopeErr = noticeScopeError(b);
+    if (scopeErr) return res.status(422).json({ error: scopeErr });
     const doc = { ...b, id,
                   status: b.status === 'scheduled' ? 'scheduled' : 'draft',
                   target_states: Array.isArray(b.target_states) ? b.target_states : [],
@@ -222,7 +245,8 @@ router.post('/', requirePerm('perm_manage_ads'), async (req, res) => {
                   created_by: req.user.id, created_at: new Date() };
     await db.collection('ad_campaigns').doc(id).set(doc);
     res.status(201).json(doc);
-  } catch (_) {
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to create ad campaign');
     res.status(500).json({ error: 'Failed to create ad campaign' });
   }
 });
@@ -237,9 +261,19 @@ router.put('/:id', requirePerm('perm_manage_ads'), async (req, res) => {
     if (cur.data().state && !canAccessState(req, cur.data().state)) {
       return res.status(403).json({ error: 'Your account cannot edit this state\'s campaign.' });
     }
-    await ref.update({ ...req.body, updated_at: new Date() });
-    res.json({ id: req.params.id, ...req.body });
-  } catch (_) {
+    // Re-check scope on edit using the merged result, so clean content can't be
+    // created then edited into a commercial promotion.
+    const scopeErr = noticeScopeError({ ...cur.data(), ...req.body });
+    if (scopeErr) return res.status(422).json({ error: scopeErr });
+    // Never let the client overwrite system-owned fields (counters, ownership,
+    // id, or publish state) via a plain edit. Publishing has its own endpoint.
+    const safe = { ...req.body };
+    ['id', 'impressions', 'clicks', 'created_by', 'created_at',
+     'published_at', 'published_by', 'status', 'last_impression_at'].forEach(k => delete safe[k]);
+    await ref.update({ ...safe, updated_at: new Date() });
+    res.json({ id: req.params.id, ...safe });
+  } catch (err) {
+    log.error({ err: err.message, id: req.params.id }, 'Failed to update ad campaign');
     res.status(500).json({ error: 'Failed to update ad campaign' });
   }
 });
@@ -250,7 +284,8 @@ router.delete('/:id', requirePerm('perm_manage_ads'), async (req, res) => {
     const db = getFirestore();
     await db.collection('ad_campaigns').doc(req.params.id).delete();
     res.json({ message: 'Ad campaign deleted' });
-  } catch (_) {
+  } catch (err) {
+    log.error({ err: err.message, id: req.params.id }, 'Failed to delete ad campaign');
     res.status(500).json({ error: 'Failed to delete ad campaign' });
   }
 });
@@ -259,10 +294,15 @@ router.delete('/:id', requirePerm('perm_manage_ads'), async (req, res) => {
 router.post('/:id/publish', requirePerm('perm_manage_ads'), async (req, res) => {
   try {
     const db = getFirestore();
+    const snap = await db.collection('ad_campaigns').doc(req.params.id).get();
+    if (!snap.exists) return res.status(404).json({ error: 'Not found' });
+    const scopeErr = noticeScopeError(snap.data());
+    if (scopeErr) return res.status(422).json({ error: scopeErr });
     await db.collection('ad_campaigns').doc(req.params.id)
       .update({ status: 'live', published_at: new Date(), published_by: req.user.id });
     res.json({ message: 'Ad campaign published', id: req.params.id });
-  } catch (_) {
+  } catch (err) {
+    log.error({ err: err.message, id: req.params.id }, 'Ad publish failed');
     res.status(500).json({ error: 'Publish failed' });
   }
 });
