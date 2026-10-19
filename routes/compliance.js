@@ -149,6 +149,31 @@ router.post('/purge-user', requirePerm('perm_manage_compliance'), async (req, re
     const reason = req.body?.reason || 'Manual purge request';
     if (!student_id) return res.status(400).json({ error: 'student_id required' });
     const db    = getFirestore();
+
+    // DPDPA Rule 8 — 48-hour pre-erasure notice. If this student filed a
+    // self-service deletion request, it may only be actioned once 48 hours have
+    // passed since they filed it (giving them a window to cancel). An admin can
+    // bypass in a genuine emergency by sending { override: true }.
+    if (req.body?.override !== true) {
+      try {
+        const reqDoc = await db.collection('data_requests').doc(`${student_id}_deletion`).get();
+        if (reqDoc.exists) {
+          const r = reqDoc.data() || {};
+          const filed = r.requested_at && typeof r.requested_at.toDate === 'function'
+            ? r.requested_at.toDate().getTime()
+            : (r.requested_at ? new Date(r.requested_at).getTime() : 0);
+          const dueAt = filed + 48 * 60 * 60 * 1000;
+          if (filed && Date.now() < dueAt) {
+            return res.status(425).json({
+              error: 'Within the 48-hour pre-erasure notice period',
+              requested_at: new Date(filed).toISOString(),
+              can_purge_after: new Date(dueAt).toISOString(),
+            });
+          }
+        }
+      } catch (_) { /* no request doc → treat as a direct admin purge */ }
+    }
+
     const batch = db.batch();
 
     // Anonymise consent record — do not delete (audit trail required by DPDPA)

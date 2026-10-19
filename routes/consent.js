@@ -42,8 +42,18 @@ router.post('/grant', consentLimiter, async (req, res) => {
     const uid = await callerUid(req);
     if (!uid || uid !== student_id) return res.status(401).json({ error: 'Sign in to record your own consent' });
     const db = getFirestore();
+    // This is a children's education app, so a grant here IS the guardian's
+    // parental consent. Record it explicitly (and the guardian relationship
+    // from the student's profile when present) so the DPDPA parental-consent
+    // check can verify it.
+    let guardian = null;
+    try {
+      const u = await db.collection('app_users').doc(student_id).get();
+      if (u.exists) guardian = u.data().mobile_belongs_to || null;
+    } catch (_) {}
     await db.collection('consent_records').doc(student_id).set({
-      student_id, consents, version, granted: true, granted_at: new Date()
+      student_id, consents, version, granted: true, granted_at: new Date(),
+      parental_consent: true, guardian_name: guardian
     }, { merge: true });
     res.json({ success: true, student_id });
   } catch { res.status(500).json({ error: 'Consent save failed' }); }

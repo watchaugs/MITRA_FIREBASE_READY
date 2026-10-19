@@ -7158,6 +7158,27 @@ window.showPage = function showPage(pageId, topBtn, sbBtn) {
   if (pageId === 'compliance') {
     typeof initLegalPage === 'function' && initLegalPage();
     if (!window._auditInited) { window._auditInited = true; typeof loadAuditLogs === 'function' && loadAuditLogs(); }
+    // Zero-cost retention: when Compliance opens, IF the auto-purge policy is
+    // ON, run the >12-month-inactive purge once per session. No scheduler, no
+    // Cloud cost. Does nothing when the toggle is off, so it's never a surprise.
+    if (!window._autoPurgeRan) {
+      window._autoPurgeRan = true;
+      (async function () {
+        try {
+          const status = await safeFetch('/api/compliance/auto-purge-status');
+          const on = !!(status && (status.auto_purge_enabled ?? status.enabled));
+          if (!on) return;
+          const res = await safeFetch('/api/compliance/run-auto-purge', { method: 'POST', body: '{}' });
+          const n = res && (res.purged ?? res.anonymised ?? res.count);
+          if (n) {
+            (typeof showToast === 'function')
+              ? showToast('Retention: ' + n + ' inactive record(s) anonymised', 'success')
+              : console.log('Auto-purge anonymised', n, 'record(s)');
+            typeof loadComplianceScore === 'function' && loadComplianceScore();
+          }
+        } catch (e) { console.warn('auto-purge on open skipped', e); }
+      })();
+    }
   }
   if (pageId === 'app-builder') {
     const firstTab = document.querySelector('.am-tab');
