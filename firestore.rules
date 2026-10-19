@@ -94,7 +94,7 @@ service cloud.firestore {
       allow create: if isAuth()
         && request.auth.uid == userId
         && (!('role' in request.resource.data)
-            || request.resource.data.role in ['student', 'teacher'])
+            || request.resource.data.role == 'student')
         && !request.resource.data.keys().hasAny(['perm_publish_apps',
              'perm_upload_unity', 'perm_manage_geo', 'perm_view_analytics',
              'perm_create_users', 'perm_edit_curriculum', 'perm_approve_content',
@@ -105,7 +105,7 @@ service cloud.firestore {
       allow update: if isAuth()
         && request.auth.uid == userId
         && (!('role' in request.resource.data)
-            || request.resource.data.role in ['student', 'teacher'])
+            || request.resource.data.role == 'student')
         && !request.resource.data.keys().hasAny(['perm_publish_apps',
              'perm_upload_unity', 'perm_manage_geo', 'perm_view_analytics',
              'perm_create_users', 'perm_edit_curriculum', 'perm_approve_content',
