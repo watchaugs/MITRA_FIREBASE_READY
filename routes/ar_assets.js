@@ -5,6 +5,7 @@ const path    = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { compressGlb }  = require('../lib/draco');
+const { toGlb, needsConversion } = require('../lib/modelConvert');
 const storage          = require('../lib/storage');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { visibleInState, parseTargetStates } = require('../lib/stateScope');
@@ -114,10 +115,15 @@ router.post('/upload', requirePerm('perm_upload_unity'),
     let compression   = null;
     let unity_url     = null;
     let flutter_url   = null;
+    let native_url    = null;
 
-    if (ext === '.glb' || ext === '.gltf') {
+    const MODEL_EXTS = ['.glb', '.gltf', '.fbx', '.obj', '.dae', '.stl', '.ply', '.3ds', '.zip'];
+    if (MODEL_EXTS.includes(ext)) {
       try {
-        compression = await compressGlb(req.file.buffer);
+        const glbBuffer = needsConversion(ext)
+          ? await toGlb(req.file.buffer, req.file.originalname)
+          : req.file.buffer;
+        compression = await compressGlb(glbBuffer);
 
         // Only the lite GLB is served to the app. (unity_url retired — the
         // heavier Draco tier was never consumed by the student app.)
@@ -127,8 +133,15 @@ router.post('/upload', requirePerm('perm_upload_unity'),
           ? `${process.env.R2_PUBLIC_URL}/${flutterKey}`
           : `/api/ar/file/${id}_lite.glb`;
 
-      } catch (compressionErr) {
-        return res.status(422).json({ error: 'GLB compression failed', detail: compressionErr.message });
+        // Native (NON-Draco) GLB → floor-AR renderer (Filament can't read Draco).
+        const nativeKey = `ar_assets/${id}_native.glb`;
+        await storage.putRaw(compression.native, nativeKey, { contentType: 'model/gltf-binary' });
+        native_url = process.env.R2_PUBLIC_URL
+          ? `${process.env.R2_PUBLIC_URL}/${nativeKey}`
+          : `/api/ar/file/${id}_native.glb`;
+
+      } catch (convErr) {
+        return res.status(422).json({ error: 'Model conversion/compression failed', detail: convErr.message });
       }
     }
 
@@ -155,6 +168,7 @@ router.post('/upload', requirePerm('perm_upload_unity'),
       } : null,
       unity_url,
       flutter_url,
+      native_url,
     };
 
     try {
@@ -199,13 +213,18 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
       return res.status(400).json({ error: 'Model must be .glb/.gltf (convert FBX/OBJ in the browser first)' });
     }
 
-    let compression = null, unity_url = null, flutter_url = null;
+    let compression = null, unity_url = null, flutter_url = null, native_url = null;
     try {
       compression = await compressGlb(model.buffer);
       // Only the lite GLB is served to the app (unity_url retired).
       const flutterKey = `ar_assets/${id}_lite.glb`;
       await storage.putRaw(compression.flutter, flutterKey, { contentType: 'model/gltf-binary' });
       flutter_url = process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${flutterKey}` : `/api/ar/file/${id}_lite.glb`;
+
+      // Native (NON-Draco) GLB → floor-AR renderer (Filament can't read Draco).
+      const nativeKey = `ar_assets/${id}_native.glb`;
+      await storage.putRaw(compression.native, nativeKey, { contentType: 'model/gltf-binary' });
+      native_url = process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${nativeKey}` : `/api/ar/file/${id}_native.glb`;
     } catch (compressionErr) {
       return res.status(422).json({ error: 'GLB compression failed', detail: compressionErr.message });
     }
@@ -254,6 +273,7 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
       } : null,
       unity_url,
       flutter_url,
+      native_url,
       // ── New AR fields consumed by the in-app engine ──
       target_image_url,
       audio_url,
@@ -309,6 +329,7 @@ router.get('/topics', async (req, res) => {
       status:      r.status      || 'live',
       unity_url:   r.unity_url   || null,
       flutter_url: r.flutter_url || null,
+      native_url:  r.native_url  || null,
       audio_url:        r.audio_url        || null,
       mind_url:         r.mind_url         || null,
       target_image_url: r.target_image_url || null,

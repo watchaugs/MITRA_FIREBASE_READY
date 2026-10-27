@@ -11,6 +11,8 @@
   "dependencies": {
     "@gltf-transform/core": "^4.4.1",
     "@gltf-transform/functions": "^4.4.1",
+    "adm-zip": "^0.5.16",
+    "assimpjs": "0.0.10",
     "@google-cloud/bigquery": "^8.3.1",
     "@google-cloud/secret-manager": "^5.5.0",
     "@google-cloud/storage": "^7.21.0",
