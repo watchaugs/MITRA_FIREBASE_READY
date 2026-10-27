@@ -2829,6 +2829,25 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
 
     <div class="card" style="margin-top:16px">
+      <div class="card-title">⏱️ In-App Popup Behaviour</div>
+      <div class="card-sub">Controls how the ad popup behaves on the student's phone.</div>
+      <div class="g2">
+        <div class="form-row">
+          <label class="lbl">Close button appears after (seconds)</label>
+          <input class="inp" type="number" min="0" max="60" id="ad-close-after" placeholder="10">
+        </div>
+        <div class="form-row">
+          <label class="lbl">Auto-dismiss after (seconds, 0 = never)</label>
+          <input class="inp" type="number" min="0" max="120" id="ad-auto-dismiss" placeholder="0">
+        </div>
+      </div>
+      <div class="checklist-item" style="margin-top:8px">
+        <input type="checkbox" id="ad-skippable" checked>
+        <label for="ad-skippable" style="cursor:pointer;flex:1">Skippable — student may close once the timer ends (uncheck to force watching until auto-dismiss)</label>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
       <div class="card-title">🗓️ Publishing Schedule</div>
       <div class="card-sub">Students only see the ad between these dates, on the ticked days (India time). Leave dates empty to run from publishing with no end.</div>
       <div class="g2">
@@ -3831,11 +3850,6 @@ function setRefreshedLabel(iso) {
   } catch (_) { el.textContent = 'Updated: ' + iso; }
 }
 
-async function loadRefreshStatus() {
-  const data = await safeFetch('/api/analytics/refresh-status');
-  if (data) setRefreshedLabel(data.refreshed_at);
-}
-
 function switchAnTab(tabId, btn) {
   document.querySelectorAll('.an-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.an-section').forEach(s => s.classList.remove('active'));
@@ -3847,16 +3861,6 @@ function switchAnTab(tabId, btn) {
   if (tabId === 'quiz-analytics') { loadQuizAnalytics(); setTimeout(() => loadQuizAnalyticsDeep(), 100); }
   if (tabId === 'notification-analytics') loadNotifAnalyticsSubTab();
 }
-
-async function loadAnalyticsOverview() {
-  // KPIs are filled by initAllCharts() from the same snapshot.
-  return initAllCharts();
-}
-
-async function loadReplayAnalytics() {
-  return initAllCharts();
-}
-
 
 async function exportAnalyticsData(format) {
   const menu = document.getElementById('export-menu');

@@ -337,6 +337,10 @@ function _adPayload() {
     expires_at: toIso(v('ad-expiry-date')),
     publish_days: days.length === 7 ? [] : days,
     target_states: states,
+    // In-app popup behaviour (consumed by the app's _SponsorInterstitial).
+    close_after_seconds: parseInt(v('ad-close-after'), 10) || 10,
+    auto_dismiss_seconds: parseInt(v('ad-auto-dismiss'), 10) || 0,
+    skippable: document.getElementById('ad-skippable')?.checked !== false,
   };
   if (_adMedia) { p.media_url = _adMedia.url; p.media_type = _adMedia.media_type; p.upload_id = _adMedia.upload_id; }
   return p;
@@ -356,7 +360,8 @@ async function _saveAd(statusHint) {
   return d.id;
 }
 function _resetAdForm() {
-  ['ad-campaign-name', 'ad-advertiser', 'ad-description', 'ad-publish-date', 'ad-expiry-date'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['ad-campaign-name', 'ad-advertiser', 'ad-description', 'ad-publish-date', 'ad-expiry-date', 'ad-close-after', 'ad-auto-dismiss'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const sk = document.getElementById('ad-skippable'); if (sk) sk.checked = true;
   document.querySelectorAll('.adstate-cb').forEach(c => { c.checked = false; });
   const all = document.getElementById('adst-all'); if (all) all.checked = true;
   const fi = document.getElementById('ad-file-input'); if (fi) fi.value = '';
