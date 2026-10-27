@@ -2217,6 +2217,23 @@ document.addEventListener('DOMContentLoaded', () => {
             oninput="document.getElementById('notif-body-count').textContent=this.value.length+'/240';updateNotifPreview()" style="resize:vertical"></textarea>
           <div style="font-size:10px;color:var(--text3);text-align:right;margin-top:3px"><span id="notif-body-count">0/240</span></div>
         </div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-title">🎨 Appearance</div>
+          <div class="card-sub">Android shows your accent colour on the app icon + title, and the banner image in the expanded notification. The in-app card (shown when the student has the app open) uses all of these.</div>
+          <div class="g2">
+            <div class="form-row">
+              <label class="lbl">Accent colour</label>
+              <input class="inp" type="color" id="notif-color" value="#FF9933" style="height:42px;padding:4px">
+            </div>
+            <div class="form-row">
+              <label class="lbl">Banner image URL (optional)</label>
+              <input class="inp" id="notif-image" placeholder="https://… (big picture in the notification)">
+            </div>
+          </div>
+          <div class="form-row" style="margin-top:8px">
+            <label class="lbl">Emoji / icon badge (optional)</label>
+            <input class="inp" id="notif-emoji" maxlength="2" placeholder="📢" style="width:80px;text-align:center">
+        </div>
         <!-- Targeting -->
         <div style="background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:10px;padding:14px;margin-bottom:14px">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px">🎯 Audience Targeting</div>
@@ -6804,6 +6821,9 @@ async function sendNotification() {
     target_quiz   : document.getElementById('notif-quiz')?.value || null,
     deep_link_type: document.getElementById('notif-dl-type')?.value || null,
     deep_link_id  : document.getElementById('notif-dl-id')?.value || null,
+    color         : document.getElementById('notif-color')?.value || null,
+    image_url     : document.getElementById('notif-image')?.value?.trim() || null,
+    emoji         : document.getElementById('notif-emoji')?.value?.trim() || null,
     scheduled_at  : isScheduled ? scheduledAt : undefined
   };
 

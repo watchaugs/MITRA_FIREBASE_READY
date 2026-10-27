@@ -61,15 +61,30 @@ function dataPayload(b) {
   if (b.deep_link_id)   out.deep_link_id   = String(b.deep_link_id);
   if (b.target_ar_topic) out.ar_topic_id   = String(b.target_ar_topic);
   if (b.target_quiz)     out.quiz_id       = String(b.target_quiz);
+  // Styling — the app reads these (FCM data values must be strings).
+  if (b.color)     out.color     = String(b.color);
+  if (b.image_url) out.image_url = String(b.image_url);
+  if (b.emoji)     out.emoji     = String(b.emoji);
   return out;
 }
 
 function buildMessage(n) {
+  const d = n.data_payload || { click_action: 'FLUTTER_NOTIFICATION_CLICK' };
+  const androidNotif = {
+    sound: 'default',
+    channelId: 'mitra_content',
+  };
+  // Android accent colour (must be #RRGGBB) and a big-picture banner image.
+  if (d.color)     androidNotif.color    = d.color;
+  if (d.image_url) androidNotif.imageUrl = d.image_url;
   return {
     notification: { title: n.title, body: n.body },
-    data: n.data_payload || { click_action: 'FLUTTER_NOTIFICATION_CLICK' },
-    android: { priority: 'high', notification: { sound: 'default', channelId: 'mitra_content' } },
-    apns: { payload: { aps: { sound: 'default', badge: 1 } } },
+    data: d,
+    android: { priority: 'high', notification: androidNotif },
+    apns: {
+      payload: { aps: { sound: 'default', badge: 1 } },
+      ...(d.image_url ? { fcm_options: { image: d.image_url } } : {}),
+    },
     topic: n.topic,
   };
 }
