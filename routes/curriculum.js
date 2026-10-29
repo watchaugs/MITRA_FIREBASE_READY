@@ -127,7 +127,8 @@ async function buildStateManifest(db, stateCode, stateName) {
   const lessonsFor = (cls, subj, topic) => assets
     .filter(a => nrm(a.class_name) === nrm(cls) && nrm(a.subject) === nrm(subj) && nrm(a.topic) === nrm(topic))
     .map(a => ({ id: a.id, title: a.title || a.topic || a.id,
-                 flutter_url: a.flutter_url || null, audio_url: a.audio_url || null,
+                 flutter_url: a.flutter_url || null, native_url: a.native_url || null,
+                 audio_url: a.audio_url || null,
                  mind_url: a.mind_url || null, video_url: a.video_url || null,
                  chroma_enabled: a.chroma_enabled === true, chroma_color: a.chroma_color || null,
                  ar_mode: a.ar_mode || null }));
