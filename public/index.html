@@ -1079,10 +1079,10 @@ async function loadHomeDashboard() {
     const statusDot = s => s==='published'?'green':s==='review'?'yellow':'grey';
     arTbody.innerHTML = ar.data.map(a => `
       <tr>
-        <td style="font-size:12px">${esc(a.title||a.name||'Untitled')}</td>
-        <td><span class="tag tag-b" style="font-size:10px">${esc(a.subject||'—')}</span></td>
-        <td style="font-size:12px">${esc(a.class_name||'—')}</td>
-        <td><span class="sdot ${statusDot(a.status)}"></span>${esc(a.status||'—')}</td>
+        <td style="font-size:12px">${escHtml(a.title||a.name||'Untitled')}</td>
+        <td><span class="tag tag-b" style="font-size:10px">${escHtml(a.subject||'—')}</span></td>
+        <td style="font-size:12px">${escHtml(a.class_name||'—')}</td>
+        <td><span class="sdot ${statusDot(a.status)}"></span>${escHtml(a.status||'—')}</td>
       </tr>`).join('');
   } else if (arTbody) {
     arTbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text2);padding:12px">No AR assets yet</td></tr>';

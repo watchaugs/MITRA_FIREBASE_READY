@@ -54,7 +54,9 @@ router.post('/state/:code', requirePerm('perm_manage_geo'), async (req, res) => 
       state: entry.state,
       state_code: entry.code,
       scope: 'state',
-      geojson: entry.geometry,
+      // Firestore forbids nested arrays, and GeoJSON coordinates are nested
+      // 3+ deep. Store the geometry as a JSON STRING; readers parse it back.
+      geojson_str: JSON.stringify(entry.geometry),
       has_geojson: true,
       is_active: true,
       boundary_synced_at: new Date(),
@@ -172,9 +174,15 @@ router.get('/check-point', async (req, res) => {
 
     snap.docs.forEach(d => {
       const geo = d.data();
-      if (geo.has_geojson && geo.geojson) {
+      // Boundary can be stored as a parsed object (legacy) or a JSON STRING
+      // (geojson_str — because Firestore forbids GeoJSON's nested arrays).
+      let boundary = geo.geojson || null;
+      if (!boundary && geo.geojson_str) {
+        try { boundary = JSON.parse(geo.geojson_str); } catch (_) { boundary = null; }
+      }
+      if (geo.has_geojson && boundary) {
         // Preferred: real boundary check
-        if (pointInPolygon(lat, lng, geo.geojson)) {
+        if (pointInPolygon(lat, lng, boundary)) {
           matches.push({
             id: d.id, name: geo.name, state: geo.state, district: geo.district,
             method: 'boundary',
