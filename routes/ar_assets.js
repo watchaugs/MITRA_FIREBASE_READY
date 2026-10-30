@@ -369,6 +369,7 @@ router.put('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => 
       'release_updated_by', 'release_updated_at',
     ]);
     await db.collection('ar_assets').doc(req.params.id).update({ ...safe, updated_at: new Date() });
+    await invalidateManifests(db);
     res.json({ id: req.params.id, ...safe });
   } catch { res.status(500).json({ error: 'Failed to update asset' }); }
 });
@@ -388,6 +389,7 @@ router.delete('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) 
     ].filter(Boolean);
     for (const k of keys) { try { await storage.delete(k); } catch (_) { /* ignore */ } }
     await ref.delete();
+    await invalidateManifests(db);
     await db.collection('audit_log').add({ action: 'ar_asset_deleted', actor: req.user.id, detail: { asset_id: req.params.id, title: a.title || a.original_name || null }, created_at: new Date() }).catch(() => {});
     res.json({ message: 'Asset deleted', id: req.params.id });
   } catch (err) { log.error({ err: err.message }, 'AR asset delete failed'); res.status(500).json({ error: 'Failed to delete asset' }); }
@@ -444,6 +446,7 @@ router.put('/assets/:id/release', requirePerm('perm_approve_content'), async (re
     const ref = db.collection('ar_assets').doc(req.params.id);
     if (!(await ref.get()).exists) return res.status(404).json({ error: 'Asset not found' });
     await ref.update({ release, release_updated_by: req.user.id, release_updated_at: new Date() });
+    await invalidateManifests(db);
     await db.collection('audit_log').add({ action: 'ar_release_set', actor: req.user.id, detail: { asset_id: req.params.id, release }, created_at: new Date() });
     res.json({ success: true, id: req.params.id, release });
   } catch (err) {

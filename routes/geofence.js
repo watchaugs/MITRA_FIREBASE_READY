@@ -8,6 +8,67 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const log = require('../lib/logger');
 router.use(authenticate);
 
+// ── Bundled India state boundaries (all 36 states/UTs) ───────────────────────
+// Loaded once from data/india_states.geojson so "geofence an entire state" needs
+// no coordinates and no external API. Each feature: { state, code, geometry }.
+const path = require('path');
+let _IN_STATES = null;
+function loadIndiaStates() {
+  if (_IN_STATES) return _IN_STATES;
+  try {
+    const fs = require('fs');
+    const raw = fs.readFileSync(path.join(__dirname, '..', 'data', 'india_states.geojson'), 'utf8');
+    const fc = JSON.parse(raw);
+    const byKey = {};
+    for (const f of (fc.features || [])) {
+      const name = f.properties && f.properties.state;
+      const code = f.properties && f.properties.code;
+      if (!name || !f.geometry) continue;
+      const entry = { state: name, code: code || null, geometry: f.geometry };
+      byKey[name.toLowerCase()] = entry;
+      if (code) byKey[code.toLowerCase()] = entry;
+    }
+    _IN_STATES = { list: (fc.features || []).map(f => ({ state: f.properties.state, code: f.properties.code })), byKey };
+  } catch (e) {
+    log.error({ err: e.message }, 'india_states.geojson load failed');
+    _IN_STATES = { list: [], byKey: {} };
+  }
+  return _IN_STATES;
+}
+
+// GET /available-states — list for the "geofence entire state" dropdown.
+router.get('/available-states', (req, res) => {
+  res.json(loadIndiaStates().list);
+});
+
+// POST /state/:code — geofence an ENTIRE state by its code or name.
+router.post('/state/:code', requirePerm('perm_manage_geo'), async (req, res) => {
+  try {
+    const key = String(req.params.code || '').trim().toLowerCase();
+    const entry = loadIndiaStates().byKey[key];
+    if (!entry) return res.status(404).json({ error: 'Unknown state code/name' });
+    const db = getFirestore();
+    const docId = 'state_' + (entry.code || entry.state).toLowerCase().replace(/\s+/g, '_');
+    const doc = {
+      name: entry.state,
+      state: entry.state,
+      state_code: entry.code,
+      scope: 'state',
+      geojson: entry.geometry,
+      has_geojson: true,
+      is_active: true,
+      boundary_synced_at: new Date(),
+      created_by: req.user.id,
+      created_at: new Date(),
+    };
+    await db.collection('geofences').doc(docId).set(doc, { merge: true });
+    res.status(201).json({ id: docId, ...doc });
+  } catch (err) {
+    log.error({ err: err.message }, 'state geofence failed');
+    res.status(500).json({ error: 'Failed to geofence state', detail: err.message });
+  }
+});
+
 // ── Point-in-polygon (ray casting) — supports Polygon & MultiPolygon ─────────
 // GeoJSON coordinates are [lng, lat], note the order vs the rest of this file.
 function pointInPolygon(lat, lng, geojson) {

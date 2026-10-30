@@ -700,6 +700,17 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
     <div class="modal-title">Configure Geofence</div>
     <div class="modal-sub" id="geo-config-state-name">State / Region Settings</div>
     <input type="hidden" id="gf-state">
+
+    <!-- ✨ Whole-state geofence: pick a state, auto-apply its real boundary -->
+    <div class="form-row" style="background:rgba(99,102,241,.08);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px">
+      <label class="lbl" style="font-weight:600">⚡ Geofence an entire state (recommended)</label>
+      <div style="font-size:11px;color:var(--text3);margin:4px 0 8px">Covers the whole state using its real boundary — no coordinates needed. Students anywhere inside the state count as inside.</div>
+      <div style="display:flex;gap:8px">
+        <select class="inp" id="gf-whole-state" style="flex:1"><option value="">Loading states…</option></select>
+        <button class="btn btn-p btn-sm" style="white-space:nowrap" onclick="geofenceWholeState()">Apply boundary</button>
+      </div>
+    </div>
+    <div style="text-align:center;font-size:11px;color:var(--text3);margin-bottom:10px">— or set a manual circle below —</div>
     <div class="form-row"><label class="lbl">Geofence Name</label><input class="inp" id="gf-name" placeholder="e.g. Maharashtra Cluster A"></div>
     <div class="form-row"><label class="lbl">District (optional)</label><input class="inp" id="gf-district" placeholder="e.g. Pune"></div>
     <div class="form-row"><label class="lbl">Radius (km)</label><input class="inp" type="number" id="gf-radius" placeholder="50" value="50"></div>
@@ -3777,8 +3788,46 @@ async function resetPassword() {
 
 // --- GEOFENCE ---
 
+// ✨ Whole-state geofence helpers ────────────────────────────────────────────
+let _wholeStateOptionsLoaded = false;
+async function loadWholeStateOptions() {
+  const sel = document.getElementById('gf-whole-state');
+  if (!sel) return;
+  const list = await safeFetch('/api/geofence/available-states', { silent: true });
+  if (!Array.isArray(list) || !list.length) {
+    sel.innerHTML = '<option value="">(states unavailable)</option>';
+    return;
+  }
+  sel.innerHTML = '<option value="">Select a state…</option>' +
+    list.map(s => `<option value="${escHtml(s.code || s.state)}">${escHtml(s.state)}</option>`).join('');
+  _wholeStateOptionsLoaded = true;
+}
+async function geofenceWholeState() {
+  const sel = document.getElementById('gf-whole-state');
+  const code = sel && sel.value;
+  if (!code) { showToast('⚠️ Pick a state first'); return; }
+  const stateName = sel.options[sel.selectedIndex].text;
+  const data = await safeFetch('/api/geofence/state/' + encodeURIComponent(code), { method: 'POST' });
+  if (data && data.id) {
+    closeModal('modal-geo-config');
+    showToast(`✅ ${stateName} geofenced — entire state boundary applied`);
+    if (typeof loadAllGeofenceStatuses === 'function') loadAllGeofenceStatuses();
+  } else {
+    showToast('⚠️ Could not geofence that state');
+  }
+}
+
 function openGeoConfig(state) {
   // Helper #4 — opened by "📍 Add Geofence" on each state block
+  loadWholeStateOptions();
+  setTimeout(() => {
+    const sel = document.getElementById('gf-whole-state');
+    if (sel && state) {
+      for (const o of sel.options) {
+        if (o.text.toLowerCase() === String(state).toLowerCase()) { sel.value = o.value; break; }
+      }
+    }
+  }, 300);
   document.getElementById('geo-config-state-name').innerText = `Configuring: ${state}`;
   document.getElementById('gf-state').value = state;
   document.getElementById('gf-name').value = `${state} Primary Cluster`;

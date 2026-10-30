@@ -134,21 +134,61 @@ async function buildStateManifest(db, stateCode, stateName) {
                  mind_url: a.mind_url || null, video_url: a.video_url || null,
                  chroma_enabled: a.chroma_enabled === true, chroma_color: a.chroma_color || null,
                  ar_mode: a.ar_mode || null }));
+  // Build the class/subject/topic tree from the saved hierarchy when one exists.
+  let classes = structure.map(c => ({
+    class_name: c.class_name,
+    subjects: (c.subjects || []).map(sj => ({
+      subject: sj.subject,
+      topics: (sj.topics || []).map(t => ({
+        topic: t.topic,
+        ar_lessons: lessonsFor(c.class_name, sj.subject, t.topic),
+      })),
+    })),
+  }));
+
+  // ── Auto-derive the tree from published assets when the hierarchy is missing/
+  // empty, OR append any published asset whose class/subject/topic the saved
+  // hierarchy doesn't yet cover. A state needs NO manual curriculum setup for
+  // its content to reach students — the dashboard self-heals. ─────────────────
+  const covered = new Set();
+  for (const c of classes)
+    for (const sj of c.subjects)
+      for (const t of sj.topics)
+        covered.add(nrm(c.class_name) + '|' + nrm(sj.subject) + '|' + nrm(t.topic));
+
+  const tree = {};
+  for (const a of assets) {
+    const cls = (a.class_name || '').trim();
+    const subj = (a.subject || '').trim();
+    const top = (a.topic || '').trim();
+    if (!cls || !subj || !top) continue;
+    if (covered.has(nrm(cls) + '|' + nrm(subj) + '|' + nrm(top))) continue;
+    tree[cls] = tree[cls] || {};
+    tree[cls][subj] = tree[cls][subj] || new Set();
+    tree[cls][subj].add(top);
+  }
+
+  for (const [cls, subjects] of Object.entries(tree)) {
+    let classNode = classes.find(c => nrm(c.class_name) === nrm(cls));
+    if (!classNode) { classNode = { class_name: cls, subjects: [] }; classes.push(classNode); }
+    for (const [subj, topics] of Object.entries(subjects)) {
+      let subjNode = classNode.subjects.find(s => nrm(s.subject) === nrm(subj));
+      if (!subjNode) { subjNode = { subject: subj, topics: [] }; classNode.subjects.push(subjNode); }
+      for (const top of topics) {
+        if (!subjNode.topics.find(t => nrm(t.topic) === nrm(top))) {
+          subjNode.topics.push({ topic: top, ar_lessons: lessonsFor(cls, subj, top) });
+        }
+      }
+    }
+  }
+
   return {
     version: 1,
     state_code: stateCode,
     state_name: stateName || stateCode,
     generated_at: new Date().toISOString(),
-    classes: structure.map(c => ({
-      class_name: c.class_name,
-      subjects: (c.subjects || []).map(sj => ({
-        subject: sj.subject,
-        topics: (sj.topics || []).map(t => ({
-          topic: t.topic,
-          ar_lessons: lessonsFor(c.class_name, sj.subject, t.topic),
-        })),
-      })),
-    })),
+    auto_derived: !structure.length,
+    classes,
   };
 }
 
