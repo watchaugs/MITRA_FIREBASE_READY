@@ -11,6 +11,7 @@ const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const refreshStore = require('../lib/refreshStore');
 const path = require('path');
 const fs   = require('fs');
 const { v4: uuidv4 } = require('uuid');
@@ -97,7 +98,11 @@ function hashToken(token) {
 // ── Login response (shared by password-only and password+code sign-in) ───────
 function buildLoginResponse(userId, userRow) {
   const accessToken  = signAccess({ ...userRow, id: userId });
-  const refreshToken = signRefresh(userId, uuidv4());
+  const familyId     = uuidv4();
+  const refreshToken = signRefresh(userId, familyId);
+  // Register this session so the refresh token is revocable + reuse-detected.
+  // Fire-and-forget: never block login on the store write.
+  refreshStore.openSession(userId, familyId, refreshToken).catch(() => {});
   return {
     token:         accessToken,   // legacy field — dashboard reads this
     access_token:  accessToken,
@@ -286,49 +291,11 @@ router.put('/me/mfa', authenticate, async (req, res) => {
   }
 });
 
-// ── POST /api/auth/verify-otp (Mobile App) ───────────────────────────────────
-router.post('/verify-otp', async (req, res) => {
-  try {
-    const { phone, otp, role } = req.body;
-
-    // Master OTP is only accepted outside production (local testing).
-    const masterOtp = process.env.NODE_ENV === 'production' ? null : '123456';
-    if (!masterOtp || otp !== masterOtp) {
-      return res.status(400).json({ message: 'OTP is incorrect. Please try again.' });
-    }
-
-    // During development: look up student/teacher in Firestore by phone
-    const db = getFirestore();
-    const collection = role === 'teacher' ? 'teachers' : 'students';
-    const snap = await db.collection(collection)
-      .where('phone_number', '==', phone)
-      .limit(1)
-      .get();
-
-    // Fallback: create a minimal user object if not found
-    const userId = snap.empty ? uuidv4() : snap.docs[0].id;
-    const userData = snap.empty ? { role: role || 'student' } : snap.docs[0].data();
-
-    const familyId    = uuidv4();
-    const accessToken  = signAccess({ id: userId, role: userData.role || role, ...userData });
-    const refreshToken = signRefresh(userId, familyId);
-
-    res.json({
-      accessToken,
-      refreshToken,
-      user: {
-        id:          userId,
-        name:        userData.full_name || userData.name || 'User',
-        email:       userData.email || null,
-        role:        role,
-        class_grade: userData.class_grade || null,
-      }
-    });
-  } catch (err) {
-    log.error({ err: err.message }, 'verify-otp error');
-    res.status(500).json({ message: 'Failed to verify OTP.' });
-  }
-});
+// NOTE (Wave-1 C3): the legacy /api/auth/verify-otp route was REMOVED. It carried a
+// hardcoded master OTP ('123456') that bypassed authentication. Phone-OTP login is
+// handled by real Firebase Phone Auth in the app, which then exchanges the Firebase
+// ID token for a backend JWT via POST /api/auth/firebase (below). That is the ONLY
+// phone-login path, and it verifies the token server-side with firebase.verifyIdToken().
 
 // ── POST /api/auth/refresh ────────────────────────────────────────────────────
 // Simplified: verify the JWT signature only (no DB lookup).
@@ -346,7 +313,16 @@ router.post('/refresh', async (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired refresh token' });
     }
 
+    // Issue the rotated refresh token, then validate+rotate the server-side session.
+    // If the presented token is an OLD one (reuse), rotateSession revokes the family
+    // and we reject — a stolen token can no longer be used, and the real user's next
+    // refresh will also fail (forcing a fresh login), which is the safe outcome.
     const newRefresh  = signRefresh(decoded.id, decoded.fam);
+    const rotation = await refreshStore.rotateSession(
+      decoded.id, decoded.fam, presented, newRefresh);
+    if (!rotation.ok) {
+      return res.status(401).json({ error: 'Session is no longer valid. Please sign in again.' });
+    }
     const accessToken = jwt.sign(
       { id: decoded.id, fam: decoded.fam },
       process.env.JWT_SECRET,
@@ -402,6 +378,9 @@ router.post('/firebase', async (req, res) => {
       assigned_state: userData.assigned_state || null,
     });
     const refreshToken = signRefresh(userId, familyId);
+    // Register this app-login session so its refresh token is revocable +
+    // reuse-detected (same protection as the dashboard login path).
+    refreshStore.openSession(userId, familyId, refreshToken).catch(() => {});
 
     return res.json({
       access_token:  accessToken,
@@ -422,8 +401,21 @@ router.post('/firebase', async (req, res) => {
 });
 
 // ── POST /api/auth/logout ─────────────────────────────────────────────────────
-router.post('/logout', authenticate, (req, res) => {
-  // Token is stateless — client discards it. No DB cleanup needed.
+router.post('/logout', authenticate, async (req, res) => {
+  // Revoke this session family so the refresh token can no longer be used.
+  // The client sends its refresh token so we can target the right family; if it
+  // isn't sent we fall back to revoking all of the user's sessions (safe default).
+  try {
+    const presented = req.body?.refresh_token;
+    if (presented && typeof presented === 'string') {
+      try {
+        const d = jwt.verify(presented, process.env.JWT_REFRESH_SECRET, { algorithms: ['HS256'] });
+        if (d.fam) await refreshStore.revokeSession(d.fam);
+      } catch { /* bad token → fall through to revoke-all */ }
+    } else if (req.user?.id) {
+      await refreshStore.revokeAllForUser(req.user.id);
+    }
+  } catch { /* never fail logout */ }
   res.json({ message: 'Logged out successfully' });
 });
 
@@ -488,6 +480,9 @@ router.post('/reset-password', async (req, res) => {
 
     await db.collection('dashboard_users').doc(data.userId).update({ password_hash });
     await tokenDoc.ref.update({ used: true });
+    // A password reset must invalidate every existing session (a compromised
+    // account's stolen tokens are killed).
+    await refreshStore.revokeAllForUser(data.userId);
 
     res.json({ message: 'Password updated successfully. You can now log in.' });
   } catch (err) {
@@ -535,6 +530,8 @@ router.post('/me/change-password', authenticate, async (req, res) => {
     if (!match) return res.status(401).json({ error: 'Current password is incorrect.' });
     const password_hash = await bcrypt.hash(newPassword, 12);
     await ref.update({ password_hash, password_changed_at: new Date() });
+    // Invalidate all other sessions after a password change.
+    await refreshStore.revokeAllForUser(req.user.id);
     res.json({ success: true, message: 'Password updated.' });
   } catch (err) {
     log.error({ err: err.message }, 'change password error');

@@ -33,7 +33,18 @@ async function loadUserStatus(userId) {
     const doc = await getFirestore().collection('dashboard_users').doc(userId).get();
     if (!doc.exists) return { active: false };
     const data = doc.data();
-    const status = { active: data.is_active !== false, role: data.role, fetchedAt: Date.now() };
+    // Pull the live perm_* flags too, so a revoked permission takes effect at once
+    // (within the 60s cache) instead of lingering in the user's 8h access token.
+    const perms = {};
+    for (const k of Object.keys(data)) {
+      if (k.startsWith('perm_')) perms[k] = data[k] === true;
+    }
+    const status = {
+      active: data.is_active !== false,
+      role: data.role,
+      perms,
+      fetchedAt: Date.now(),
+    };
     userStatusCache.set(userId, status);
     return status;
   } catch (err) {
@@ -76,6 +87,15 @@ async function authenticate(req, res, next) {
     }
     // Prefer the live role over the JWT claim (defense against token-replay after demotion)
     if (status && status.role) decoded.role = status.role;
+    // Overwrite the token's perm_* claims with the LIVE flags from Firestore, so a
+    // permission revoked in the dashboard is enforced immediately (within the 60s
+    // cache) — not only after the 8h token expires.
+    if (status && status.perms) {
+      for (const k of Object.keys(decoded)) {
+        if (k.startsWith('perm_')) delete decoded[k];
+      }
+      Object.assign(decoded, status.perms);
+    }
   }
 
   req.user = decoded;

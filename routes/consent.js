@@ -78,9 +78,13 @@ router.post('/revoke', authenticate, async (req, res) => {
   try {
     const { student_id } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id required' });
-    // You may only revoke your own consent (admins/staff may revoke any).
-    const isStaff = !!(req.user && (req.user.role || req.user.perm_manage_compliance));
-    if (!isStaff && req.user?.id !== student_id) {
+    // Authorization: a student may revoke ONLY their own consent. Dashboard staff
+    // may revoke any — but only if they actually hold the compliance permission
+    // (NOT merely "has a role", which every token does — that made this check dead).
+    const isComplianceStaff = req.user?.perm_manage_compliance === true ||
+        req.user?.role === 'master_admin';
+    const isOwner = req.user?.id === student_id;
+    if (!isComplianceStaff && !isOwner) {
       return res.status(403).json({ error: 'You can only revoke your own consent' });
     }
     const db = getFirestore();
