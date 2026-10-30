@@ -45,6 +45,47 @@ router.get('/tree', async (req, res) => {
   }
 });
 
+
+// GET /subjects/:state — REAL subject tiles for the app Home screen, derived
+// from PUBLISHED AR assets (not the legacy `curriculum` node collection, which
+// is empty). State-scoped with the alias map, so a Gujarat student sees the
+// subjects that actually have content tagged for their state.
+router.get('/subjects/:state', async (req, res) => {
+  try {
+    const db = getFirestore();
+    const rawState = req.params.state || '';
+    const want = new Set(stateAliases(rawState));
+    const EMOJI = { science:'🔬', maths:'📐', mathematics:'📐', english:'📖',
+      hindi:'📘', 'social science':'🌍', history:'📜', geography:'🗺️',
+      biology:'🧬', physics:'⚛️', chemistry:'⚗️', 'computer science':'💻' };
+    let snap;
+    try {
+      snap = await db.collection('ar_assets').where('status', '==', 'published').limit(1000).get();
+    } catch (_) { return res.json({ success: true, subjects: [] }); }
+    const bySubject = {};
+    snap.docs.forEach(d => {
+      const a = d.data();
+      const ts = Array.isArray(a.target_states) ? a.target_states : [];
+      const inState = !ts.length || ts.some(x => { for (const al of stateAliases(x)) if (want.has(al)) return true; return false; });
+      if (!inState) return;
+      const subj = String(a.subject || '').trim();
+      if (!subj) return;
+      bySubject[subj] = (bySubject[subj] || 0) + 1;
+    });
+    const subjects = Object.entries(bySubject).map(([name, count]) => ({
+      name,
+      emoji: EMOJI[name.toLowerCase()] || '📚',
+      ar: count,
+      ar_topics_count: count,
+      progress: 0,
+    }));
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json({ success: true, subjects });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to build subjects', details: err.message });
+  }
+});
+
 router.post('/', requirePerm('perm_edit_curriculum'), async (req, res) => {
   try {
     const { parent_id, node_type, name, icon = '📘', sort_order = 0 } = req.body;
