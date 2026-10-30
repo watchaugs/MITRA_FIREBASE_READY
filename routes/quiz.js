@@ -44,9 +44,10 @@ router.get('/', async (req, res) => {
 });
 
 router.get('/:id', async (req, res, next) => {
-  // '/:id' is declared before '/analytics' and '/template', so Express sent those
-  // requests here and answered 404 "Quiz not found". Hand them on instead.
-  if (req.params.id === 'analytics' || req.params.id === 'template') return next();
+  // '/:id' is declared before '/analytics', '/template' and '/pack', so Express
+  // sent those requests here and answered 404 "Quiz not found". Hand them on.
+  if (req.params.id === 'analytics' || req.params.id === 'template' ||
+      req.params.id === 'pack') return next();
   try {
     const db  = getFirestore();
     const doc = await db.collection('quizzes').doc(req.params.id).get();
@@ -55,6 +56,51 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load quiz');
     res.status(500).json({ error: 'Failed to load quiz' });
+  }
+});
+
+// GET /pack/:state — offline quiz pack for the app. Returns every quiz VISIBLE
+// and RELEASED for the state, each with its questions inlined, in the shape the
+// app's quiz_pack_store expects: { quizzes: [ { id, questions: [...] } ] }.
+// This is the endpoint the app calls (QuizAPI.pack); it did not exist before,
+// so the app always got an empty pack → "No quiz yet".
+router.get('/pack/:state', async (req, res) => {
+  try {
+    const db = getFirestore();
+    const stateRaw = req.params.state === 'ALL' ? '' : req.params.state;
+    const snap = await db.collection('quizzes').limit(200).get();
+    let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    rows = visibleInState(rows, stateRaw)
+      .filter(q => LIVE_STATUSES.has(q.status) && isReleased(q, stateRaw || req.user?.state));
+    const quizzes = [];
+    for (const q of rows) {
+      let questions = [];
+      try {
+        const qs = await db.collection('quizzes').doc(q.id)
+          .collection('questions').orderBy('sort_order').get();
+        questions = qs.docs.map(d => {
+          const x = d.data();
+          const options = Array.isArray(x.options) ? x.options.map(o => String(o ?? '')) : [];
+          let correct_index = x.correct_index;
+          if (typeof correct_index !== 'number') {
+            const n = parseInt(correct_index, 10);
+            correct_index = Number.isNaN(n) ? 0 : n;
+          }
+          return {
+            question_text: x.question_text || x.text || x.question || '',
+            options,
+            correct_index,
+            explanation: x.explanation || '',
+          };
+        });
+      } catch (_) { /* a quiz with no questions subcollection → empty */ }
+      quizzes.push({ id: q.id, title: q.title || '', subject: q.subject || '', questions });
+    }
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json({ state: req.params.state, quizzes });
+  } catch (err) {
+    log.error({ err: err.message }, 'quiz pack build failed');
+    res.status(500).json({ error: 'Failed to build quiz pack' });
   }
 });
 

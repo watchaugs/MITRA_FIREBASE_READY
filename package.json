@@ -39,7 +39,9 @@
     "pizzip": "^3.1.7",
     "sharp": "^0.33.5",
     "uuid": "^9.0.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "draco3dgltf": "^1.5.9",
+    "@gltf-transform/extensions": "^4.4.1"
   },
   "devDependencies": {
     "eslint": "^8.57.0",

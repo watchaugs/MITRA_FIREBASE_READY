@@ -4,7 +4,7 @@ const multer  = require('multer');
 const path    = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
-const { compressGlb }  = require('../lib/draco');
+const { compressGlb, MODEL_SPECS } = require('../lib/draco');
 const { toGlb, needsConversion } = require('../lib/modelConvert');
 const storage          = require('../lib/storage');
 const { authenticate, requirePerm } = require('../middleware/auth');
@@ -101,6 +101,11 @@ router.get('/file/:name', async (req, res) => {
 
 router.use(authenticate);
 
+// GET /model-specs — recommended model specifications, shown in the dashboard
+// uploader so people export AR-safe models the first time (and returned in the
+// error when an upload is rejected for being unprocessable).
+router.get('/model-specs', (req, res) => res.json(MODEL_SPECS));
+
 router.post('/upload', requirePerm('perm_upload_unity'),
   (req, res, next) => arUpload.single('file')(req, res, err => err ? res.status(400).json({ error: err.message }) : next()),
   async (req, res) => {
@@ -142,7 +147,7 @@ router.post('/upload', requirePerm('perm_upload_unity'),
           : `/api/ar/file/${id}_native.glb`;
 
       } catch (convErr) {
-        return res.status(422).json({ error: 'Model conversion/compression failed', detail: convErr.message });
+        return res.status(422).json({ error: convErr.message || 'Model conversion/compression failed', detail: convErr.message, recommended_specs: MODEL_SPECS });
       }
     }
 
@@ -227,7 +232,7 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
       await storage.putRaw(compression.native, nativeKey, { contentType: 'model/gltf-binary' });
       native_url = process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${nativeKey}` : `/api/ar/file/${id}_native.glb`;
     } catch (compressionErr) {
-      return res.status(422).json({ error: 'GLB compression failed', detail: compressionErr.message });
+      return res.status(422).json({ error: compressionErr.message || 'Model could not be prepared for AR', detail: compressionErr.message, recommended_specs: MODEL_SPECS });
     }
 
     // Store an optional side file (image / audio / mind) and return its public URL.
