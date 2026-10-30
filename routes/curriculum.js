@@ -9,7 +9,7 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
-const { visibleInState, canAccessState } = require('../lib/stateScope');
+const { visibleInState, canAccessState, stateAliases } = require('../lib/stateScope');
 const { isAppCaller, isReleased } = require('../lib/release');
 const log = require('../lib/logger');
 router.use(authenticate);
@@ -119,8 +119,10 @@ async function buildStateManifest(db, stateCode, stateName) {
       .filter(a => {
         const ts = Array.isArray(a.target_states) ? a.target_states : [];
         if (!ts.length) return true; // national
-        const want = String(stateName || stateCode).trim().toUpperCase();
-        return ts.map(x => String(x).trim().toUpperCase()).includes(want);
+        // Alias-aware: a lesson tagged "GJ" matches a Gujarat manifest, and vice
+        // versa, so code/name/case differences no longer hide content.
+        const want = new Set([...stateAliases(stateName), ...stateAliases(stateCode)]);
+        return ts.some(x => { for (const al of stateAliases(x)) if (want.has(al)) return true; return false; });
       });
   } catch (_) {}
   const nrm = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
