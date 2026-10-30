@@ -19,6 +19,17 @@ const { runExport } = require('../lib/telemetry_exporter');
 
 router.use(authenticate);
 
+// ── State-scoping for data exports (Wave 2 H8) ────────────────────────────────
+// A state-scoped actor (one with a non-empty assigned_state) may export ONLY
+// their own state's data. master_admin and officers with no assigned_state
+// (national scope) may export anyone. Returns the state the caller is confined
+// to, or '' for national/unrestricted.
+function actorStateScope(req) {
+  if (req.user?.role === 'master_admin') return '';          // national
+  const s = (req.user?.assigned_state || '').trim();
+  return s;                                                  // '' => national
+}
+
 // ── Zeroed defaults (shown until the first Refresh populates the snapshot) ────
 const EMPTY = {
   overview:  { active_users: 0, avg_session_mins: 0, dropoff_pct: 0, offline_pct: 0, avg_replays: 0 },
@@ -311,6 +322,17 @@ router.get('/refresh-status', requirePerm('perm_view_analytics'), async (req, re
 // so the browser downloads straight from GCS (not through Cloud Run).
 router.post('/raw-export', requirePerm('perm_export_data'), async (req, res) => {
   try {
+    // H8: the full-table extract cannot be state-filtered (BigQuery extract jobs
+    // dump the whole table). A state-scoped actor must NOT pull every state's raw
+    // student telemetry, so they are blocked here and directed to /export, which
+    // filters by state. Only national scope (master_admin / no assigned_state)
+    // may run the raw full-table extract.
+    if (actorStateScope(req) !== '') {
+      return res.status(403).json({
+        ok: false,
+        error: 'Full raw export is national-scope only. Use the filtered export for your state.',
+      });
+    }
     const { BigQuery } = require('@google-cloud/bigquery');
     const { Storage }  = require('@google-cloud/storage');
     const PROJECT = process.env.GCP_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'watchaugs-mitra';
@@ -356,7 +378,16 @@ router.post('/raw-export', requirePerm('perm_export_data'), async (req, res) => 
 // it via lib/summary_report.js. Zero BigQuery at download. Run Refresh first.
 router.get('/report', requirePerm('perm_export_data'), async (req, res) => {
   try {
-    const scope = (req.query.scope && String(req.query.scope).trim()) || 'All India';
+    let scope = (req.query.scope && String(req.query.scope).trim()) || 'All India';
+    // H8: a state-scoped actor can only ever pull their own state's report,
+    // regardless of the scope they requested.
+    const stateScope = actorStateScope(req);
+    if (stateScope !== '') {
+      if (scope.toLowerCase() !== stateScope.toLowerCase() && scope !== 'All India') {
+        return res.status(403).json({ error: 'You may only export reports for your own state.' });
+      }
+      scope = stateScope; // force it — ignores 'All India' too
+    }
     const db = require('../lib/firebase').getFirestore();
     const doc = await db.collection('analytics_cache').doc('scope__' + slugScope(scope)).get();
     const payload = doc.exists ? doc.data() : null;
@@ -380,7 +411,18 @@ router.get('/report', requirePerm('perm_export_data'), async (req, res) => {
 // ── Export — raw rows straight from BigQuery (manual admin action) ────────────
 router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
   try {
-    const { format = 'xlsx', state = '', district = '', class_grade = '', subject = '', month = '' } = req.query;
+    let { format = 'xlsx', state = '', district = '', class_grade = '', subject = '', month = '' } = req.query;
+
+    // H8: confine a state-scoped actor to their own state. If they asked for a
+    // different state, reject; otherwise force the filter to their state so an
+    // empty/other state value can't widen the export.
+    const stateScope = actorStateScope(req);
+    if (stateScope !== '') {
+      if (state && state.toLowerCase() !== stateScope.toLowerCase()) {
+        return res.status(403).json({ error: 'You may only export data for your own state.' });
+      }
+      state = stateScope;
+    }
 
     const rows = await runQuery(`
       SELECT

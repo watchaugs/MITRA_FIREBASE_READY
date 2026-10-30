@@ -4597,7 +4597,7 @@ function handleQuizFileSelect(event) {
   quizUploadFile = event.target.files[0];
   if (quizUploadFile) {
     document.getElementById('quiz-upload-status').innerHTML =
-      `<span style="color:var(--accent3)">✓ Ready: <strong>${quizUploadFile.name}</strong> (${(quizUploadFile.size/1024).toFixed(1)} KB) — click Upload File to import</span>`;
+      `<span style="color:var(--accent3)">✓ Ready: <strong>${escHtml(quizUploadFile.name)}</strong> (${(quizUploadFile.size/1024).toFixed(1)} KB) — click Upload File to import</span>`;
     const btn = document.getElementById('quiz-upload-btn');
     btn.disabled = false;
     btn.style.opacity = '1';
@@ -5549,7 +5549,7 @@ function handleArFileSelect(event) {
   if (!file) return;
   arUploadFile = file;
   document.getElementById('ar-upload-status').innerHTML =
-    `<span style="color:var(--accent3)">✓ Ready: ${file.name} · ${(file.size/1024/1024).toFixed(2)} MB</span>`;
+    `<span style="color:var(--accent3)">✓ Ready: ${escHtml(file.name)} · ${(file.size/1024/1024).toFixed(2)} MB</span>`;
   document.getElementById('ar-upload-btn').style.display = 'inline-flex';
   const sab = document.getElementById('ar-save-apply-btn');
   if (sab) sab.style.display = 'inline-flex';
@@ -5568,7 +5568,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (file) {
       arUploadFile = file;
       document.getElementById('ar-upload-status').innerHTML =
-        `<span style="color:var(--accent3)">✓ Ready: ${file.name} · ${(file.size/1024/1024).toFixed(2)} MB</span>`;
+        `<span style="color:var(--accent3)">✓ Ready: ${escHtml(file.name)} · ${(file.size/1024/1024).toFixed(2)} MB</span>`;
       document.getElementById('ar-upload-btn').style.display = 'inline-flex';
     }
   });
@@ -5723,7 +5723,7 @@ async function submitArUpload() {
     if (res.ok) {
       const asset = data.asset || {};
       const modeTag = isAr3D ? (asset.mind_url ? ' · marker AR' : ' · overlay AR') : '';
-      statusEl.innerHTML = `<span style="color:var(--accent3)">✅ Uploaded: ${asset.title || data.original_name || arUploadFile.name} · ${cls} › ${subj} › ${topic}${modeTag}</span>`;
+      statusEl.innerHTML = `<span style="color:var(--accent3)">✅ Uploaded: ${escHtml(asset.title || data.original_name || arUploadFile.name)} · ${escHtml(cls)} › ${escHtml(subj)} › ${escHtml(topic)}${modeTag}</span>`;
       arUploadFile = null;
       document.getElementById('ar-upload-btn').style.display = 'none';
       const sab = document.getElementById('ar-save-apply-btn'); if (sab) sab.style.display = 'none';
@@ -6868,8 +6868,8 @@ async function loadNotifRecent() {
   el.innerHTML = data.data.map(n => {
     const statusColor = n.status === 'sent' ? '#6ee7b7' : n.status === 'scheduled' ? '#fbbf24' : '#94a3b8';
     return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px;border-radius:8px;background:var(--bg3);margin-bottom:6px;gap:8px">
-      <div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${n.title}</div>
-      <div style="font-size:10px;color:var(--text3)">${n.target_state || 'All States'}</div></div>
+      <div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(n.title)}</div>
+      <div style="font-size:10px;color:var(--text3)">${escHtml(n.target_state || 'All States')}</div></div>
       <div style="text-align:right;flex-shrink:0">
         <div style="font-size:10px;color:${statusColor}">${n.status}</div>
         <div style="font-size:10px;color:var(--text2)">${n.sent_at ? new Date(n.sent_at).toLocaleDateString('en-IN') : (n.scheduled_at ? '⏰ ' + new Date(n.scheduled_at).toLocaleDateString('en-IN') : '')}</div>
@@ -6902,7 +6902,7 @@ async function loadNotifHistory() {
     const ts = n.sent_at ? new Date(n.sent_at).toLocaleString('en-IN') : (n.scheduled_at ? '⏰ '+new Date(n.scheduled_at).toLocaleString('en-IN') : '—');
     const cancelBtn = n.status === 'scheduled' ? `<button class="btn btn-s" style="font-size:10px;padding:3px 8px" onclick="cancelNotif('${n.id}')">Cancel</button>` : '';
     return `<tr>
-      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${n.title}">${n.title}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(n.title)}">${escHtml(n.title)}</td>
       <td>${target}</td>
       <td>${dl}</td>
       <td><span class="${statusBadge}" ${n.error ? `title="${String(n.error).replace(/"/g, '&quot;')}"` : ''}>${n.status}</span></td>
@@ -7023,9 +7023,9 @@ async function loadAuditLogs() {
     return `<tr>
       <td>${rowNum}</td>
       <td style="font-family:monospace;font-size:10px">${log.user_id?.substring(0,12) || '—'}…</td>
-      <td>${log.email || '—'}</td>
-      <td><span class="tag" style="font-size:10px">${log.action}</span></td>
-      <td>${log.resource_type || '—'}</td>
+      <td>${escHtml(log.email || '—')}</td>
+      <td><span class="tag" style="font-size:10px">${escHtml(log.action)}</span></td>
+      <td>${escHtml(log.resource_type || '—')}</td>
       <td style="font-family:monospace;font-size:11px">${log.ip_address || '—'}</td>
       <td style="white-space:nowrap;font-size:11px">${ts}</td>
       <td style="font-size:10px;color:var(--text3);max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${log.details ? JSON.stringify(log.details) : ''}">${details}</td>
@@ -7229,10 +7229,10 @@ async function loadTenantFiles() {
     const st = f.build_status || f.status || 'building';
     const badge = statusBadge[st] || st;
     return `<tr>
-      <td><span style="font-weight:600">${f.app_name || 'MITRA'}</span></td>
-      <td>${f.target_state || f.state || '—'}</td>
-      <td><span class="tag tag-b">${f.platform || 'Android'}</span></td>
-      <td>${f.version_name || f.version || '—'}</td>
+      <td><span style="font-weight:600">${escHtml(f.app_name || 'MITRA')}</span></td>
+      <td>${escHtml(f.target_state || f.state || '—')}</td>
+      <td><span class="tag tag-b">${escHtml(f.platform || 'Android')}</span></td>
+      <td>${escHtml(f.version_name || f.version || '—')}</td>
       <td>${size}</td>
       <td>${f.skin_name || '—'}</td>
       <td>${f.primary_language || '—'}</td>
@@ -7474,11 +7474,11 @@ function renderUserTable(users) {
       : '<span class="tag" style="background:rgba(71,85,105,.3);color:var(--text2);font-size:9px">Inactive</span>';
     return `<tr style="${isSelected?'background:rgba(99,102,241,.08)':''}">
       <td><input type="checkbox" class="um-row-cb" data-id="${u.id}" ${isSelected?'checked':''} onchange="toggleUserSelect('${u.id}',this.checked)"></td>
-      <td><div style="font-weight:600;font-size:12px">${u.full_name}</div><div style="font-size:10px;color:var(--text2)">${u.designation||''}</div></td>
-      <td style="font-size:11px">${u.email}</td>
-      <td style="font-size:11px">${u.phone||'—'}</td>
-      <td>${ROLE_LABELS[u.role]||u.role}</td>
-      <td style="font-size:11px">${u.assigned_state||'—'}</td>
+      <td><div style="font-weight:600;font-size:12px">${escHtml(u.full_name)}</div><div style="font-size:10px;color:var(--text2)">${escHtml(u.designation||'')}</div></td>
+      <td style="font-size:11px">${escHtml(u.email)}</td>
+      <td style="font-size:11px">${escHtml(u.phone||'—')}</td>
+      <td>${escHtml(ROLE_LABELS[u.role]||u.role)}</td>
+      <td style="font-size:11px">${escHtml(u.assigned_state||'—')}</td>
       <td style="font-size:11px">${u.assigned_district||'—'}</td>
       <td>${statusBadge}</td>
       <td style="font-size:11px">${lastLogin}</td>
@@ -8300,9 +8300,9 @@ async function renderDPDPATracker() {
         <div style="font-size:18px;flex-shrink:0;">${ok ? '✅' : (crit ? '⛔' : '❌')}</div>
         <div style="flex:1;">
           <div style="font-weight:600;font-size:13px;color:${ok ? 'var(--green)' : 'var(--red)'};">
-            ${item.title}${item.severity ? ` <span style="font-size:9px;opacity:.7;text-transform:uppercase">· ${item.severity}</span>` : ''}
+            ${escHtml(item.title)}${item.severity ? ` <span style="font-size:9px;opacity:.7;text-transform:uppercase">· ${escHtml(item.severity)}</span>` : ''}
           </div>
-          <div style="font-size:11px;color:var(--text3);margin-top:2px;">${item.description || ''}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px;">${escHtml(item.description || '')}</div>
         </div>
       </div>`;
     }).join('');
