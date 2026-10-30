@@ -378,6 +378,20 @@ router.get('/data-export/:userId', requirePerm('perm_manage_compliance'), async 
   try {
     const db  = getFirestore();
     const uid = req.params.userId;
+
+    // State-scope: a non-national officer may only export a student in THEIR state.
+    // master_admin and officers with no assigned_state (national) may export anyone.
+    const actorState = (req.user?.assigned_state || '').trim().toLowerCase();
+    const isNational = req.user?.role === 'master_admin' || actorState === '';
+    if (!isNational) {
+      const studentDoc = await db.collection('app_users').doc(uid).get();
+      const studentState = (studentDoc.exists ? (studentDoc.data().assigned_state || '') : '')
+        .trim().toLowerCase();
+      if (studentState !== actorState) {
+        return res.status(403).json({ error: 'You may only export students in your own state.' });
+      }
+    }
+
     const [consentDoc, sessSnap, quizSnap] = await Promise.all([
       db.collection('consent_records').doc(uid).get(),
       db.collection('telemetry_sessions').where('student_id', '==', uid).limit(500).get(),

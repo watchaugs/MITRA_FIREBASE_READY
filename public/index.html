@@ -1068,10 +1068,10 @@ async function loadHomeDashboard() {
     const statusDot = s => s==='published'?'green':s==='review'?'yellow':'grey';
     arTbody.innerHTML = ar.data.map(a => `
       <tr>
-        <td style="font-size:12px">${a.title||a.name||'Untitled'}</td>
-        <td><span class="tag tag-b" style="font-size:10px">${a.subject||'—'}</span></td>
-        <td style="font-size:12px">${a.class_name||'—'}</td>
-        <td><span class="sdot ${statusDot(a.status)}"></span>${a.status||'—'}</td>
+        <td style="font-size:12px">${esc(a.title||a.name||'Untitled')}</td>
+        <td><span class="tag tag-b" style="font-size:10px">${esc(a.subject||'—')}</span></td>
+        <td style="font-size:12px">${esc(a.class_name||'—')}</td>
+        <td><span class="sdot ${statusDot(a.status)}"></span>${esc(a.status||'—')}</td>
       </tr>`).join('');
   } else if (arTbody) {
     arTbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text2);padding:12px">No AR assets yet</td></tr>';
@@ -1085,8 +1085,8 @@ async function loadHomeDashboard() {
     if (active.length) {
       geoList.innerHTML = active.map(g => `
         <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(30,45,74,.5)">
-          <span style="font-size:13px"><span class="sdot green"></span>${g.name}</span>
-          <span class="tag tag-g" style="font-size:10px">${g.district||g.state||'All India'}</span>
+          <span style="font-size:13px"><span class="sdot green"></span>${esc(g.name)}</span>
+          <span class="tag tag-g" style="font-size:10px">${esc(g.district||g.state||'All India')}</span>
         </div>`).join('');
     } else {
       geoList.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px">No active geofences</div>';
@@ -1099,8 +1099,8 @@ async function loadHomeDashboard() {
   if (notifTbody && notif?.data?.length) {
     notifTbody.innerHTML = notif.data.map(n => `
       <tr>
-        <td style="font-size:12px">${n.title||'Untitled'}</td>
-        <td style="font-size:11px">${n.target_state||'All'}</td>
+        <td style="font-size:12px">${esc(n.title||'Untitled')}</td>
+        <td style="font-size:11px">${esc(n.target_state||'All')}</td>
         <td style="font-size:11px;color:var(--text2)">${new Date(n.sent_at||n.created_at).toLocaleDateString('en-IN')}</td>
       </tr>`).join('');
   } else if (notifTbody) {

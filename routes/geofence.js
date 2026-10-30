@@ -3,6 +3,7 @@ const router = require('express').Router();
 const https  = require('https');
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
+const { stripFields } = require('../lib/writeGuard');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const log = require('../lib/logger');
 router.use(authenticate);
@@ -41,7 +42,8 @@ router.get('/', async (req, res) => {
 router.post('/', requirePerm('perm_manage_geo'), async (req, res) => {
   try {
     const id  = uuidv4();
-    const doc = { ...req.body, is_active: true, created_by: req.user.id, created_at: new Date() };
+    const safe = stripFields(req.body, ['id', 'created_by', 'created_at', 'is_active']);
+    const doc = { ...safe, is_active: true, created_by: req.user.id, created_at: new Date() };
     const db  = getFirestore();
     await db.collection('geofences').doc(id).set(doc);
     res.status(201).json({ id, ...doc });
@@ -51,8 +53,9 @@ router.post('/', requirePerm('perm_manage_geo'), async (req, res) => {
 router.put('/:id', requirePerm('perm_manage_geo'), async (req, res) => {
   try {
     const db = getFirestore();
-    await db.collection('geofences').doc(req.params.id).update({ ...req.body, updated_at: new Date() });
-    res.json({ id: req.params.id, ...req.body });
+    const safe = stripFields(req.body, ['id', 'created_by', 'created_at']);
+    await db.collection('geofences').doc(req.params.id).update({ ...safe, updated_at: new Date() });
+    res.json({ id: req.params.id, ...safe });
   } catch { res.status(500).json({ error: 'Failed to update geofence' }); }
 });
 

@@ -172,8 +172,10 @@ service cloud.firestore {
         (isTeacher() && isMyState('state')) ||
         (isDistrict() && isMyState('state'));
 
-      // Students submit attempts (mobile app auth)
-      allow create: if isAuth();
+      // Students submit ONLY their own attempts — the attempt's student_id must
+      // match the authenticated uid (prevents spoofing another student's data).
+      allow create: if isAuth() &&
+        request.resource.data.student_id == request.auth.uid;
 
       // No one can modify submitted attempts (data integrity)
       allow update: if false;

@@ -166,7 +166,7 @@ router.get('/manifest/:state', async (req, res) => {
       manifest = await buildStateManifest(db, stateKey, req.query.state_name || stateKey);
       try { await db.collection('curriculum_manifests').doc(stateKey).set(manifest); } catch (_) {}
     }
-    res.set('Cache-Control', 'public, max-age=3600'); // 1h at the edge/proxy
+    res.set('Cache-Control', 'public, max-age=60'); // 1 min — content updates propagate quickly
     res.json(manifest);
   } catch (err) {
     log.error({ err: err.message }, 'manifest build failed');

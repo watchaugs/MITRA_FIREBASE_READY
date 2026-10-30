@@ -99,6 +99,16 @@ router.get('/', requirePerm('perm_export_data'), async (req, res) => {
 router.get('/file/:key(*)', async (req, res) => {
   try {
     const key = decodeURIComponent(req.params.key);
+    // Path-traversal guard: confine to the uploads/ prefix, reject ../, backslashes,
+    // absolute paths, drive letters and null bytes. (Same protection as ar_assets.)
+    if (!key ||
+        key.includes('..') ||
+        key.includes('\\') ||
+        key.startsWith('/') ||
+        /^[a-zA-Z]:/.test(key) ||
+        key.includes('\0')) {
+      return res.status(400).json({ error: 'Bad file key' });
+    }
 
     // In production (GCS/R2), redirect to a direct URL so the bytes flow
     // storage → phone WITHOUT passing through (and being billed by) Cloud Run.

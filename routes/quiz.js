@@ -9,6 +9,7 @@ const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { visibleInState, parseTargetStates } = require('../lib/stateScope');
 const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
+const { stripFields } = require('../lib/writeGuard');
 const LIVE_STATUSES = new Set(['live', 'published']);
 const log = require('../lib/logger');
 router.use((req, res, next) => {
@@ -84,8 +85,11 @@ router.post('/', requirePerm('perm_edit_curriculum'), async (req, res) => {
 router.put('/:id', requirePerm('perm_edit_curriculum'), async (req, res) => {
   try {
     const db = getFirestore();
-    await db.collection('quizzes').doc(req.params.id).update({ ...req.body, updated_at: new Date() });
-    res.json({ id: req.params.id, ...req.body });
+    const safe = stripFields(req.body, [
+      'id', 'status', 'release', 'created_by', 'created_at', 'question_count', 'published_at',
+    ]);
+    await db.collection('quizzes').doc(req.params.id).update({ ...safe, updated_at: new Date() });
+    res.json({ id: req.params.id, ...safe });
   } catch { res.status(500).json({ error: 'Failed to update quiz' }); }
 });
 

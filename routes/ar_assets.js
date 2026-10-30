@@ -10,6 +10,7 @@ const storage          = require('../lib/storage');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { visibleInState, parseTargetStates } = require('../lib/stateScope');
 const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
+const { stripFields } = require('../lib/writeGuard');
 const log = require('../lib/logger');
 // NOTE: fs and UPLOAD_DIR removed — all file I/O now goes through lib/storage.js
 // In dev (no STORAGE_BUCKET set): files save to ./uploads/ on local disk
@@ -359,8 +360,16 @@ router.get('/assets/:id', async (req, res) => {
 router.put('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => {
   try {
     const db = getFirestore();
-    await db.collection('ar_assets').doc(req.params.id).update({ ...req.body, updated_at: new Date() });
-    res.json({ id: req.params.id, ...req.body });
+    // Never let an uploader set system/workflow fields via the body (status,
+    // release, ownership, URLs). Publishing/releasing have their own guarded routes.
+    const safe = stripFields(req.body, [
+      'id', 'status', 'release', 'uploaded_by', 'created_at', 'created_by',
+      'flutter_url', 'native_url', 'unity_url', 'file_size_mb', 'compression',
+      'published_at', 'published_by', 'submitted_by', 'submitted_at',
+      'release_updated_by', 'release_updated_at',
+    ]);
+    await db.collection('ar_assets').doc(req.params.id).update({ ...safe, updated_at: new Date() });
+    res.json({ id: req.params.id, ...safe });
   } catch { res.status(500).json({ error: 'Failed to update asset' }); }
 });
 
@@ -384,10 +393,21 @@ router.delete('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) 
   } catch (err) { log.error({ err: err.message }, 'AR asset delete failed'); res.status(500).json({ error: 'Failed to delete asset' }); }
 });
 
+// Clears cached state manifests so the app sees content changes on next launch.
+async function invalidateManifests(db) {
+  try {
+    const snap = await db.collection('curriculum_manifests').get();
+    const batch = db.batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  } catch (e) { /* non-fatal: manifests rebuild on demand */ }
+}
+
 router.post('/assets/:id/publish', requirePerm('perm_approve_content'), async (req, res) => {
   try {
     const db = getFirestore();
     await db.collection('ar_assets').doc(req.params.id).update({ status: 'published', updated_at: new Date() });
+    await invalidateManifests(db);
     res.json({ message: 'Asset published' });
   } catch { res.status(500).json({ error: 'Publish failed' }); }
 });
@@ -409,6 +429,7 @@ router.put('/assets/:id/release-state', requirePerm('perm_approve_content'), asy
     if (!doc.exists) return res.status(404).json({ error: 'Asset not found' });
     const release = cleanRelease(mergeStateRelease(doc.data().release, req.body?.state, req.body?.value));
     await ref.update({ release, release_updated_by: req.user.id, release_updated_at: new Date() });
+    await invalidateManifests(db);
     res.json({ success: true, id: req.params.id, release });
   } catch (err) {
     res.status(400).json({ error: err.message || 'Could not save release' });

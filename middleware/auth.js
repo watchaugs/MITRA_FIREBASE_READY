@@ -148,10 +148,19 @@ const ROLE_RANK = {
 };
 function canGrantRole(actorRole, targetRole) {
   if (!targetRole) return true;
-  const a = ROLE_RANK[actorRole] || 0;
-  const t = ROLE_RANK[targetRole] || 0;
+  // Reject any role not in the known set (an unknown string otherwise mapped to
+  // rank 0 and was grantable by anyone with user-create).
+  if (!Object.prototype.hasOwnProperty.call(ROLE_RANK, targetRole)) return false;
+  if (!Object.prototype.hasOwnProperty.call(ROLE_RANK, actorRole)) return false;
+  // Only a master_admin may grant master_admin.
   if (targetRole === 'master_admin' && actorRole !== 'master_admin') return false;
-  return a >= t;
+  const a = ROLE_RANK[actorRole];
+  const t = ROLE_RANK[targetRole];
+  // STRICT: the actor must OUTRANK the target (no lateral grants to an equal rank,
+  // e.g. admin→superadmin, which are both 80). master_admin may grant anything
+  // at/below itself.
+  if (actorRole === 'master_admin') return true;
+  return a > t;
 }
 
 module.exports = {

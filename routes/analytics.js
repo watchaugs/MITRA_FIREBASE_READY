@@ -276,25 +276,25 @@ router.get('/replay', requirePerm('perm_view_analytics'), async (req, res) => {
 });
 
 // ── Location breakdown (from snapshot) ────────────────────────────────────────
-router.get('/location', async (req, res) => {
+router.get('/location', requirePerm('perm_view_analytics'), async (req, res) => {
   const snap = await readSnapshot();
   res.json((snap && snap.location) || EMPTY.location);
 });
 
 // ── Classroom analytics (from snapshot) ───────────────────────────────────────
-router.get('/classroom', async (req, res) => {
+router.get('/classroom', requirePerm('perm_view_analytics'), async (req, res) => {
   const snap = await readSnapshot();
   res.json((snap && snap.classroom) || EMPTY.classroom);
 });
 
 // ── Predictive analytics (from snapshot) ──────────────────────────────────────
-router.get('/predictive', async (req, res) => {
+router.get('/predictive', requirePerm('perm_view_analytics'), async (req, res) => {
   const snap = await readSnapshot();
   res.json((snap && snap.predictive) || EMPTY.predictive);
 });
 
 // ── Telemetry summary (from snapshot) ─────────────────────────────────────────
-router.get('/telemetry/summary', async (req, res) => {
+router.get('/telemetry/summary', requirePerm('perm_view_analytics'), async (req, res) => {
   const snap = await readSnapshot();
   res.json((snap && snap.telemetry_summary) || EMPTY.telemetry_summary);
 });
