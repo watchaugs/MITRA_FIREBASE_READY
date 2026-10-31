@@ -4,7 +4,7 @@ const multer  = require('multer');
 const path    = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
-const { compressGlb, MODEL_SPECS } = require('../lib/draco');
+const { compressGlb, MODEL_SPECS, estimateOutputs, QUALITY_PRESETS } = require('../lib/draco');
 const { toGlb, needsConversion } = require('../lib/modelConvert');
 const storage          = require('../lib/storage');
 const { authenticate, requirePerm } = require('../middleware/auth');
@@ -105,6 +105,27 @@ router.use(authenticate);
 // uploader so people export AR-safe models the first time (and returned in the
 // error when an upload is rejected for being unprocessable).
 router.get('/model-specs', (req, res) => res.json(MODEL_SPECS));
+
+// POST /estimate — dry run. Upload the model, get predicted output per quality
+// level (triangles, approx MB, peak memory) WITHOUT storing or publishing
+// anything. Powers the "preview before upload" dropdown. Fast: triangle math
+// only, no compression.
+router.post('/estimate', requirePerm('perm_upload_unity'),
+  (req, res, next) => arUpload.single('model')(req, res, err => err ? res.status(400).json({ error: err.message }) : next()),
+  (req, res) => {
+    const model = req.file;
+    if (!model) return res.status(400).json({ error: 'No model file uploaded' });
+    const ext = path.extname(model.originalname).toLowerCase();
+    if (ext !== '.glb' && ext !== '.gltf') {
+      return res.status(400).json({ error: 'Model must be .glb/.gltf (convert FBX/OBJ in the browser first)' });
+    }
+    try {
+      const est = estimateOutputs(model.buffer);
+      res.json({ ok: true, filename: model.originalname, quality_presets: QUALITY_PRESETS, ...est });
+    } catch (e) {
+      res.status(422).json({ error: e.message || 'Could not analyze model', recommended_specs: MODEL_SPECS });
+    }
+  });
 
 router.post('/upload', requirePerm('perm_upload_unity'),
   (req, res, next) => arUpload.single('file')(req, res, err => err ? res.status(400).json({ error: err.message }) : next()),
@@ -221,7 +242,7 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
 
     let compression = null, unity_url = null, flutter_url = null, native_url = null;
     try {
-      compression = await compressGlb(model.buffer);
+      compression = await compressGlb(model.buffer, { quality: req.body.quality });
       // Only the lite GLB is served to the app (unity_url retired).
       const flutterKey = `ar_assets/${id}_lite.glb`;
       await storage.putRaw(compression.flutter, flutterKey, { contentType: 'model/gltf-binary' });

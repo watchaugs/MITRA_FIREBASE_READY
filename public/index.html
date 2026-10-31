@@ -2105,6 +2105,20 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     </div>
 
+    <!-- Model quality / compression preview -->
+    <div id="ar-quality-block" style="display:none;margin-bottom:12px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg2)">
+      <label class="lbl" style="display:flex;align-items:center;justify-content:space-between">
+        <span>🎚️ Model quality (compression level)</span>
+        <span id="ar-quality-analyzing" style="font-weight:400;color:var(--text2);font-size:12px"></span>
+      </label>
+      <select class="inp" id="ar-up-quality" onchange="renderQualityPreview()" style="margin-top:6px">
+        <option value="high">High detail — crispest, largest</option>
+        <option value="medium" selected>Balanced — recommended</option>
+        <option value="low">Light — best for budget phones</option>
+      </select>
+      <div id="ar-quality-preview" style="margin-top:10px;font-size:13px;color:var(--text2);line-height:1.7"></div>
+    </div>
+
     <!-- AR pipeline extras (optional) — page image enables marker AR, audio adds narration -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
       <div>
@@ -5602,6 +5616,7 @@ function handleArFileSelect(event) {
   document.getElementById('ar-upload-btn').style.display = 'inline-flex';
   const sab = document.getElementById('ar-save-apply-btn');
   if (sab) sab.style.display = 'inline-flex';
+  requestQualityEstimate(file);
 }
 
 // Allow drag-and-drop on the AR upload zone
@@ -5662,6 +5677,64 @@ function ensureArEngines() {
 // Pre-warm the engines as soon as a page image is chosen.
 function handleArExtraSelect(kind, ev) {
   if (kind === 'image' && ev.target.files[0]) ensureArEngines().catch(() => {});
+}
+
+// ── Model quality preview ("fast estimate, exact on confirm") ───────────────
+let _arEstimate = null;
+async function requestQualityEstimate(file) {
+  _arEstimate = null;
+  const ext = _arExt(file.name);
+  const block = document.getElementById('ar-quality-block');
+  // Only GLB/GLTF can be analyzed server-side. FBX/OBJ/ZIP are converted in the
+  // browser first, so we estimate after that conversion isn't available here —
+  // just show the picker without a preview for those.
+  if (!['.glb', '.gltf'].includes(ext)) { if (block) block.style.display = 'none'; return; }
+  if (block) block.style.display = 'block';
+  const analyzing = document.getElementById('ar-quality-analyzing');
+  const previewEl = document.getElementById('ar-quality-preview');
+  if (analyzing) analyzing.textContent = 'Analyzing…';
+  if (previewEl) previewEl.innerHTML = '';
+  try {
+    const fd = new FormData();
+    fd.append('model', file, file.name);
+    const token = localStorage.getItem('mitra_token') || '';
+    const res = await fetch('/api/ar/estimate', {
+      method: 'POST',
+      headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (analyzing) analyzing.textContent = '';
+    if (!res.ok) {
+      if (previewEl) previewEl.innerHTML = `<span style="color:var(--danger)">${escHtml(data.error || 'Could not analyze model')}</span>`;
+      return;
+    }
+    _arEstimate = data;
+    renderQualityPreview();
+  } catch (e) {
+    if (analyzing) analyzing.textContent = '';
+    if (previewEl) previewEl.innerHTML = `<span style="color:var(--danger)">Analysis failed — network error</span>`;
+  }
+}
+
+function renderQualityPreview() {
+  const previewEl = document.getElementById('ar-quality-preview');
+  if (!previewEl || !_arEstimate) return;
+  const q = document.getElementById('ar-up-quality')?.value || 'medium';
+  const p = _arEstimate.presets[q];
+  const inp = _arEstimate.input;
+  if (!p) return;
+  const warnPeak = _arEstimate.est_peak_memory_mb > 850;
+  const overLimit = !_arEstimate.within_limits;
+  previewEl.innerHTML = `
+    <div><b>Original:</b> ${inp.size_mb} MB · ${inp.triangles.toLocaleString()} triangles · ${inp.meshes} mesh(es)</div>
+    <div style="margin-top:4px"><b>After “${escHtml(p.label)}”:</b>
+      ~${p.est_native_mb} MB · ~${p.est_output_tris.toLocaleString()} triangles
+      <span style="color:var(--text2)">(${Math.round(p.ratio * 100)}% kept)</span></div>
+    ${p.ratio < 1 ? `<div style="color:var(--accent4);margin-top:4px">✓ Will be auto-decimated on upload — no Blender needed.</div>` : `<div style="color:var(--accent3);margin-top:4px">✓ Already within target — uploaded near full detail.</div>`}
+    ${warnPeak && !overLimit ? `<div style="color:var(--accent4);margin-top:4px">⚠ Large model — processing peaks ~${_arEstimate.est_peak_memory_mb} MB on the server. It will still work.</div>` : ''}
+    ${overLimit ? `<div style="color:var(--danger);margin-top:4px">✗ ${escHtml(_arEstimate.note)}</div>` : ''}
+    <div style="color:var(--text2);margin-top:4px;font-size:12px">Final size is confirmed exactly after you upload.</div>`;
 }
 
 const AR3D_FORMATS = ['.glb', '.gltf', '.fbx', '.obj'];
@@ -5735,6 +5808,7 @@ async function submitArUpload() {
       if (videoFile) formData.append('video', videoFile, videoFile.name);
       formData.append('chroma_enabled', document.getElementById('ar-up-chroma')?.checked ? 'true' : 'false');
       formData.append('chroma_color', document.getElementById('ar-up-chroma-color')?.value || '#00ff00');
+      formData.append('quality', document.getElementById('ar-up-quality')?.value || 'medium');
       endpoint = '/api/ar/upload-rich';
     } else {
       // ── Existing Unity bundle path — unchanged ──
