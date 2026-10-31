@@ -64,7 +64,11 @@ service cloud.firestore {
     // Class may change only if the lock is absent or older than 90 days,
     // and the write must stamp class_locked_at to the server time.
     function classChangeAllowed() {
-      return request.resource.data.class_grade == resource.data.class_grade
+      // If the update doesn't touch class_grade at all (e.g. a language/name/
+      // avatar edit), it is always allowed — the class lock only governs class
+      // CHANGES, not every profile write. (A missing key means "unchanged".)
+      return !('class_grade' in request.resource.data)
+        || request.resource.data.class_grade == resource.data.class_grade
         || (
              (
                !('class_locked_at' in resource.data)
