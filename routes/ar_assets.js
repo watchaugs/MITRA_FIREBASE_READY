@@ -252,6 +252,12 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
       const nativeKey = `ar_assets/${id}_native.glb`;
       await storage.putRaw(compression.native, nativeKey, { contentType: 'model/gltf-binary' });
       native_url = process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${nativeKey}` : `/api/ar/file/${id}_native.glb`;
+
+      // Keep the ORIGINAL uploaded GLB too, so a future backfill / re-process can
+      // rebuild any tier from the true source (not from an already-simplified
+      // derivative). Costs a little storage; saves a lot of rework later.
+      const originalKey = `ar_assets/${id}_original.glb`;
+      await storage.putRaw(model.buffer, originalKey, { contentType: 'model/gltf-binary' });
     } catch (compressionErr) {
       return res.status(422).json({ error: compressionErr.message || 'Model could not be prepared for AR', detail: compressionErr.message, recommended_specs: MODEL_SPECS });
     }
