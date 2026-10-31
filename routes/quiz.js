@@ -70,6 +70,7 @@ router.get('/pack/:state', async (req, res) => {
     const stateRaw = req.params.state === 'ALL' ? '' : req.params.state;
     const snap = await db.collection('quizzes').limit(200).get();
     let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // State gate + live + released (same rules as the list endpoint).
     rows = visibleInState(rows, stateRaw)
       .filter(q => LIVE_STATUSES.has(q.status) && isReleased(q, stateRaw || req.user?.state));
     const quizzes = [];
@@ -80,16 +81,28 @@ router.get('/pack/:state', async (req, res) => {
           .collection('questions').orderBy('sort_order').get();
         questions = qs.docs.map(d => {
           const x = d.data();
+          // Normalise to the app's expected field names.
           const options = Array.isArray(x.options) ? x.options.map(o => String(o ?? '')) : [];
-          let correct_index = x.correct_index;
-          if (typeof correct_index !== 'number') {
-            const n = parseInt(correct_index, 10);
-            correct_index = Number.isNaN(n) ? 0 : n;
+          // The dashboard stores the correct answer as `correct_answer_index`
+          // (the individual-quiz creator writes exactly this). Earlier this code
+          // only read `correct_index`, which never existed → every question
+          // defaulted to 0 (option A). Read every known field, then fall back to
+          // a letter answer (A/B/C/D) if that's how it was stored.
+          let ci = x.correct_answer_index;
+          if (typeof ci !== 'number') ci = x.correct_index;
+          if (typeof ci !== 'number') ci = x.correctIndex;
+          if (typeof ci !== 'number') {
+            const letter = String(x.answer ?? x.correct ?? x.Answer ?? '').trim().toUpperCase();
+            const li = ['A', 'B', 'C', 'D'].indexOf(letter);
+            ci = li >= 0 ? li : parseInt(ci, 10);
           }
+          if (typeof ci !== 'number' || Number.isNaN(ci) || ci < 0) ci = 0;
+          // Clamp to the available options so a bad value can't crash the app.
+          if (options.length && ci >= options.length) ci = 0;
           return {
             question_text: x.question_text || x.text || x.question || '',
             options,
-            correct_index,
+            correct_index: ci,
             explanation: x.explanation || '',
           };
         });
