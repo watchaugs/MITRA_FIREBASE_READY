@@ -437,6 +437,50 @@ router.post('/incident-report', requirePerm('perm_manage_compliance'), async (re
     res.status(500).json({ error: 'Incident report failed' });
   }
 });
+// ── GET /data-requests ── the queue of erasure/export requests students filed
+// from the APP (DPDPA rights of the data principal). Admins MUST see these to
+// action them within the DPDPA timeline. Optional ?status=pending filter.
+router.get('/data-requests', requirePerm('perm_manage_compliance'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const snap = await db.collection('data_requests').limit(500).get();
+    const statusFilter = (req.query.status || '').trim();
+    const toMs = (v) => (v && v.toDate ? v.toDate().getTime() : new Date(v || 0).getTime());
+    let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (statusFilter) rows = rows.filter(r => (r.status || 'pending') === statusFilter);
+    rows.sort((a, b) => toMs(a.requested_at) - toMs(b.requested_at));
+    const pending = rows.filter(r => (r.status || 'pending') === 'pending').length;
+    res.json({ requests: rows, total: rows.length, pending });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to load data requests');
+    res.status(500).json({ error: 'Failed to load data requests' });
+  }
+});
+
+// ── POST /data-requests/:id/action ── mark a request actioned/closed, with who
+// and when, for the audit trail. Does NOT itself erase/export — the admin uses
+// the existing purge/export tools for that; this closes the queue item.
+router.post('/data-requests/:id/action', requirePerm('perm_manage_compliance'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const newStatus = (req.body.status || 'actioned').trim();
+    const allowed = ['pending', 'actioned', 'rejected'];
+    if (!allowed.includes(newStatus)) {
+      return res.status(400).json({ error: 'status must be one of ' + allowed.join(', ') });
+    }
+    await db.collection('data_requests').doc(req.params.id).set({
+      status: newStatus,
+      actioned_by: req.user.id,
+      actioned_at: new Date(),
+      action_note: (req.body.note || '').toString().slice(0, 500),
+    }, { merge: true });
+    res.json({ success: true, id: req.params.id, status: newStatus });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to action data request');
+    res.status(500).json({ error: 'Failed to action data request' });
+  }
+});
+
 router.get('/consent-counts', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
     const db   = getFirestore();

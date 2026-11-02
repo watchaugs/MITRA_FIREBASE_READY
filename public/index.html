@@ -625,8 +625,6 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 
 
 
-<
-
 <!-- ════════════════ EDIT USER MODAL (Redesigned) ════════════════ -->
 <style>
   /* Sleek styling specifically for this popup to match your screenshot */
@@ -1096,8 +1094,8 @@ async function loadHomeDashboard() {
     if (active.length) {
       geoList.innerHTML = active.map(g => `
         <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(30,45,74,.5)">
-          <span style="font-size:13px"><span class="sdot green"></span>${esc(g.name)}</span>
-          <span class="tag tag-g" style="font-size:10px">${esc(g.district||g.state||'All India')}</span>
+          <span style="font-size:13px"><span class="sdot green"></span>${escHtml(g.name)}</span>
+          <span class="tag tag-g" style="font-size:10px">${escHtml(g.district||g.state||'All India')}</span>
         </div>`).join('');
     } else {
       geoList.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px">No active geofences</div>';
@@ -1110,8 +1108,8 @@ async function loadHomeDashboard() {
   if (notifTbody && notif?.data?.length) {
     notifTbody.innerHTML = notif.data.map(n => `
       <tr>
-        <td style="font-size:12px">${esc(n.title||'Untitled')}</td>
-        <td style="font-size:11px">${esc(n.target_state||'All')}</td>
+        <td style="font-size:12px">${escHtml(n.title||'Untitled')}</td>
+        <td style="font-size:11px">${escHtml(n.target_state||'All')}</td>
         <td style="font-size:11px;color:var(--text2)">${new Date(n.sent_at||n.created_at).toLocaleDateString('en-IN')}</td>
       </tr>`).join('');
   } else if (notifTbody) {
@@ -1488,6 +1486,29 @@ document.addEventListener('DOMContentLoaded', () => {
       <button id="btn-refresh-analytics" class="btn btn-g" onclick="refreshAnalyticsSnapshot()" title="Recompute analytics from the data warehouse — run once or twice a month">🔄 Refresh data</button>
       <span id="an-refreshed-label" style="align-self:center;font-size:11px;color:var(--text2)">—</span>
       <div id="raw-export-panel" style="display:none;flex-basis:100%;margin-top:8px"></div>
+    </div>
+    <style>
+      .freshness-bar { display:flex; gap:12px; flex-wrap:wrap; margin:8px 0 4px; font-size:13px; }
+      .fresh-chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px;
+        border:1px solid var(--border, #e2e8f0); border-radius:999px;
+        background:var(--card2, #f8fafc); color:var(--text, #334155); }
+      .fresh-chip .fresh-dot { width:8px; height:8px; border-radius:50%; background:#94a3b8; flex:0 0 auto; }
+      .fresh-chip.is-fresh   .fresh-dot { background:#16a34a; }
+      .fresh-chip.is-stale   .fresh-dot { background:#f59e0b; }
+      .fresh-chip.is-unknown .fresh-dot { background:#94a3b8; }
+      .fresh-chip .fresh-note { color:var(--text2, #94a3b8); margin-left:2px; }
+    </style>
+    <!-- Data freshness: two sync tiers, so a 10-day-old engagement number isn't misread as a dead app -->
+    <div id="freshnessBar" class="freshness-bar" style="display:none;">
+      <span class="fresh-chip" id="freshCritical" title="Compliance &amp; session data syncs about every 12 hours">
+        <span class="fresh-dot"></span>
+        <span class="fresh-text">Compliance &amp; sessions: <b id="freshCriticalAgo">—</b></span>
+      </span>
+      <span class="fresh-chip" id="freshEngagement" title="Engagement data (AR, screens, quizzes) syncs every 10 days + at month-end, so it can be up to 10 days behind by design">
+        <span class="fresh-dot"></span>
+        <span class="fresh-text">Engagement: <b id="freshEngagementAgo">—</b></span>
+        <span class="fresh-note">(10-day + month-end cadence)</span>
+      </span>
     </div>
   </div>
 
@@ -2538,7 +2559,7 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>
 
   <!-- Bulk Action Bar -->
-  <div id="um-bulk-bar" style="display:none;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+  <div id="um-bulk-bar" style="display:none;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);border-radius:10px;padding:10px 16px;margin-bottom:12px;align-items:center;gap:12px;flex-wrap:wrap">
     <span id="um-selected-count" style="font-size:12px;font-weight:600">0 selected</span>
     <select class="sel" id="um-bulk-role" style="font-size:11px;padding:4px 8px">
       <option value="">Change Role…</option>
@@ -3050,26 +3071,26 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>  
 
   <style>
-      input:checked + span { background-color: #10b981 !important; }
-      input:checked + span + .slider-dot { transform: translateX(20px); }
+      #dpo-command-center input:checked + span { background-color: #10b981 !important; }
+      #dpo-command-center input:checked + span + .slider-dot { transform: translateX(20px); }
   </style>
 
   <!-- COMPLIANCE SCORE BANNER -->
   <div style="background:linear-gradient(135deg,rgba(16,185,129,.08),rgba(99,102,241,.08));border:1px solid rgba(16,185,129,.2);border-radius:var(--radius-lg);padding:20px;margin-bottom:20px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
     <div style="text-align:center;min-width:80px">
-      <div id="compliance-score" style="font-family:'Syne',sans-serif;font-size:42px;font-weight:800;color:var(--accent3)">68%</div>
+      <div id="compliance-score" style="font-family:'Syne',sans-serif;font-size:42px;font-weight:800;color:var(--accent3)">—</div>
       <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Compliance Score</div>
       <div id="compliance-score-detail" style="font-size:10px;color:var(--text2);margin-top:2px"></div>
     </div>
     <div style="flex:1;min-width:200px">
       <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-        <span class="tag" id="compliance-tag-critical" style="background:rgba(239,68,68,.15);color:#fca5a5">4 Critical</span>
-        <span class="tag" id="compliance-tag-high" style="background:rgba(245,158,11,.15);color:#fcd34d">6 High</span>
-        <span class="tag" id="compliance-tag-medium" style="background:rgba(99,102,241,.15);color:#a5b4fc">8 Medium</span>
-        <span class="tag tag-g" id="compliance-tag-resolved">6 Resolved</span>
+        <span class="tag" id="compliance-tag-critical" style="background:rgba(239,68,68,.15);color:#fca5a5">— Critical</span>
+        <span class="tag" id="compliance-tag-high" style="background:rgba(245,158,11,.15);color:#fcd34d">— High</span>
+        <span class="tag" id="compliance-tag-medium" style="background:rgba(99,102,241,.15);color:#a5b4fc">— Medium</span>
+        <span class="tag tag-g" id="compliance-tag-resolved">— Resolved</span>
       </div>
       <div style="background:var(--bg3);border-radius:6px;height:10px;overflow:hidden">
-        <div id="compliance-score-bar" style="width:68%;height:100%;background:linear-gradient(90deg,var(--accent3),var(--accent));border-radius:6px"></div>
+        <div id="compliance-score-bar" style="width:0%;height:100%;background:linear-gradient(90deg,var(--accent3),var(--accent));border-radius:6px;transition:width .4s"></div>
       </div>
       <div style="font-size:11px;color:var(--text2);margin-top:6px">Based on DPDPA 2023 · IT Act 2000 · CERT-In 2022 · SPDI Rules 2011</div>
     </div>
@@ -3294,6 +3315,16 @@ document.addEventListener('DOMContentLoaded', () => {
         <input class="inp" id="purge-user-id" placeholder="Student ID (Firebase UID)" style="margin-bottom:6px">
         <input class="inp" id="purge-reason" placeholder="Reason (e.g. parent's written request, ref no.)" style="margin-bottom:8px">
         <button class="btn btn-r btn-sm" onclick="hardDeleteUser()">Erase permanently</button>
+      </div>
+      <div style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;grid-column:1/-1">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="font-size:13px;font-weight:600">📨 Student data requests
+            <span class="tag" id="dr-pending-badge" style="background:rgba(245,158,11,.15);color:#fcd34d;margin-left:6px">— pending</span>
+          </div>
+          <button class="btn btn-s btn-sm" onclick="loadDataRequests()">🔄 Refresh</button>
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Erasure &amp; data-copy requests students filed from the app. DPDPA requires you to action these within the response window — oldest shown first.</div>
+        <div id="data-requests-list"><div style="font-size:12px;color:var(--text2);padding:8px">Click Refresh to load…</div></div>
       </div>
       <div style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
         <div style="font-size:13px;font-weight:600;margin-bottom:6px">♻️ Auto-purge inactive students (12+ months)</div>
@@ -3699,29 +3730,39 @@ document.addEventListener('click', function(event) {
 function doLogout() {
   closeUserMenu();
 
-  // CRITICAL: Remove token so page refresh cannot auto-login
-  localStorage.removeItem('mitra_token');
-  localStorage.removeItem('mitra_refresh_token');
-  localStorage.removeItem('mitra_user');
-
-  // Tell the server to revoke the session
+  // SECURITY: read the refresh token BEFORE clearing storage, and revoke the
+  // session server-side (with auth header) so the token can't be reused. The
+  // old code removed the token first, so this call never fired.
   const rt = localStorage.getItem('mitra_refresh_token');
+  const at = localStorage.getItem('mitra_token');
   if (rt) {
     fetch('/api/auth/logout', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: rt })
+      headers: {
+        'Content-Type': 'application/json',
+        ...(at ? { 'Authorization': 'Bearer ' + at } : {})
+      },
+      body: JSON.stringify({ refresh_token: rt }),
+      keepalive: true
     }).catch(() => {});
   }
 
-  // Show the login screen
+  // Now clear local session (keep theme + other prefs — don't wipe everything).
+  ['mitra_token', 'mitra_refresh_token', 'mitra_user',
+   'mitra_permissions', 'mitra_role', 'userId']
+    .forEach(k => localStorage.removeItem(k));
+
+  // Hide the dashboard behind the login overlay so the previous user's data
+  // isn't left in the DOM under the login screen.
+  const dash = document.getElementById('mitra-dashboard-main');
+  if (dash) dash.style.display = 'none';
+
   const loginOverlay = document.getElementById('mitra-login-overlay');
   if (loginOverlay) {
     loginOverlay.classList.remove('hidden');
     loginOverlay.style.display = 'flex';
   }
 
-  // Clear login fields
   const passInput = document.getElementById('login-pass');
   if (passInput) passInput.value = '';
   const emailInput = document.getElementById('login-email');
@@ -3929,6 +3970,47 @@ function setRefreshedLabel(iso) {
     el.textContent = 'Updated: ' +
       new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
   } catch (_) { el.textContent = 'Updated: ' + iso; }
+}
+
+// ── Data freshness: show how current each telemetry tier actually is ──────────
+// Engagement data rides a 10-day + month-end cadence by design, so without this
+// a reviewer could read a legitimately 9-day-old number as a dead app.
+function _freshAgoText(iso) {
+  if (!iso) return { text: 'no data yet', cls: 'is-unknown' };
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return { text: 'unknown', cls: 'is-unknown' };
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 60) return { text: mins + ' min ago', raw: mins };
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return { text: hrs + ' h ago', raw: mins };
+  return { text: Math.round(hrs / 24) + ' days ago', raw: mins };
+}
+
+async function loadDataFreshness() {
+  const bar = document.getElementById('freshnessBar');
+  if (!bar) return;
+  const r = await safeFetch('/api/analytics/data-freshness', { silent: true });
+  if (!r || !r.ok || !r.tiers) return;
+  bar.style.display = 'flex';
+
+  // Critical tier: "fresh" while within ~24h (12h cadence + a day of slack).
+  const c = r.tiers.critical || {};
+  const ca = _freshAgoText(c.last_synced);
+  const cAgo = document.getElementById('freshCriticalAgo');
+  if (cAgo) cAgo.textContent = ca.text;
+  const cChip = document.getElementById('freshCritical');
+  if (cChip) cChip.className = 'fresh-chip ' +
+    (ca.cls || (ca.raw != null && ca.raw <= 24 * 60 ? 'is-fresh' : 'is-stale'));
+
+  // Engagement tier: up to 10 days behind BY DESIGN → "fresh" dot while within
+  // ~11 days (10-day cadence + a day of slack); amber only if older than that.
+  const e = r.tiers.engagement || {};
+  const ea = _freshAgoText(e.last_synced);
+  const eAgo = document.getElementById('freshEngagementAgo');
+  if (eAgo) eAgo.textContent = ea.text;
+  const eChip = document.getElementById('freshEngagement');
+  if (eChip) eChip.className = 'fresh-chip ' +
+    (ea.cls || (ea.raw != null && ea.raw <= 11 * 24 * 60 ? 'is-fresh' : 'is-stale'));
 }
 
 function switchAnTab(tabId, btn) {
@@ -4159,6 +4241,7 @@ async function initAllCharts(force) {
     ? top(s.predictive).map(r => `<tr><td>${esc(r.topic)}</td><td><span style="color:var(--red)">${n(r.drop_offs).toLocaleString('en-IN')}</span></td><td>${r.time_spent != null ? n(r.time_spent) + ' min' : '—'}</td></tr>`).join('')
     : `<tr><td colspan="3" style="text-align:center;color:var(--text2);padding:16px">${emptyMsg}</td></tr>`;
   setRefreshedLabel(s.refreshed_at || null);
+  loadDataFreshness();
 }
 
 
@@ -5058,6 +5141,15 @@ function escHtml(str) {
   if (!str) return '';
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+// For a value placed INSIDE an inline handler string — onclick="fn('...')":
+// JS-escape (backslash, quote, newline) first, THEN HTML-escape, so a name like
+// "Newton's Laws" can't break out of the quotes or inject markup.
+function jsq(v) {
+  return escHtml(String(v == null ? '' : v)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r?\n/g, ' '));
+}
 // ------------------------------------------------------------------------------
 // ── Boot: populate all dropdowns when page loads ──────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
@@ -5246,13 +5338,13 @@ function _currMakeTopicNode(subjectNodeId, classNodeId, subject, topic) {
       </div>
       <div class="tree-actions" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
         <select class="sel" id="quiz-quick-sel-${nodeId}" style="width:160px;height:28px;font-size:10px"
-          onchange="quickAddQuizFromDrop('${nodeId}','${escHtml(topic)}','${escHtml(cls)}','${escHtml(subject)}')">
+          onchange="quickAddQuizFromDrop('${nodeId}','${jsq(topic)}','${jsq(cls)}','${jsq(subject)}')">
           <option value="">+ Quick-Link Quiz…</option>
         </select>
         <button class="btn btn-sm" style="background:rgba(99,102,241,.12);color:#a5b4fc;border:1px solid rgba(99,102,241,.25);font-size:11px"
-          onclick="openArLinkModal('${nodeId}','${escHtml(topic)}')">🎮 Link AR Asset</button>
+          onclick="openArLinkModal('${nodeId}','${jsq(topic)}')">🎮 Link AR Asset</button>
         <button class="btn btn-sm" style="background:rgba(6,182,212,.1);color:#67e8f9;border:1px solid rgba(6,182,212,.2);font-size:11px"
-          onclick="openQuizLinkModal('${nodeId}','${escHtml(topic)}','${escHtml(cls)}','${escHtml(subject)}')">🧩 All Quizzes</button>
+          onclick="openQuizLinkModal('${nodeId}','${jsq(topic)}','${jsq(cls)}','${jsq(subject)}')">🧩 All Quizzes</button>
         <button class="btn btn-s btn-sm" style="font-size:15px;padding:2px 9px;line-height:1" title="Release / delete"
           onclick="openTopicCtxMenu(event,'${nodeId}','topics-${subjectNodeId}')">⋯</button>
       </div>
@@ -6962,7 +7054,7 @@ async function sendNotification() {
 }
 
 function clearNotifForm() {
-  ['notif-title','notif-body','notif-schedule-time'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['notif-title','notif-body','notif-schedule-time','notif-image','notif-emoji'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   ['notif-state','notif-class','notif-topic','notif-quiz','notif-dl-type','notif-dl-id'].forEach(id => {
     const el = document.getElementById(id); if (el) el.selectedIndex = 0;
   });
@@ -7913,6 +8005,69 @@ function refreshComplianceStatus(silent) {
   if (typeof loadAuditFindings === 'function') loadAuditFindings();
   if (typeof loadComplianceSettings === 'function') loadComplianceSettings().then(() => typeof renderCERTInChecklist === 'function' && renderCERTInChecklist());
   if (typeof loadConsentCounts === 'function') loadConsentCounts();
+  if (typeof loadDataRequests === 'function') loadDataRequests();
+}
+
+// ── Student data-requests queue (DPDPA Right to Erasure / data copy) ─────────
+async function loadDataRequests() {
+  const listEl = document.getElementById('data-requests-list');
+  const badgeEl = document.getElementById('dr-pending-badge');
+  if (!listEl) return;
+  const data = await safeFetch('/api/compliance/data-requests', { silent: true });
+  if (!data) {
+    listEl.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:8px">Could not load requests.</div>';
+    return;
+  }
+  if (badgeEl) badgeEl.textContent = (data.pending || 0) + ' pending';
+  const rows = data.requests || [];
+  if (!rows.length) {
+    listEl.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:8px">No student data requests.</div>';
+    return;
+  }
+  const fmtDate = (v) => {
+    try {
+      const d = v && v._seconds ? new Date(v._seconds * 1000)
+        : (v && v.seconds ? new Date(v.seconds * 1000) : new Date(v));
+      return isNaN(d) ? '—' : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    } catch (_) { return '—'; }
+  };
+  listEl.innerHTML = `
+    <table class="data-table" style="width:100%">
+      <thead><tr>
+        <th>Student</th><th>Type</th><th>State / Class</th><th>Requested</th><th>Status</th><th>Action</th>
+      </tr></thead>
+      <tbody>
+      ${rows.map(r => {
+        const status = escHtml(r.status || 'pending');
+        const typeLabel = r.type === 'deletion' ? '🗑️ Erasure' : '⬇️ Data copy';
+        const isPending = (r.status || 'pending') === 'pending';
+        return `<tr>
+          <td>${escHtml(r.student_name || r.student_id || '—')}<div style="font-size:10px;color:var(--text3)">${escHtml(r.student_id || '')}</div></td>
+          <td>${typeLabel}</td>
+          <td>${escHtml([r.state, r.class].filter(Boolean).join(' · ') || '—')}</td>
+          <td>${fmtDate(r.requested_at)}</td>
+          <td><span class="tag ${isPending ? '' : 'tag-g'}">${status}</span></td>
+          <td>${isPending
+            ? `<button class="btn btn-s btn-xs" onclick="actionDataRequest('${jsq(r.id)}','actioned')">Mark done</button>`
+            : `<span style="font-size:10px;color:var(--text3)">by ${escHtml(r.actioned_by || '—')}</span>`}</td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>`;
+}
+
+async function actionDataRequest(id, status) {
+  const data = await safeFetch('/api/compliance/data-requests/' + encodeURIComponent(id) + '/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  if (data && data.success) {
+    if (typeof showToast === 'function') showToast('✅ Request marked ' + status);
+    loadDataRequests();
+  } else if (typeof showToast === 'function') {
+    showToast('⚠️ Could not update the request');
+  }
 }
 
 // loadNotifAnalyticsSubTab — canonical version defined above
@@ -8280,12 +8435,12 @@ async function checkAdConsent() {
 
 function openAdConsentModal() {
   const modal = document.getElementById('modal-ad-consent');
-  if (modal) modal.style.display = 'flex';
+  if (modal) { modal.style.display = 'flex'; modal.classList.add('open'); }
 }
 
 function closeAdConsentModal() {
   const modal = document.getElementById('modal-ad-consent');
-  if (modal) modal.style.display = 'none';
+  if (modal) { modal.classList.remove('open'); modal.style.display = 'none'; }
 }
 
 // When DOB changes, check if user is minor

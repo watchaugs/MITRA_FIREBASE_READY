@@ -316,6 +316,72 @@ router.get('/refresh-status', requirePerm('perm_view_analytics'), async (req, re
   res.json({ refreshed_at: (snap && snap.refreshed_at) || null });
 });
 
+// ── Data freshness per telemetry tier ─────────────────────────────────────────
+// The app now syncs on TWO cadences (see telemetry_batch_buffer.dart):
+//   • CRITICAL (compliance_events, profile_events, sessions) → ~12h, so these
+//     are near-current.
+//   • BULK (ar_views, screen_views, notification_events, quiz_attempts) → every
+//     10 days + a compulsory month-end sync. These can legitimately be up to
+//     10 days behind — this endpoint lets the UI SAY SO instead of looking dead.
+// Cost: one tiny ordered collectionGroup read per collection (newest batch
+// only). No BigQuery, no snapshot refresh needed.
+const _CRITICAL_COLLECTIONS = ['compliance_events', 'profile_events', 'sessions'];
+const _BULK_COLLECTIONS = ['ar_views', 'screen_views', 'notification_events', 'quiz_attempts'];
+
+async function latestFlushFor(db, collection) {
+  try {
+    // batch_flushed_at is an ISO string written by the app on every flush.
+    const snap = await db.collectionGroup(collection)
+      .orderBy('batch_flushed_at', 'desc')
+      .limit(1)
+      .get();
+    if (snap.empty) return null;
+    return snap.docs[0].data().batch_flushed_at || null;
+  } catch (_) {
+    // Missing index or no data yet → unknown, never a 500.
+    return null;
+  }
+}
+
+router.get('/data-freshness', requirePerm('perm_view_analytics'), async (req, res) => {
+  try {
+    const db = require('../lib/firebase').getFirestore();
+    const all = [..._CRITICAL_COLLECTIONS, ..._BULK_COLLECTIONS];
+    const results = await Promise.all(all.map((c) => latestFlushFor(db, c)));
+
+    const byCollection = {};
+    all.forEach((c, i) => { byCollection[c] = results[i]; });
+
+    // Newest timestamp within each tier (the tier is "as fresh as" its freshest
+    // collection; the UI shows the staleness of the tier as a whole).
+    const maxOf = (cols) => {
+      const times = cols.map((c) => byCollection[c]).filter(Boolean)
+        .map((s) => Date.parse(s)).filter((n) => !Number.isNaN(n));
+      return times.length ? new Date(Math.max(...times)).toISOString() : null;
+    };
+
+    res.json({
+      ok: true,
+      tiers: {
+        critical: {
+          label: 'Compliance & sessions',
+          expected_max_lag_hours: 12,
+          last_synced: maxOf(_CRITICAL_COLLECTIONS),
+          collections: _CRITICAL_COLLECTIONS.reduce((o, c) => (o[c] = byCollection[c], o), {}),
+        },
+        engagement: {
+          label: 'Engagement (AR, screens, quizzes)',
+          expected_max_lag_days: 10,
+          last_synced: maxOf(_BULK_COLLECTIONS),
+          collections: _BULK_COLLECTIONS.reduce((o, c) => (o[c] = byCollection[c], o), {}),
+        },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
 // ── Layer 3: FULL raw dataset export (BigQuery → GCS, free extract) ──────────
 // EXTRACT jobs are NOT query-billed (free). Writes the whole telemetry table to
 // gzipped CSV (auto-sharded at crore-scale), then hands back 24h signed links
