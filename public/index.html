@@ -313,6 +313,23 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 .chart-container { position: relative; height: 260px; width: 100%; margin-top: 10px;}
 .data-table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; margin-top: 20px;}
 
+/* ── DATA TABLES (Notification History, analytics tables, etc.) ── */
+.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.data-table thead th {
+  text-align: left; padding: 10px 14px; white-space: nowrap;
+  font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase;
+  color: var(--text2); background: var(--bg3);
+  border-bottom: 1px solid var(--border); position: sticky; top: 0;
+}
+.data-table tbody td {
+  padding: 10px 14px; vertical-align: middle;
+  color: var(--text); border-bottom: 1px solid var(--border);
+}
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table tbody tr:hover td { background: var(--glow); }
+.data-table th:first-child, .data-table td:first-child { padding-left: 16px; }
+.data-table th:last-child,  .data-table td:last-child  { padding-right: 16px; text-align: right; }
+
 /* APP GENERATOR SWATCHES */
 .color-swatch { width: 24px; height: 24px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: .2s; }
 .color-swatch:hover { transform: scale(1.1); }
@@ -6399,8 +6416,10 @@ function ctxMenuAction(action) {
       <input class="inp" id="ar-link-search" placeholder="🔍 Search assets..." style="flex:1;min-width:160px" oninput="filterArLinkModal()">
       <select class="sel" id="ar-link-filter-class" style="width:120px" onchange="filterArLinkModal()">
         <option value="">All Classes</option>
-        <option>Class 6</option><option>Class 7</option><option>Class 8</option>
-        <option>Class 9</option><option>Class 10</option><option>Class 11</option><option>Class 12</option>
+        <option>Class 1</option><option>Class 2</option><option>Class 3</option>
+        <option>Class 4</option><option>Class 5</option><option>Class 6</option>
+        <option>Class 7</option><option>Class 8</option><option>Class 9</option>
+        <option>Class 10</option><option>Class 11</option><option>Class 12</option>
       </select>
       <select class="sel" id="ar-link-filter-subj" style="width:130px" onchange="filterArLinkModal()">
         <option value="">All Subjects</option>
