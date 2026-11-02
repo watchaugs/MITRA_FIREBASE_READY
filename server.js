@@ -134,6 +134,14 @@ async function boot() {
   // ── CORS — H3 fix ───────────────────────────────────────────────────────────
   const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',').map(s => s.trim()).filter(Boolean);
   const PUBLIC_PATHS = new Set(['/api/health']);
+
+  // AR model/audio files are public, read-only, carry no credentials, and are
+  // fetched by model_viewer_plus from a WebView whose origin is a random
+  // http://127.0.0.1:<port> (the on-device model-viewer server). That origin can
+  // never be allow-listed, so serve this ONE public path with open CORS BEFORE
+  // the strict global cors() below. Scoped to /api/ar/file/* only.
+  app.use('/api/ar/file', cors({ origin: '*', methods: ['GET', 'HEAD', 'OPTIONS'] }));
+
   app.use(cors({
     origin: (origin, cb) => {
       if (!origin) {
