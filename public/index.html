@@ -330,6 +330,19 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 .data-table th:first-child, .data-table td:first-child { padding-left: 16px; }
 .data-table th:last-child,  .data-table td:last-child  { padding-right: 16px; text-align: right; }
 
+/* ── WIDE-TABLE SAFETY NET (charts untouched) ──
+   Wrap any .tbl / .data-table in its own horizontal scroll box so wide tables
+   scroll instead of crushing or being clipped by a card's overflow:hidden.
+   `display:block` on the table makes overflow-x apply to the table itself, so
+   NO change to .card is needed and chart cards / dropdowns are unaffected. */
+.tbl, .data-table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.tbl thead, .tbl tbody, .data-table thead, .data-table tbody { display: table; width: 100%; min-width: 620px; }
+.tbl th, .tbl td, .data-table th, .data-table td { white-space: nowrap; }
+
 /* APP GENERATOR SWATCHES */
 .color-swatch { width: 24px; height: 24px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: .2s; }
 .color-swatch:hover { transform: scale(1.1); }
