@@ -150,6 +150,16 @@ async function boot() {
         return cb(null, true);
       }
       if (allowedOrigins.includes(origin)) return cb(null, true);
+      // model_viewer_plus renders inside a WebView whose page is served from an
+      // on-device loopback server (http://127.0.0.1:<random-port> or localhost).
+      // That origin can never be allow-listed, but loopback = the device itself,
+      // so it is safe to permit (the AR model/audio files are public read-only).
+      try {
+        const host = new URL(origin).hostname;
+        if (host === '127.0.0.1' || host === 'localhost' || host === '::1') {
+          return cb(null, true);
+        }
+      } catch (_) {/* malformed origin → fall through to reject */}
       return cb(new Error('CORS: origin not permitted'));
     },
     credentials: true,
