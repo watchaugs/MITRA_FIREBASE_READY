@@ -8584,8 +8584,8 @@ if (typeof originalDoLogin === 'function') {
     
     // FIXED: Now checks for 'mitra_token'
     if (result && (localStorage.getItem('token') || localStorage.getItem('mitra_token'))) {
-      // Check ad consent 2 seconds after successful login
-      setTimeout(checkAdConsent, 2000);
+      // Ad-consent is an APP-side flow for student end-users, not the admin
+      // dashboard (users here are management/developers). Do not run it.
     }
     return result;
   };
