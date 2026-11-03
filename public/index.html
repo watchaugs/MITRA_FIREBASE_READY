@@ -6854,7 +6854,8 @@ async function verifyLoginCode() {
     }
     completeLogin(data);
     cancelLoginCode(true);
-    if (typeof checkAdConsent === 'function') setTimeout(checkAdConsent, 2000);
+    // Ad-consent is an APP-side flow for student end-users, not the admin
+    // dashboard (users here are management/developers). Do not run it.
   } catch (e) {
     errEl.textContent = 'Connection error. Check your network and try again.';
     errEl.classList.add('visible');
@@ -8603,11 +8604,30 @@ async function renderDPDPATracker() {
     if (!res.ok) throw new Error('status ' + res.status);
     const data = await res.json();
     const checks = data.checks || [];
+    // Map each failing check to the dashboard control that fixes it, so a click
+    // scrolls the admin straight to the right form/toggle.
+    const _fixTarget = {
+      dpo_appointed: 'dpo-command-center',
+      grievance_officer: 'go-name',
+      retention_policy: 'auto-purge-toggle',
+      right_to_erasure: 'auto-purge-toggle',
+      parental_consent: 'certin-checklist',
+      breach_procedure: 'certin-checklist',
+      admin_mfa: 'certin-checklist',
+      audit_log_active: 'certin-checklist',
+      privacy_policy: 'certin-checklist',
+      consent_mechanism: 'certin-checklist',
+      // data_localisation is an env-var / deploy setting, no in-page control.
+    };
     container.innerHTML = checks.map(item => {
       const ok = !!item.status;
       const crit = item.severity === 'critical' && !ok;
+      const tgt = !ok ? _fixTarget[item.key] : null;
+      const clickAttr = tgt
+        ? `onclick="(function(){var e=document.getElementById('${tgt}');if(e){e.scrollIntoView({behavior:'smooth',block:'center'});e.style.transition='box-shadow .3s';e.style.boxShadow='0 0 0 3px var(--accent)';setTimeout(function(){e.style.boxShadow='';},1600);}})()" style="cursor:pointer"`
+        : '';
       return `
-      <div style="display:flex;align-items:center;gap:10px;padding:10px;background:${ok ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)'};border-radius:8px;border:1px solid ${ok ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'};margin-bottom:6px;">
+      <div ${clickAttr} style="display:flex;align-items:center;gap:10px;padding:10px;background:${ok ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)'};border-radius:8px;border:1px solid ${ok ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'};margin-bottom:6px;${tgt ? 'cursor:pointer' : ''}">
         <div style="font-size:18px;flex-shrink:0;">${ok ? '✅' : (crit ? '⛔' : '❌')}</div>
         <div style="flex:1;">
           <div style="font-weight:600;font-size:13px;color:${ok ? 'var(--green)' : 'var(--red)'};">
@@ -8615,6 +8635,7 @@ async function renderDPDPATracker() {
           </div>
           <div style="font-size:11px;color:var(--text3);margin-top:2px;">${escHtml(item.description || '')}</div>
         </div>
+        ${tgt ? '<div style="font-size:11px;color:var(--accent);flex-shrink:0;">Fix →</div>' : ''}
       </div>`;
     }).join('');
     const passCount = data.passed != null ? data.passed : checks.filter(c => c.status).length;
