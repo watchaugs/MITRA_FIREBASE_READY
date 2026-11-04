@@ -5798,6 +5798,30 @@ function ensureArEngines() {
 }
 
 // Pre-warm the engines as soon as a page image is chosen.
+// ── Multi-language narration: add / remove a language audio on an asset ──────
+async function addLangAudio(assetId) {
+  const langEl = document.getElementById(`lang-sel-${assetId}`);
+  const fileEl = document.getElementById(`lang-file-${assetId}`);
+  const lang = langEl && langEl.value;
+  const file = fileEl && fileEl.files[0];
+  if (!lang || !file) return alert('Pick a language and an audio file.');
+  const fd = new FormData();
+  fd.append('language', lang);
+  fd.append('audio', file);
+  const res = await fetch(`/api/ar/assets/${encodeURIComponent(assetId)}/audio`, { method: 'POST', headers: authHeaders(), body: fd });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) return alert(j.error || 'Upload failed');
+  alert('Added ' + lang.toUpperCase() + ' narration.');
+  if (typeof refreshArAssetList === 'function') refreshArAssetList();
+}
+
+async function removeLangAudio(assetId, lang) {
+  if (!confirm('Remove ' + lang.toUpperCase() + ' narration?')) return;
+  const res = await fetch(`/api/ar/assets/${encodeURIComponent(assetId)}/audio/${encodeURIComponent(lang)}`, { method: 'DELETE', headers: authHeaders() });
+  if (!res.ok) { const j = await res.json().catch(()=>({})); return alert(j.error || 'Remove failed'); }
+  if (typeof refreshArAssetList === 'function') refreshArAssetList();
+}
+
 function handleArExtraSelect(kind, ev) {
   if (kind === 'image' && ev.target.files[0]) ensureArEngines().catch(() => {});
 }
@@ -6033,6 +6057,30 @@ function renderArAssetsTable(assets) {
           ${a.status !== 'published' ? `<button class="btn btn-g btn-sm" onclick="publishArAsset('${a.id}')">▶ Publish</button>` : ''}
           <button class="btn btn-s btn-sm" onclick="openReleaseModal('ar','${a.id}')" title="When students can see it">📅 Release</button>
           <button class="btn btn-r btn-sm" onclick="deleteArAsset('${a.id}',this)" title="Archive">✕</button>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td colspan="10" style="padding:8px 12px 14px;border-top:1px dashed var(--border, #333)">
+        <div style="font-size:12px;color:var(--text2)">
+          <strong>Narration languages</strong> (students see only those allowed for their state):
+          <span id="audios-chips-${a.id}" style="margin-left:6px">
+            ${Object.keys(a.audios||{}).map(l =>
+              `<span class="tag tag-b" style="margin-right:4px">${l.toUpperCase()} <a href="#" style="color:var(--text3);text-decoration:none" onclick="removeLangAudio('${a.id}','${l}');return false">×</a></span>`
+            ).join(' ') || '<em style="color:var(--text3)">none yet</em>'}
+          </span>
+          <div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <select class="sel" id="lang-sel-${a.id}" style="width:130px">
+              <option value="hi">हिंदी (hi)</option><option value="en">English (en)</option>
+              <option value="gu">ગુજરાતી (gu)</option><option value="mr">मराठी (mr)</option>
+              <option value="ta">தமிழ் (ta)</option><option value="te">తెలుగు (te)</option>
+              <option value="kn">ಕನ್ನಡ (kn)</option><option value="ml">മലയാളം (ml)</option>
+              <option value="bn">বাংলা (bn)</option><option value="pa">ਪੰਜਾਬੀ (pa)</option>
+              <option value="or">ଓଡ଼ିଆ (or)</option><option value="as">অসমীয়া (as)</option>
+            </select>
+            <input type="file" id="lang-file-${a.id}" accept="audio/*" style="font-size:11px">
+            <button class="btn btn-s btn-sm" onclick="addLangAudio('${a.id}')">+ Add narration</button>
+          </div>
         </div>
       </td>
     </tr>`).join('');

@@ -364,6 +364,7 @@ router.get('/topics', async (req, res) => {
       flutter_url: r.flutter_url || null,
       native_url:  r.native_url  || null,
       audio_url:        r.audio_url        || null,
+      audios:           r.audios           || {},   // { lang: url } multi-language narration
       mind_url:         r.mind_url         || null,
       target_image_url: r.target_image_url || null,
       video_url:        r.video_url        || null,
@@ -493,5 +494,93 @@ router.delete('/links/:linkId', requirePerm('perm_edit_curriculum'), async (req,
   res.json({ message: 'AR link removed' });
 });
 router.get('/links/:nodeId', async (req, res) => { res.json([]); });
+
+// ── Attach / replace a per-LANGUAGE narration audio on an existing asset ──────
+// Multi-language narration: one model, many audios keyed by language. Stored at
+// ar_assets/{id}_audio_{lang}.{ext}; the asset's `audios` map gets { lang: url }.
+// The FIRST language also mirrors to audio_url/language so single-audio app
+// builds keep working.
+router.post('/assets/:id/audio', requirePerm('perm_upload_unity'),
+  (req, res, next) => arUpload.single('audio')(req, res, err => err ? res.status(400).json({ error: err.message }) : next()),
+  async (req, res) => {
+    const { id } = req.params;
+    const lang = (req.body.language || '').trim().toLowerCase();
+    if (!id)        return res.status(400).json({ error: 'Missing asset id' });
+    if (!lang)      return res.status(400).json({ error: 'Missing language code' });
+    if (!req.file)  return res.status(400).json({ error: 'No audio file uploaded' });
+
+    const ext = path.extname(req.file.originalname).toLowerCase() || '.mp3';
+    const ct  = ext === '.aac' || ext === '.m4a' ? 'audio/aac'
+              : ext === '.wav' ? 'audio/wav'
+              : ext === '.ogg' ? 'audio/ogg' : 'audio/mpeg';
+    const key = `ar_assets/${id}_audio_${lang}${ext}`;
+    let url;
+    try {
+      await storage.putRaw(req.file.buffer, key, { contentType: ct });
+      url = process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${key}` : `/api/ar/file/${id}_audio_${lang}${ext}`;
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to store language audio', detail: e.message });
+    }
+
+    try {
+      const db  = getFirestore();
+      const ref = db.collection('ar_assets').doc(id);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: 'AR asset not found' });
+      const data   = snap.data() || {};
+      const audios = { ...(data.audios || {}), [lang]: url };
+      const update = { audios };
+      if (!data.audio_url) { update.audio_url = url; update.language = lang; }
+      await ref.set(update, { merge: true });
+      return res.json({ message: 'Language audio saved', id, language: lang, url, audios });
+    } catch (e) {
+      return res.status(500).json({ error: 'Audio stored but asset update failed', detail: e.message });
+    }
+  }
+);
+
+// ── Remove a per-language audio ───────────────────────────────────────────────
+router.delete('/assets/:id/audio/:lang', requirePerm('perm_upload_unity'), async (req, res) => {
+  const { id, lang } = req.params;
+  try {
+    const db  = getFirestore();
+    const ref = db.collection('ar_assets').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'AR asset not found' });
+    const audios = { ...((snap.data() || {}).audios || {}) };
+    delete audios[(lang || '').toLowerCase()];
+    await ref.set({ audios }, { merge: true });
+    return res.json({ message: 'Language audio removed', id, lang, audios });
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to remove language audio', detail: e.message });
+  }
+});
+
+// ── Region → allowed narration languages (admin-configurable) ─────────────────
+// Firestore language_config/regions = { "gujarat": ["gu"], "tamil nadu": ["ta"] }
+// hi + en are universal (merged by the app), so config lists only the EXTRAS.
+router.get('/language-config', async (req, res) => {
+  try {
+    const db   = getFirestore();
+    const snap = await db.collection('language_config').doc('regions').get();
+    const regions = snap.exists ? (snap.data().regions || snap.data() || {}) : {};
+    return res.json({ regions, universal: ['hi', 'en'] });
+  } catch (e) {
+    return res.json({ regions: {}, universal: ['hi', 'en'] }); // fail-open
+  }
+});
+
+router.put('/language-config/:region', requirePerm('perm_edit_curriculum'), async (req, res) => {
+  const region = (req.params.region || '').trim().toLowerCase();
+  const langs  = Array.isArray(req.body.languages) ? req.body.languages.map(s => String(s).toLowerCase()) : [];
+  if (!region) return res.status(400).json({ error: 'Missing region' });
+  try {
+    const db = getFirestore();
+    await db.collection('language_config').doc('regions').set({ regions: { [region]: langs } }, { merge: true });
+    return res.json({ message: 'Saved', region, languages: langs });
+  } catch (e) {
+    return res.status(500).json({ error: 'Save failed', detail: e.message });
+  }
+});
 
 module.exports = router;
