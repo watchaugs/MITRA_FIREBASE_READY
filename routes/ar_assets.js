@@ -12,6 +12,7 @@ const { visibleInState, parseTargetStates } = require('../lib/stateScope');
 const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
 const { stripFields } = require('../lib/writeGuard');
 const log = require('../lib/logger');
+const { transcodeNarration } = require('../lib/audioTranscode');
 // NOTE: fs and UPLOAD_DIR removed — all file I/O now goes through lib/storage.js
 // In dev (no STORAGE_BUCKET set): files save to ./uploads/ on local disk
 // In prod (STORAGE_BUCKET set):   files save to GCS bucket → later swapped to R2
@@ -407,20 +408,50 @@ router.put('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => 
   } catch { res.status(500).json({ error: 'Failed to update asset' }); }
 });
 
+// Download the original uploaded GLB (stored at upload, never served until now).
+router.get('/assets/:id/original', requirePerm('perm_upload_unity'), async (req, res) => {
+  const key = `ar_assets/${req.params.id}_original.glb`;
+  try {
+    if (!(await storage.exists(key))) return res.status(404).json({ error: 'No original on file for this asset' });
+    res.setHeader('Content-Type', 'model/gltf-binary');
+    res.setHeader('Content-Disposition', `attachment; filename="${req.params.id}_original.glb"`);
+    (await storage.createReadStream(key)).pipe(res);
+  } catch (e) { res.status(500).json({ error: 'Failed to read original', detail: e.message }); }
+});
+
+// All stored file keys an asset could own — single source of truth for deletes.
+function assetFileKeys(id, a = {}) {
+  const base = `ar_assets/${id}`;
+  const keys = [
+    `${base}_lite.glb`, `${base}_native.glb`, `${base}_original.glb`,
+    `${base}_targets.mind`,
+    `${base}_target.png`, `${base}_target.jpg`, `${base}_target.jpeg`, `${base}_target.webp`,
+    `${base}_video.mp4`, `${base}_video.webm`, `${base}_video.mov`,
+  ];
+  const langs = new Set([...Object.keys(a.audios || {}), ...Object.keys(a.audios_aac || {})]);
+  const audioExts = ['.opus', '.m4a', '.mp3', '.aac', '.wav', '.ogg'];
+  for (const lang of langs) for (const ext of audioExts) keys.push(`${base}_audio_${lang}${ext}`);
+  if (a.audio_url) for (const ext of audioExts) keys.push(`${base}_audio${ext}`);
+  return keys;
+}
+
+async function purgeAssetFiles(id, a) {
+  for (const k of assetFileKeys(id, a)) { try { await storage.delete(k); } catch (_) { /* ignore */ } }
+}
+
+// Immediate delete. The UI gets its safety from a type-to-confirm dialog, so the
+// backend requires an explicit confirm flag in the body to avoid accidental calls.
 router.delete('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => {
   try {
     const db  = getFirestore();
     const ref = db.collection('ar_assets').doc(req.params.id);
     const doc = await ref.get();
     if (!doc.exists) return res.status(404).json({ error: 'Asset not found' });
+    if (req.body && req.body.confirm !== true && req.body.confirm !== 'true') {
+      return res.status(400).json({ error: 'Delete must be confirmed', hint: 'send { "confirm": true }' });
+    }
     const a = doc.data();
-    // Best-effort delete of the stored files (lite GLB + any side files). Never
-    // let a missing file block the record delete.
-    const keys = [
-      `ar_assets/${req.params.id}_lite.glb`,
-      a.mind_url && `ar_assets/${req.params.id}_targets.mind`,
-    ].filter(Boolean);
-    for (const k of keys) { try { await storage.delete(k); } catch (_) { /* ignore */ } }
+    await purgeAssetFiles(req.params.id, a);   // best-effort file cleanup (never blocks record delete)
     await ref.delete();
     await invalidateManifests(db);
     await db.collection('audit_log').add({ action: 'ar_asset_deleted', actor: req.user.id, detail: { asset_id: req.params.id, title: a.title || a.original_name || null }, created_at: new Date() }).catch(() => {});
@@ -509,15 +540,32 @@ router.post('/assets/:id/audio', requirePerm('perm_upload_unity'),
     if (!lang)      return res.status(400).json({ error: 'Missing language code' });
     if (!req.file)  return res.status(400).json({ error: 'No audio file uploaded' });
 
-    const ext = path.extname(req.file.originalname).toLowerCase() || '.mp3';
-    const ct  = ext === '.aac' || ext === '.m4a' ? 'audio/aac'
-              : ext === '.wav' ? 'audio/wav'
-              : ext === '.ogg' ? 'audio/ogg' : 'audio/mpeg';
-    const key = `ar_assets/${id}_audio_${lang}${ext}`;
-    let url;
+    // Transcode to Opus (default) + AAC (fallback); keep original as last-resort.
+    const origExt = path.extname(req.file.originalname).toLowerCase() || '.mp3';
+    const pub = (suffix) => process.env.R2_PUBLIC_URL
+      ? `${process.env.R2_PUBLIC_URL}/ar_assets/${id}_audio_${lang}${suffix}`
+      : `/api/ar/file/${id}_audio_${lang}${suffix}`;
+    let url, urlOpus = null, urlAac = null;
     try {
-      await storage.putRaw(req.file.buffer, key, { contentType: ct });
-      url = process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${key}` : `/api/ar/file/${id}_audio_${lang}${ext}`;
+      let opus, aac;
+      try {
+        ({ opus, aac } = await transcodeNarration(req.file.buffer));
+      } catch (tcErr) {
+        log.warn({ err: tcErr.message, id, lang }, 'Audio transcode failed — storing original only');
+      }
+      if (opus && aac) {
+        await storage.putRaw(opus, `ar_assets/${id}_audio_${lang}.opus`, { contentType: 'audio/ogg' });
+        await storage.putRaw(aac,  `ar_assets/${id}_audio_${lang}.m4a`,  { contentType: 'audio/aac' });
+        urlOpus = pub('.opus');
+        urlAac  = pub('.m4a');
+        url = urlOpus; // app prefers Opus, falls back to AAC
+      } else {
+        const ct = origExt === '.aac' || origExt === '.m4a' ? 'audio/aac'
+                 : origExt === '.wav' ? 'audio/wav'
+                 : origExt === '.ogg' ? 'audio/ogg' : 'audio/mpeg';
+        await storage.putRaw(req.file.buffer, `ar_assets/${id}_audio_${lang}${origExt}`, { contentType: ct });
+        url = pub(origExt);
+      }
     } catch (e) {
       return res.status(500).json({ error: 'Failed to store language audio', detail: e.message });
     }
@@ -529,7 +577,8 @@ router.post('/assets/:id/audio', requirePerm('perm_upload_unity'),
       if (!snap.exists) return res.status(404).json({ error: 'AR asset not found' });
       const data   = snap.data() || {};
       const audios = { ...(data.audios || {}), [lang]: url };
-      const update = { audios };
+      const audios_aac = { ...(data.audios_aac || {}), [lang]: urlAac || url };
+      const update = { audios, audios_aac };
       if (!data.audio_url) { update.audio_url = url; update.language = lang; }
       await ref.set(update, { merge: true });
       return res.json({ message: 'Language audio saved', id, language: lang, url, audios });
@@ -554,6 +603,166 @@ router.delete('/assets/:id/audio/:lang', requirePerm('perm_upload_unity'), async
   } catch (e) {
     return res.status(500).json({ error: 'Failed to remove language audio', detail: e.message });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 3d — Download the original uploaded GLB
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/assets/:id/original', requirePerm('perm_upload_unity'), async (req, res) => {
+  const key = `ar_assets/${req.params.id}_original.glb`;
+  try {
+    if (!(await storage.exists(key))) return res.status(404).json({ error: 'No original on file for this asset' });
+    res.setHeader('Content-Type', 'model/gltf-binary');
+    res.setHeader('Content-Disposition', `attachment; filename="${req.params.id}_original.glb"`);
+    (await storage.createReadStream(key)).pipe(res);
+  } catch (e) { res.status(500).json({ error: 'Failed to read original', detail: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 3e — Replace a single media file in place
+//   field = model | image | video | audio   (audio needs ?language=xx in body)
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/assets/:id/replace', requirePerm('perm_upload_unity'),
+  (req, res, next) => arUpload.single('file')(req, res, err => err ? res.status(400).json({ error: err.message }) : next()),
+  async (req, res) => {
+    const { id } = req.params;
+    const field = (req.body.field || '').toLowerCase();
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const db  = getFirestore();
+    const ref = db.collection('ar_assets').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'Asset not found' });
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const pub = (k) => process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${k}` : `/api/ar/file/${k.replace('ar_assets/', '')}`;
+    try {
+      if (field === 'model') {
+        if (ext !== '.glb' && ext !== '.gltf') return res.status(400).json({ error: 'Model must be .glb/.gltf' });
+        const compression = await compressGlb(req.file.buffer, { quality: req.body.quality });
+        await storage.putRaw(compression.flutter, `ar_assets/${id}_lite.glb`, { contentType: 'model/gltf-binary' });
+        await storage.putRaw(compression.native,  `ar_assets/${id}_native.glb`, { contentType: 'model/gltf-binary' });
+        await storage.putRaw(req.file.buffer,      `ar_assets/${id}_original.glb`, { contentType: 'model/gltf-binary' });
+        await ref.set({ updated_at: new Date() }, { merge: true });
+        await invalidateManifests(db);
+        return res.json({ message: 'Model replaced', id });
+      }
+      if (field === 'image') {
+        const ct = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
+        const key = `ar_assets/${id}_target${ext}`;
+        await storage.putRaw(req.file.buffer, key, { contentType: ct });
+        await ref.set({ target_image_url: pub(key), updated_at: new Date() }, { merge: true });
+        await invalidateManifests(db);
+        return res.json({ message: 'Image replaced', id, url: pub(key) });
+      }
+      if (field === 'video') {
+        const ct = ext === '.webm' ? 'video/webm' : ext === '.mov' ? 'video/quicktime' : 'video/mp4';
+        const key = `ar_assets/${id}_video${ext}`;
+        await storage.putRaw(req.file.buffer, key, { contentType: ct });
+        await ref.set({ video_url: pub(key), updated_at: new Date() }, { merge: true });
+        await invalidateManifests(db);
+        return res.json({ message: 'Video replaced', id, url: pub(key) });
+      }
+      if (field === 'audio') {
+        const lang = (req.body.language || '').trim().toLowerCase();
+        if (!lang) return res.status(400).json({ error: 'Missing language for audio replace' });
+        let opus, aac;
+        try { ({ opus, aac } = await transcodeNarration(req.file.buffer)); } catch (e) { return res.status(422).json({ error: 'Audio transcode failed', detail: e.message }); }
+        await storage.putRaw(opus, `ar_assets/${id}_audio_${lang}.opus`, { contentType: 'audio/ogg' });
+        await storage.putRaw(aac,  `ar_assets/${id}_audio_${lang}.m4a`,  { contentType: 'audio/aac' });
+        const data = snap.data();
+        const audios = { ...(data.audios || {}), [lang]: pub(`ar_assets/${id}_audio_${lang}.opus`) };
+        const audios_aac = { ...(data.audios_aac || {}), [lang]: pub(`ar_assets/${id}_audio_${lang}.m4a`) };
+        await ref.set({ audios, audios_aac, updated_at: new Date() }, { merge: true });
+        await invalidateManifests(db);
+        return res.json({ message: 'Audio replaced', id, language: lang, audios, audios_aac });
+      }
+      return res.status(400).json({ error: `Unknown field "${field}" (model|image|video|audio)` });
+    } catch (e) { return res.status(500).json({ error: 'Replace failed', detail: e.message }); }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 3e — Regenerate derivatives from stored sources
+//   kind = model (re-run Draco from _original.glb) | transcode (re-encode audio)
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/assets/:id/regenerate', requirePerm('perm_upload_unity'), async (req, res) => {
+  const { id } = req.params;
+  const kind = (req.body.kind || '').toLowerCase();
+  const db  = getFirestore();
+  const ref = db.collection('ar_assets').doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) return res.status(404).json({ error: 'Asset not found' });
+  const a = snap.data();
+  const pub = (k) => process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${k}` : `/api/ar/file/${k.replace('ar_assets/', '')}`;
+  const readKey = async (key) => {
+    const chunks = [];
+    await new Promise((ok, no) => (storage.createReadStream(key)).on('data', c => chunks.push(c)).on('end', ok).on('error', no));
+    return Buffer.concat(chunks);
+  };
+  try {
+    if (kind === 'model') {
+      const okey = `ar_assets/${id}_original.glb`;
+      if (!(await storage.exists(okey))) return res.status(409).json({ error: 'No original GLB stored to rebuild from' });
+      const compression = await compressGlb(await readKey(okey), { quality: req.body.quality });
+      await storage.putRaw(compression.flutter, `ar_assets/${id}_lite.glb`,   { contentType: 'model/gltf-binary' });
+      await storage.putRaw(compression.native,  `ar_assets/${id}_native.glb`, { contentType: 'model/gltf-binary' });
+      await ref.set({ updated_at: new Date() }, { merge: true });
+      await invalidateManifests(db);
+      return res.json({ message: 'Model regenerated from original', id });
+    }
+    if (kind === 'transcode') {
+      const langs = Object.keys(a.audios || {});
+      const done = [];
+      for (const lang of langs) {
+        let srcKey = null;
+        for (const e of ['.wav', '.mp3', '.m4a', '.opus']) {
+          const k = `ar_assets/${id}_audio_${lang}${e}`;
+          if (await storage.exists(k)) { srcKey = k; break; }
+        }
+        if (!srcKey) continue;
+        let opus, aac;
+        try { ({ opus, aac } = await transcodeNarration(await readKey(srcKey))); } catch (_) { continue; }
+        await storage.putRaw(opus, `ar_assets/${id}_audio_${lang}.opus`, { contentType: 'audio/ogg' });
+        await storage.putRaw(aac,  `ar_assets/${id}_audio_${lang}.m4a`,  { contentType: 'audio/aac' });
+        done.push(lang);
+      }
+      const audios = { ...(a.audios || {}) }, audios_aac = { ...(a.audios_aac || {}) };
+      for (const lang of done) { audios[lang] = pub(`ar_assets/${id}_audio_${lang}.opus`); audios_aac[lang] = pub(`ar_assets/${id}_audio_${lang}.m4a`); }
+      await ref.set({ audios, audios_aac, updated_at: new Date() }, { merge: true });
+      await invalidateManifests(db);
+      return res.json({ message: 'Audio re-transcoded', id, languages: done });
+    }
+    return res.status(400).json({ error: `Unknown kind "${kind}" (model|transcode; tts/nmt in later phases)` });
+  } catch (e) { return res.status(500).json({ error: 'Regenerate failed', detail: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 3f — Bulk actions   action = delete | publish
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/assets/bulk', requirePerm('perm_upload_unity'), async (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+  const action = (req.body.action || '').toLowerCase();
+  if (!ids.length) return res.status(400).json({ error: 'No ids given' });
+  const db = getFirestore();
+  const results = [];
+  for (const id of ids) {
+    try {
+      const ref = db.collection('ar_assets').doc(id);
+      const snap = await ref.get();
+      if (!snap.exists) { results.push({ id, ok: false, error: 'not found' }); continue; }
+      if (action === 'delete') {
+        await purgeAssetFiles(id, snap.data());
+        await ref.delete();
+        results.push({ id, ok: true });
+      } else if (action === 'publish') {
+        await ref.set({ status: 'published', published_at: new Date(), published_by: req.user.id }, { merge: true });
+        results.push({ id, ok: true });
+      } else {
+        results.push({ id, ok: false, error: `unsupported bulk action "${action}"` });
+      }
+    } catch (e) { results.push({ id, ok: false, error: e.message }); }
+  }
+  await invalidateManifests(db);
+  res.json({ action, results });
 });
 
 // ── Region → allowed narration languages (admin-configurable) ─────────────────
