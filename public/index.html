@@ -722,6 +722,21 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
   </div>
 </div>
   
+  <div class="modal-bg" id="modal-ar-confirm">
+    <div class="modal" style="max-width:460px">
+      <button class="modal-close" onclick="_arConfirmResolve(false)">✕</button>
+      <div class="modal-title" id="ar-confirm-title">Please confirm</div>
+      <div class="modal-sub" id="ar-confirm-msg"></div>
+      <div id="ar-confirm-type-wrap" style="display:none;margin-bottom:16px">
+        <input class="inp" id="ar-confirm-type-input" placeholder="Type here" oninput="_arConfirmSync()" onkeydown="if(event.key==='Enter'){event.preventDefault();if(!document.getElementById('ar-confirm-ok').disabled)_arConfirmResolve(true);}">
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn btn-s" onclick="_arConfirmResolve(false)">Cancel</button>
+        <button class="btn btn-r" id="ar-confirm-ok" onclick="_arConfirmResolve(true)">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-bg" id="modal-geo-config">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-geo-config')">✕</button>
@@ -2217,7 +2232,9 @@ document.addEventListener('DOMContentLoaded', () => {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div>
         <div class="card-title">📚 Uploaded AR Assets</div>
-        <div class="card-sub">All Unity assets tagged and ready for deployment</div>
+        <div class="card-sub">All Unity assets tagged and ready for deployment
+          <button class="btn btn-s btn-sm" style="margin-left:8px" onclick="checkBhashiniHealth()">🔌 Test Bhashini keys</button>
+        </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <select class="sel" id="ar-filter-class" style="width:120px" onchange="filterArAssets()">
@@ -2240,12 +2257,29 @@ document.addEventListener('DOMContentLoaded', () => {
           <option>Science</option><option>Mathematics</option><option>History</option>
           <option>Geography</option><option>Biology</option><option>Chemistry</option><option>Physics</option>
         </select>
+        <select class="sel" id="ar-filter-status" style="width:120px" onchange="filterArAssets()">
+          <option value="">All Status</option>
+          <option value="uploaded">Uploaded</option>
+          <option value="submitted">Submitted</option>
+          <option value="published">Published</option>
+        </select>
+        <input class="inp" id="ar-filter-state" style="width:130px" placeholder="State filter" oninput="filterArAssets()">
+        <select class="sel" id="ar-filter-media" style="width:150px" onchange="filterArAssets()">
+          <option value="">Any media</option>
+          <option value="no-audio">Missing narration</option>
+          <option value="has-audio">Has narration</option>
+          <option value="no-video">Missing video</option>
+          <option value="has-video">Has video</option>
+        </select>
+        <button class="btn btn-r btn-sm" id="ar-bulk-del" style="display:none" onclick="bulkDeleteSelected()">🗑 Delete selected</button>
+        <button class="btn btn-g btn-sm" id="ar-bulk-pub" style="display:none" onclick="bulkPublishSelected()">▶ Publish selected</button>
       </div>
     </div>
     <div class="data-table-wrap" style="margin-top:0">
       <table class="tbl">
         <thead>
           <tr>
+            <th style="width:28px"><input type="checkbox" id="ar-check-all" onchange="toggleAllArChecks(this)"></th>
             <th>Asset Title</th><th>Class</th><th>Subject</th><th>AR Topic</th>
             <th>Language</th><th>Format</th><th>Size</th><th>Status</th><th>Uploaded</th><th>Actions</th>
           </tr>
@@ -3484,6 +3518,41 @@ document.addEventListener('DOMContentLoaded', () => {
 // --- MODALS ---
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+// Reusable styled confirm. Returns a Promise<boolean>.
+//   arConfirm({ title, message })                       → OK/Cancel
+//   arConfirm({ title, message, typeToConfirm:'DELETE' })→ must type the word
+let _arConfirmCb = null, _arConfirmWord = null;
+function arConfirm({ title = 'Please confirm', message = '', typeToConfirm = null, okLabel = 'Confirm' } = {}) {
+  document.getElementById('ar-confirm-title').textContent = title;
+  document.getElementById('ar-confirm-msg').textContent = message;
+  const wrap = document.getElementById('ar-confirm-type-wrap');
+  const input = document.getElementById('ar-confirm-type-input');
+  const ok = document.getElementById('ar-confirm-ok');
+  ok.textContent = okLabel;
+  _arConfirmWord = typeToConfirm;
+  if (typeToConfirm) {
+    wrap.style.display = 'block';
+    input.value = '';
+    input.placeholder = 'Type ' + typeToConfirm;
+    ok.disabled = true;
+  } else {
+    wrap.style.display = 'none';
+    ok.disabled = false;
+  }
+  openModal('modal-ar-confirm');
+  if (typeToConfirm) setTimeout(() => input.focus(), 50);
+  return new Promise(resolve => { _arConfirmCb = resolve; });
+}
+function _arConfirmSync() {
+  const input = document.getElementById('ar-confirm-type-input');
+  document.getElementById('ar-confirm-ok').disabled = (input.value.trim() !== _arConfirmWord);
+}
+function _arConfirmResolve(result) {
+  closeModal('modal-ar-confirm');
+  const cb = _arConfirmCb; _arConfirmCb = null;
+  if (cb) cb(result);
+}
 // ════════════════════════════════════════════════════════════════
 // REAL FEATURE WIRING (profile, password, ad edit, deployed apps)
 // ════════════════════════════════════════════════════════════════
@@ -5822,6 +5891,65 @@ async function removeLangAudio(assetId, lang) {
   if (typeof refreshArAssetList === 'function') refreshArAssetList();
 }
 
+// ── Bhashini narration (Phase 5) ─────────────────────────────────────────────
+// Allowed languages per asset come from its target states via /language-config.
+let _bhLangConfig = null;
+async function _loadLangConfig() {
+  if (_bhLangConfig) return _bhLangConfig;
+  try {
+    const r = await fetch('/api/ar/language-config', { headers: authHeaders() });
+    _bhLangConfig = await r.json();
+  } catch { _bhLangConfig = { regions: {}, universal: ['hi', 'en'] }; }
+  return _bhLangConfig;
+}
+function _allowedLangsFor(asset, cfg) {
+  const set = new Set(cfg.universal || ['hi', 'en']);
+  (asset.target_states || []).forEach(s => {
+    const k = String(s).trim().toLowerCase().replace(/_/g, ' ');
+    (cfg.regions?.[k] || []).forEach(l => set.add(String(l).toLowerCase()));
+  });
+  if (!(asset.target_states || []).length) {
+    // National asset → offer every configured language.
+    Object.values(cfg.regions || {}).forEach(arr => arr.forEach(l => set.add(String(l).toLowerCase())));
+  }
+  return [...set];
+}
+async function _populateBhashiniLangs(asset) {
+  const host = document.getElementById(`bh-langs-${asset.id}`);
+  if (!host) return;
+  const cfg = await _loadLangConfig();
+  const langs = _allowedLangsFor(asset, cfg);
+  host.innerHTML = langs.map(l =>
+    `<label style="display:inline-flex;align-items:center;gap:3px"><input type="checkbox" class="bh-lang-${asset.id}" value="${l}" checked style="width:auto"> ${l.toUpperCase()}</label>`
+  ).join('');
+}
+async function generateBhashiniNarration(id) {
+  const text = (document.getElementById(`bh-text-${id}`)?.value || '').trim();
+  const gender = document.getElementById(`bh-gender-${id}`)?.value || 'female';
+  const langs = [...document.querySelectorAll('.bh-lang-' + id + ':checked')].map(c => c.value);
+  const st = document.getElementById(`bh-status-${id}`);
+  if (!text) { if (st) st.textContent = '⚠ Enter narration text first'; return; }
+  if (!langs.length) { if (st) st.textContent = '⚠ Tick at least one language'; return; }
+  if (st) st.textContent = '⏳ Generating ' + langs.length + ' language(s)…';
+  const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}/narration`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ languages: langs, text, gender })
+  });
+  if (!d) { if (st) st.textContent = '✗ Failed'; return; }
+  let msg = '✅ ' + (d.done || []).length + ' done';
+  if ((d.needs_manual || []).length) msg += ' · ⚠ no voice (upload manually): ' + d.needs_manual.join(', ').toUpperCase();
+  if ((d.failed || []).length) msg += ' · ✗ ' + d.failed.length + ' failed';
+  if (st) st.textContent = msg;
+  showToast('Bhashini: ' + msg);
+  refreshArAssetList();
+}
+async function checkBhashiniHealth() {
+  const r = await fetch('/api/ar/bhashini/health', { headers: authHeaders() });
+  const j = await r.json().catch(() => ({}));
+  if (!j.configured) return showToast('Bhashini: keys not set yet');
+  showToast(j.ok ? '✅ Bhashini keys valid' : '✗ Bhashini: ' + (j.message || 'call failed'));
+}
+
 function handleArExtraSelect(kind, ev) {
   if (kind === 'image' && ev.target.files[0]) ensureArEngines().catch(() => {});
 }
@@ -6031,18 +6159,41 @@ async function refreshArAssetList() {
   renderArAssetsTable([]);
 }
 
-function filterArAssets() { refreshArAssetList(); }
+function filterArAssets() { renderArAssetsTable(Object.values(window._arAll || {})); }
+
+function _arPassesFilters(a) {
+  const status = document.getElementById('ar-filter-status')?.value || '';
+  const state  = (document.getElementById('ar-filter-state')?.value || '').trim().toLowerCase();
+  const media  = document.getElementById('ar-filter-media')?.value || '';
+  if (status && (a.status || 'uploaded') !== status) return false;
+  if (state) {
+    const ts = (a.target_states || []).map(s => String(s).toLowerCase());
+    const national = !ts.length;
+    if (!national && !ts.some(s => s.includes(state))) return false;
+  }
+  const hasAudio = Object.keys(a.audios || {}).length > 0;
+  const hasVideo = !!a.video_url;
+  if (media === 'no-audio' && hasAudio) return false;
+  if (media === 'has-audio' && !hasAudio) return false;
+  if (media === 'no-video' && hasVideo) return false;
+  if (media === 'has-video' && !hasVideo) return false;
+  return true;
+}
 
 function renderArAssetsTable(assets) {
   const tbody = document.getElementById('ar-assets-tbody');
   if (!tbody) return;
-  if (!assets.length) {
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text2);padding:24px">No AR assets uploaded yet. Use the upload section above.</td></tr>';
+  window._arAll = Object.fromEntries((assets || []).map(a => [a.id, a]));
+  const rows = (assets || []).filter(_arPassesFilters);
+  window._arRows = Object.fromEntries(rows.map(a => [a.id, a]));
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--text2);padding:24px">No AR assets match the current filters.</td></tr>';
+    _syncBulkButtons();
     return;
   }
-  window._arRows = Object.fromEntries(assets.map(a => [a.id, a]));
-  tbody.innerHTML = assets.map(a => `
+  tbody.innerHTML = rows.map(a => `
     <tr>
+      <td><input type="checkbox" class="ar-row-check" value="${a.id}" onchange="_syncBulkButtons()"></td>
       <td><strong>${escHtml(a.title||a.original_name||'Unnamed')}</strong><div style="font-size:10px;color:var(--text3)">${releaseSummary(a)}</div></td>
       <td>${escHtml(a.class_name||'—')}</td>
       <td>${escHtml(a.subject||'—')}</td>
@@ -6053,15 +6204,19 @@ function renderArAssetsTable(assets) {
       <td><span class="quiz-status-${a.status==='published'?'live':'draft'}">${a.status||'uploaded'}</span></td>
       <td style="font-size:11px">${a.created_at ? new Date(a.created_at).toLocaleDateString('en-IN') : '—'}</td>
       <td>
-        <div style="display:flex;gap:4px">
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
           ${a.status !== 'published' ? `<button class="btn btn-g btn-sm" onclick="publishArAsset('${a.id}')">▶ Publish</button>` : ''}
-          <button class="btn btn-s btn-sm" onclick="openReleaseModal('ar','${a.id}')" title="When students can see it">📅 Release</button>
-          <button class="btn btn-r btn-sm" onclick="deleteArAsset('${a.id}',this)" title="Archive">✕</button>
+          <button class="btn btn-s btn-sm" onclick="openReleaseModal('ar','${a.id}')" title="When students can see it">📅</button>
+          <button class="btn btn-s btn-sm" onclick="replaceArMedia('${a.id}','model')" title="Replace 3D model">🔁 Model</button>
+          <button class="btn btn-s btn-sm" onclick="regenArAsset('${a.id}','model')" title="Rebuild model from original">♻ Draco</button>
+          <button class="btn btn-s btn-sm" onclick="regenArAsset('${a.id}','transcode')" title="Re-compress audio">♻ Audio</button>
+          <button class="btn btn-s btn-sm" onclick="downloadArOriginal('${a.id}')" title="Download original GLB">⬇ GLB</button>
+          <button class="btn btn-r btn-sm" onclick="deleteArAsset('${a.id}')" title="Delete">✕</button>
         </div>
       </td>
     </tr>
     <tr>
-      <td colspan="10" style="padding:8px 12px 14px;border-top:1px dashed var(--border, #333)">
+      <td colspan="11" style="padding:8px 12px 14px;border-top:1px dashed var(--border, #333)">
         <div style="font-size:12px;color:var(--text2)">
           <strong>Narration languages</strong> (students see only those allowed for their state):
           <span id="audios-chips-${a.id}" style="margin-left:6px">
@@ -6079,11 +6234,42 @@ function renderArAssetsTable(assets) {
               <option value="or">ଓଡ଼ିଆ (or)</option><option value="as">অসমীয়া (as)</option>
             </select>
             <input type="file" id="lang-file-${a.id}" accept="audio/*" style="font-size:11px">
-            <button class="btn btn-s btn-sm" onclick="addLangAudio('${a.id}')">+ Add narration</button>
+            <button class="btn btn-s btn-sm" onclick="addLangAudio('${a.id}')">+ Add narration (manual)</button>
+          </div>
+          <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border,#333)">
+            <div style="font-weight:600;margin-bottom:6px">🗣 Generate with Bhashini</div>
+            <textarea class="inp" id="bh-text-${a.id}" rows="2" placeholder="Narration text (source language). Translation to each ticked language happens if NMT is enabled." style="width:100%;font-size:12px;margin-bottom:6px"></textarea>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+              <label style="font-size:11px">Voice:
+                <select class="sel" id="bh-gender-${a.id}" style="width:90px">
+                  <option value="female">Female</option><option value="male">Male</option>
+                </select>
+              </label>
+              <span id="bh-langs-${a.id}" style="display:flex;gap:8px;flex-wrap:wrap;font-size:11px"></span>
+            </div>
+            <button class="btn btn-p btn-sm" onclick="generateBhashiniNarration('${a.id}')">⚡ Generate ticked languages</button>
+            <span id="bh-status-${a.id}" style="font-size:11px;margin-left:8px;color:var(--text2)"></span>
           </div>
         </div>
       </td>
     </tr>`).join('');
+  // Populate the per-asset language tick lists after the table renders.
+  rows.forEach(a => _populateBhashiniLangs(a));
+  _syncBulkButtons();
+}
+
+function toggleAllArChecks(cb) {
+  document.querySelectorAll('.ar-row-check').forEach(c => { c.checked = cb.checked; });
+  _syncBulkButtons();
+}
+function _selectedArIds() {
+  return [...document.querySelectorAll('.ar-row-check:checked')].map(c => c.value);
+}
+function _syncBulkButtons() {
+  const n = _selectedArIds().length;
+  const del = document.getElementById('ar-bulk-del'), pub = document.getElementById('ar-bulk-pub');
+  if (del) del.style.display = n ? '' : 'none';
+  if (pub) pub.style.display = n ? '' : 'none';
 }
 
 async function publishArAsset(id) {
@@ -6091,13 +6277,73 @@ async function publishArAsset(id) {
   if (d) { showToast('✅ Published — students see it according to its 📅 Release setting'); refreshArAssetList(); }
 }
 
-async function deleteArAsset(id, btn) {
-  if (!confirm('Permanently delete this AR asset and its uploaded files? This cannot be undone.')) return;
-  const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!d) return;                      // safeFetch already showed the error
-  btn?.closest('tr')?.remove();
-  delete (window._arRows || {})[id];
+// Type-to-confirm delete (no undo window, immediate backend delete).
+async function deleteArAsset(id) {
+  const a = (window._arAll || {})[id] || {};
+  const name = a.title || a.original_name || id;
+  const okDel = await arConfirm({ title: 'Delete AR asset', message: `This permanently deletes "${name}" and all its files. This cannot be undone.`, typeToConfirm: 'DELETE', okLabel: 'Delete' });
+  if (!okDel) return;
+  const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}`, {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true })
+  });
+  if (!d) return;
   showToast('🗑️ Asset deleted');
+  refreshArAssetList();
+}
+
+function replaceArMedia(id, field) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = field === 'model' ? '.glb,.gltf' : field === 'image' ? 'image/*' : field === 'video' ? 'video/*' : 'audio/*';
+  inp.onchange = async () => {
+    if (!inp.files[0]) return;
+    const fd = new FormData();
+    fd.append('file', inp.files[0]);
+    fd.append('field', field);
+    showToast('⏳ Replacing ' + field + '…');
+    const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}/replace`, { method: 'POST', body: fd });
+    if (d) { showToast('✅ ' + field + ' replaced'); refreshArAssetList(); }
+  };
+  inp.click();
+}
+
+async function regenArAsset(id, kind) {
+  if (!(await arConfirm({ title: 'Regenerate', message: `Regenerate (${kind}) for this asset?`, okLabel: 'Regenerate' }))) return;
+  showToast('⏳ Regenerating ' + kind + '…');
+  const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}/regenerate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind })
+  });
+  if (d) { showToast('✅ Regenerated (' + kind + ')'); refreshArAssetList(); }
+}
+
+async function downloadArOriginal(id) {
+  const url = `/api/ar/assets/${encodeURIComponent(id)}/original`;
+  const r = await fetch(url, { headers: authHeaders() });
+  if (!r.ok) { showToast('⚠ No original GLB stored for this asset'); return; }
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = id + '_original.glb';
+  document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 0);
+}
+
+async function bulkDeleteSelected() {
+  const ids = _selectedArIds();
+  if (!ids.length) return;
+  if (!(await arConfirm({ title: 'Delete selected assets', message: `Permanently delete ${ids.length} asset(s) and their files. This cannot be undone.`, typeToConfirm: 'DELETE', okLabel: 'Delete' }))) return;
+  const d = await safeFetch('/api/ar/assets/bulk', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, action: 'delete' })
+  });
+  if (d) { showToast('🗑️ Deleted ' + ids.length + ' asset(s)'); refreshArAssetList(); }
+}
+
+async function bulkPublishSelected() {
+  const ids = _selectedArIds();
+  if (!ids.length) return;
+  const d = await safeFetch('/api/ar/assets/bulk', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, action: 'publish' })
+  });
+  if (d) { showToast('▶ Published ' + ids.length + ' asset(s)'); refreshArAssetList(); }
 }
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CURRICULUM SUMMARY — Build, filter, export

@@ -13,6 +13,7 @@ const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('..
 const { stripFields } = require('../lib/writeGuard');
 const log = require('../lib/logger');
 const { transcodeNarration } = require('../lib/audioTranscode');
+const bhashini = require('../lib/bhashini');
 // NOTE: fs and UPLOAD_DIR removed — all file I/O now goes through lib/storage.js
 // In dev (no STORAGE_BUCKET set): files save to ./uploads/ on local disk
 // In prod (STORAGE_BUCKET set):   files save to GCS bucket → later swapped to R2
@@ -603,6 +604,76 @@ router.delete('/assets/:id/audio/:lang', requirePerm('perm_upload_unity'), async
   } catch (e) {
     return res.status(500).json({ error: 'Failed to remove language audio', detail: e.message });
   }
+});
+
+// ── Bhashini health-check (verify keys from the dashboard with one click) ─────
+router.get('/bhashini/health', requirePerm('perm_upload_unity'), async (req, res) => {
+  if (!bhashini.isConfigured()) return res.json({ configured: false, message: 'Bhashini keys not set in environment' });
+  try {
+    await bhashini.getConfig('tts', 'hi'); // a cheap config call proves the keys work
+    return res.json({ configured: true, ok: true, message: 'Bhashini keys valid' });
+  } catch (e) {
+    return res.json({ configured: true, ok: false, message: 'Keys set but call failed', detail: e.message });
+  }
+});
+
+// ── Available TTS voices for a language (dynamic dropdown) ─────────────────────
+router.get('/bhashini/voices/:lang', requirePerm('perm_upload_unity'), async (req, res) => {
+  const voices = await bhashini.ttsVoices((req.params.lang || '').toLowerCase());
+  res.json({ lang: req.params.lang, voices });
+});
+
+// ── Generate narration with Bhashini for one or more languages ────────────────
+// body: { languages: ['hi','gu',...], text: '...' | texts: {hi:'...',gu:'...'}, gender }
+// Generates TTS → transcodes Opus+AAC → stores → updates audios/audios_aac.
+// Languages with no voice are returned in `needs_manual` for manual upload.
+router.post('/assets/:id/narration', requirePerm('perm_upload_unity'), async (req, res) => {
+  const { id } = req.params;
+  if (!bhashini.isConfigured()) return res.status(503).json({ error: 'Bhashini not configured' });
+  const db  = getFirestore();
+  const ref = db.collection('ar_assets').doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) return res.status(404).json({ error: 'Asset not found' });
+  const data = snap.data();
+  const languages = Array.isArray(req.body.languages) ? req.body.languages.map(l => String(l).toLowerCase()) : [];
+  const texts = req.body.texts || {};
+  const singleText = req.body.text || '';
+  const gender = (req.body.gender || 'female').toLowerCase();
+  if (!languages.length) return res.status(400).json({ error: 'No languages given' });
+
+  const pub = (k) => process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${k}` : `/api/ar/file/${k.replace('ar_assets/', '')}`;
+  const audios = { ...(data.audios || {}) }, audios_aac = { ...(data.audios_aac || {}) };
+  const done = [], needs_manual = [], failed = [];
+
+  for (const lang of languages) {
+    const text = (texts[lang] || singleText || '').trim();
+    if (!text) { failed.push({ lang, error: 'no text' }); continue; }
+    try {
+      const voices = await bhashini.ttsVoices(lang);
+      // If the config lists voices and none exist for this lang → manual fallback.
+      const { audio } = await bhashini.tts(text, lang, { gender });
+      let opus, aac;
+      try { ({ opus, aac } = await transcodeNarration(audio)); }
+      catch (tc) { failed.push({ lang, error: 'transcode: ' + tc.message }); continue; }
+      await storage.putRaw(opus, `ar_assets/${id}_audio_${lang}.opus`, { contentType: 'audio/ogg' });
+      await storage.putRaw(aac,  `ar_assets/${id}_audio_${lang}.m4a`,  { contentType: 'audio/aac' });
+      audios[lang] = pub(`ar_assets/${id}_audio_${lang}.opus`);
+      audios_aac[lang] = pub(`ar_assets/${id}_audio_${lang}.m4a`);
+      done.push(lang);
+    } catch (e) {
+      if (String(e.message).includes('No audio') || String(e.message).toLowerCase().includes('voice')) {
+        needs_manual.push(lang);           // no usable voice → prompt manual upload
+      } else {
+        failed.push({ lang, error: e.message });
+      }
+    }
+  }
+
+  const engine = { ...(data.audio_engine || {}) };
+  done.forEach(l => { engine[l] = 'bhashini'; });
+  await ref.set({ audios, audios_aac, audio_engine: engine, updated_at: new Date() }, { merge: true });
+  await invalidateManifests(db);
+  res.json({ message: 'Narration generated', id, done, needs_manual, failed, audios });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
