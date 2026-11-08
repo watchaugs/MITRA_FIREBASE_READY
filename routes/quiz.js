@@ -417,6 +417,61 @@ router.post('/bulk-upload', requirePerm('perm_edit_curriculum'), async (req, res
   }
 });
 
+// ── POST /bulk-upload-grouped — one flat sheet → many quizzes ────────────────
+// body: { rows: [ {Class,Subject,Topic,State,"Source Language",question_text,A,B,C,D,Answer,Explanation}, ...] }
+// Groups rows by Class + Subject + Topic(normalized) + State → one quiz each.
+router.post('/bulk-upload-grouped', requirePerm('perm_edit_curriculum'), async (req, res) => {
+  const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
+  if (!rows.length) return res.status(400).json({ error: 'No rows' });
+  const db = getFirestore();
+  const normTopic = (t) => String(t || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const groups = new Map();
+  for (const r of rows) {
+    const cls = String(r.class || r.Class || '').trim();
+    const subj = String(r.subject || r.Subject || '').trim();
+    const topic = String(r.topic || r.Topic || '').trim();
+    const state = String(r.state || r.State || '').trim() || 'All India';
+    const qtext = String(r.question_text || r.Question || '').trim();
+    if (!cls || !subj || !topic || !qtext) continue;
+    const key = [cls, subj, normTopic(topic), state].join('||');
+    if (!groups.has(key)) groups.set(key, {
+      class_name: cls, subject: subj, topic, state,
+      source_language: String(r.source_language || r['Source Language'] || 'en').toLowerCase(),
+      questions: [],
+    });
+    groups.get(key).questions.push({
+      question_text: qtext,
+      options: [r.A, r.B, r.C, r.D].map(x => String(x ?? '').trim()).filter(Boolean),
+      correct_answer_index: ['A','B','C','D'].indexOf(String(r.answer || r.Answer || 'A').trim().toUpperCase()),
+      explanation: String(r.explanation || r.Explanation || '').trim(),
+    });
+  }
+  if (!groups.size) return res.status(400).json({ error: 'No complete rows found' });
+
+  const created = [];
+  for (const g of groups.values()) {
+    const id = uuidv4();
+    const targetStates = /^all india$/i.test(g.state) ? [] : [g.state];
+    await db.collection('quizzes').doc(id).set({
+      title: `${g.subject} — ${g.topic} (${g.class_name})`,
+      class_name: g.class_name, subject: g.subject, topic: g.topic,
+      topic_key: normTopic(g.topic),
+      language: g.source_language,
+      target_states: parseTargetStates(targetStates),
+      status: 'draft', question_count: g.questions.length,
+      created_by: req.user.id, created_at: new Date(),
+    });
+    const batch = db.batch();
+    g.questions.forEach((q, i) => {
+      const ref = db.collection('quizzes').doc(id).collection('questions').doc();
+      batch.set(ref, { ...q, sort_order: i, created_at: new Date() });
+    });
+    await batch.commit();
+    created.push({ quiz_id: id, class: g.class_name, subject: g.subject, topic: g.topic, state: g.state, questions: g.questions.length });
+  }
+  res.json({ success: true, created_quizzes: created.length, created_questions: created.reduce((s,c)=>s+c.questions,0), quizzes: created });
+});
+
 // ── POST /:id/translate — NMT a quiz into target languages ────────────────────
 // body: { target_langs: ['gu','ta',...], source_lang?: 'en', force?: bool }
 // - Skips if the quiz's SUBJECT is a language lesson, UNLESS force=true.
@@ -438,9 +493,12 @@ router.post('/:id/translate', requirePerm('perm_edit_curriculum'), async (req, r
   }
 
   const srcCode = (req.body.source_lang || LANG_NAME_TO_CODE[String(quiz.language || '').toLowerCase()] || 'en').toLowerCase();
-  const targets = (Array.isArray(req.body.target_langs) ? req.body.target_langs : [])
-    .map(l => String(l).toLowerCase()).filter(l => l && l !== srcCode);
-  if (!targets.length) return res.status(400).json({ error: 'No target languages' });
+  const { languagesForStates } = require('../lib/stateLang');
+  let targets = (Array.isArray(req.body.target_langs) ? req.body.target_langs : [])
+    .map(l => String(l).toLowerCase());
+  if (!targets.length) targets = languagesForStates(quiz.target_states || []); // auto from states
+  targets = targets.filter(l => l && l !== srcCode);
+  if (!targets.length) return res.status(400).json({ error: 'No target languages (no states set and none given)' });
 
   // Load source questions once.
   const qSnap = await srcRef.collection('questions').orderBy('sort_order').get();

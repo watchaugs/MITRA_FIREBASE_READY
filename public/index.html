@@ -4849,7 +4849,33 @@ function openQuizTranslate(id) {
   const srcCode = (q.language || '').toLowerCase();
   document.getElementById('qtr-langs').innerHTML = _QTR_LANGS
     .filter(([c]) => c !== srcCode)
-    .map(([c, name]) => `<label style="display:inline-flex;align-items:center;gap:3px"><input type="checkbox" class="qtr-lang" value="${c}"
+    .map(([c, name]) => `<label style="display:inline-flex;align-items:center;gap:3px"><input type="checkbox" class="qtr-lang" value="${c}" style="width:auto"> ${name} (${c})</label>`)
+    .join('');
+  document.getElementById('qtr-status').textContent = '';
+  openModal('modal-quiz-translate');
+}
+function _isLanguageSubjectName(subject) {
+  const s = String(subject || '').trim().toLowerCase();
+  return ['english','hindi','bengali','bangla','gujarati','marathi','tamil','telugu','kannada','malayalam','punjabi','odia','oriya','assamese','urdu','sanskrit','sindhi','nepali','konkani','manipuri','meitei','bodo','santhali','santali','dogri','kashmiri','maithili','grammar','language'].includes(s);
+}
+async function runQuizTranslate() {
+  if (!_qtrId) return;
+  const targets = [...document.querySelectorAll('.qtr-lang:checked')].map(c => c.value);
+  const force = document.getElementById('qtr-force')?.checked || false;
+  const st = document.getElementById('qtr-status');
+  if (!targets.length) { st.textContent = '⚠ Tick at least one language'; return; }
+  st.textContent = '⏳ Translating ' + targets.length + ' language(s)… (this can take a moment)';
+  const d = await safeFetch(`/api/quiz/${encodeURIComponent(_qtrId)}/translate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_langs: targets, force })
+  });
+  if (!d) { st.textContent = '✗ Failed (check Bhashini keys)'; return; }
+  let msg = '✅ ' + (d.created || []).length + ' variant(s) created — each needs review before publish';
+  if ((d.failed || []).length) msg += ' · ✗ ' + d.failed.length + ' failed';
+  st.textContent = msg;
+  showToast('Quiz: ' + msg);
+  setTimeout(() => { closeModal('modal-quiz-translate'); loadQuizList(); loadQuizManagerStats && loadQuizManagerStats(); }, 1500);
+}
 
 async function publishQuizNow() {
   const id = document.getElementById('qm-pub-quiz').value;
@@ -4895,29 +4921,32 @@ function handleQuizFileSelect(event) {
 async function submitQuizBulkUpload() {
   if (!quizUploadFile) return showToast('No file selected');
   const statusEl = document.getElementById('quiz-upload-status');
-  statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Uploading...</span>';
-  const formData = new FormData();
-  formData.append('file', quizUploadFile);
+  statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Reading sheet…</span>';
   try {
-    const token = localStorage.getItem('mitra_token') || '';
-    const res = await fetch('/api/quiz/bulk-upload', {
-      method:'POST',
-      headers: token ? { 'Authorization': 'Bearer ' + token } : {},
-      body: formData
+    const wb = XLSX.read(await quizUploadFile.arrayBuffer(), { type: 'array' });
+    const sheetName = wb.SheetNames.find(n => !['lists','read me first'].includes(n.toLowerCase())) || wb.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '' });
+    const clean = rows.filter(r => String(r.question_text || r.Question || '').trim());
+    if (!clean.length) { statusEl.innerHTML = '<span style="color:var(--red)">❌ No question rows found on the Quizzes tab.</span>'; return; }
+
+    const norm = t => String(t||'').trim().toLowerCase().replace(/\s+/g,' ');
+    const groups = new Set(clean.map(r => [r.Class||r.class, r.Subject||r.subject, norm(r.Topic||r.topic), r.State||r.state||'All India'].join('||')));
+    if (!confirm(`This file has ${clean.length} questions → ${groups.size} quiz(zes). Proceed?`)) { statusEl.innerHTML=''; return; }
+
+    statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Creating quizzes…</span>';
+    const d = await safeFetch('/api/quiz/bulk-upload-grouped', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: clean })
     });
-    if (res.ok) {
-      const data = await res.json();
-      statusEl.innerHTML = `<span style="color:var(--accent3)">✅ Imported ${data.created_quizzes} quizzes, ${data.created_questions} questions${data.errors?.length ? ` · ${data.errors.length} warnings` : ''}</span>`;
-      const qub = document.getElementById('quiz-upload-btn');
-      qub.disabled = true; qub.style.opacity = '.35'; qub.style.cursor = 'not-allowed';
-      qub.style.boxShadow = ''; qub.style.transform = '';
-      quizUploadFile = null;
-      loadQuizManagerStats();
-    } else {
-      statusEl.innerHTML = '<span style="color:var(--red)">❌ Upload failed — check backend connection</span>';
-    }
-  } catch(e) {
-    statusEl.innerHTML = '<span style="color:var(--red)">❌ Upload failed — network error. Please retry.</span>';
+    if (!d) { statusEl.innerHTML = '<span style="color:var(--red)">❌ Upload failed.</span>'; return; }
+    statusEl.innerHTML = `<span style="color:var(--accent3)">✅ Created ${d.created_quizzes} quiz(zes), ${d.created_questions} questions. Now click 🌐 Translate on each to generate its state's languages.</span>`;
+    quizUploadFile = null;
+    const qub = document.getElementById('quiz-upload-btn');
+    if (qub) { qub.disabled = true; qub.style.opacity = '.35'; qub.style.cursor = 'not-allowed'; qub.style.boxShadow = ''; qub.style.transform = ''; }
+    loadQuizList && loadQuizList();
+    loadQuizManagerStats && loadQuizManagerStats();
+  } catch (e) {
+    statusEl.innerHTML = '<span style="color:var(--red)">❌ ' + (e.message || 'Upload failed') + '</span>';
   }
 }
 
@@ -9185,38 +9214,17 @@ async function executeBulkQuizAction(action) {
 }
 
 // --- Secure File Download (Excel) ---
-async function downloadBulkTemplate() {
-  try {
-    showToast('Downloading template...');
-    
-    // Fetch the file securely with your ID badge
-    const response = await fetch('/api/quiz/template', {
-      method: 'GET',
-      headers: authHeaders() 
-    });
-
-    if (!response.ok) throw new Error('Failed to download');
-
-    // Convert the response into a downloadable file
-    const blob = await response.blob();
-    const downloadUrl = window.URL.createObjectURL(blob);
-
-    // Create the link with the correct .xlsx extension
-    const a = document.createElement('a');
-    a.style.display = 'none';
-    a.href = downloadUrl;
-    a.download = 'MITRA_Quiz_Upload_Template.xlsx'; 
-    document.body.appendChild(a);
-    a.click();
-    
-    // Clean up
-    window.URL.revokeObjectURL(downloadUrl);
-    a.remove();
-    
-  } catch (error) {
-    console.error('Template Download Error:', error);
-    showToast('Error downloading template. Please check connection.');
-  }
+function downloadBulkTemplate() {
+  // Serves the static v5 template from /public — the single-sheet format the
+  // grouped upload expects (Class/Subject/Topic/State per row).
+  showToast('Downloading template...');
+  const a = document.createElement('a');
+  a.style.display = 'none';
+  a.href = '/MITRA_Quiz_Upload_v5.xlsx';
+  a.download = 'MITRA_Quiz_Upload_v5.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 
