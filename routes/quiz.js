@@ -12,6 +12,44 @@ const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('..
 const { stripFields } = require('../lib/writeGuard');
 const LIVE_STATUSES = new Set(['live', 'published']);
 const log = require('../lib/logger');
+const bhashini = require('../lib/bhashini');
+
+// The 22 scheduled languages (+ common names). A quiz whose SUBJECT is one of
+// these is a language lesson → never auto-translated (stays single-language).
+const LANGUAGE_SUBJECTS = new Set([
+  'english','hindi','bengali','bangla','gujarati','marathi','tamil','telugu','kannada',
+  'malayalam','punjabi','odia','oriya','assamese','urdu','sanskrit','sindhi','nepali',
+  'konkani','manipuri','meitei','bodo','santhali','santali','dogri','kashmiri','maithili',
+  'grammar','language','mother tongue','first language','second language','third language',
+]);
+function isLanguageSubject(subject) {
+  return LANGUAGE_SUBJECTS.has(String(subject || '').trim().toLowerCase());
+}
+// Map a language display name → Bhashini code (extend as needed).
+const LANG_NAME_TO_CODE = {
+  english:'en', hindi:'hi', bengali:'bn', bangla:'bn', gujarati:'gu', marathi:'mr',
+  tamil:'ta', telugu:'te', kannada:'kn', malayalam:'ml', punjabi:'pa', odia:'or', oriya:'or',
+  assamese:'as', urdu:'ur', sanskrit:'sa', nepali:'ne', konkani:'kok', manipuri:'mni',
+  bodo:'brx', santhali:'sat', santali:'sat', dogri:'doi', kashmiri:'ks', maithili:'mai', sindhi:'sd',
+};
+// Protect numbers, formulae, units, {placeholders} from being translated.
+function _guardTokens(text) {
+  const tokens = [];
+  const guarded = String(text || '').replace(
+    /(\{[^}]+\}|\$[^$]+\$|\b\d+(?:[.,]\d+)?\s?(?:%|kg|g|mg|km|m|cm|mm|ml|l|°[CF]?)?\b|[A-Za-z]+\d|\b[A-Z]{2,}\b)/g,
+    (m) => { tokens.push(m); return `\u0000${tokens.length - 1}\u0000`; }
+  );
+  return { guarded, tokens };
+}
+function _restoreTokens(text, tokens) {
+  return String(text || '').replace(/\u0000(\d+)\u0000/g, (_, i) => tokens[Number(i)] ?? '');
+}
+async function _tr(text, src, tgt) {
+  if (!text) return text;
+  const { guarded, tokens } = _guardTokens(text);
+  const out = await bhashini.translate(guarded, src, tgt);
+  return _restoreTokens(out, tokens);
+}
 router.use((req, res, next) => {
   // Cloud Scheduler calls /dispatch-scheduled with a shared secret (no user token).
   if (req.path === '/dispatch-scheduled' &&
@@ -377,6 +415,99 @@ router.post('/bulk-upload', requirePerm('perm_edit_curriculum'), async (req, res
   } catch (err) {
     res.status(500).json({ error: 'Bulk upload failed', detail: err.message });
   }
+});
+
+// ── POST /:id/translate — NMT a quiz into target languages ────────────────────
+// body: { target_langs: ['gu','ta',...], source_lang?: 'en', force?: bool }
+// - Skips if the quiz's SUBJECT is a language lesson, UNLESS force=true.
+// - Each target → a NEW quiz doc, status 'submitted' (needs per-language review),
+//   sharing translation_group, same class/subject/topic, tagged language.
+// - Translates question_text/options/explanation; keeps correct_answer_index,
+//   numbers, formulae, {placeholders} verbatim.
+router.post('/:id/translate', requirePerm('perm_edit_curriculum'), async (req, res) => {
+  if (!bhashini.isConfigured()) return res.status(503).json({ error: 'Bhashini not configured' });
+  const db = getFirestore();
+  const srcRef = db.collection('quizzes').doc(req.params.id);
+  const srcSnap = await srcRef.get();
+  if (!srcSnap.exists) return res.status(404).json({ error: 'Quiz not found' });
+  const quiz = srcSnap.data();
+  const force = req.body.force === true || req.body.force === 'true';
+
+  if (isLanguageSubject(quiz.subject) && !force) {
+    return res.status(409).json({ error: 'Language-subject quiz is not auto-translated', subject: quiz.subject, hint: 'send force:true to override' });
+  }
+
+  const srcCode = (req.body.source_lang || LANG_NAME_TO_CODE[String(quiz.language || '').toLowerCase()] || 'en').toLowerCase();
+  const targets = (Array.isArray(req.body.target_langs) ? req.body.target_langs : [])
+    .map(l => String(l).toLowerCase()).filter(l => l && l !== srcCode);
+  if (!targets.length) return res.status(400).json({ error: 'No target languages' });
+
+  // Load source questions once.
+  const qSnap = await srcRef.collection('questions').orderBy('sort_order').get();
+  const srcQuestions = qSnap.docs.map(d => d.data());
+  const groupId = quiz.translation_group || req.params.id;
+  if (!quiz.translation_group) await srcRef.update({ translation_group: groupId });
+
+  const created = [], failed = [];
+  for (const tgt of targets) {
+    try {
+      const newId = uuidv4();
+      // Translate quiz-level title.
+      const title = await _tr(quiz.title || '', srcCode, tgt);
+      await db.collection('quizzes').doc(newId).set({
+        title,
+        class_name: quiz.class_name || null,
+        subject:    quiz.subject || null,
+        topic:      quiz.topic || null,
+        language:   tgt,
+        target_states: quiz.target_states || [],
+        translation_group: groupId,
+        translated_from: req.params.id,
+        machine_translated: true,
+        status: 'submitted',            // per-language review gate
+        created_by: req.user.id,
+        created_at: new Date(),
+        question_count: srcQuestions.length,
+      });
+      // Translate each question (answer key index untouched).
+      const batch = db.batch();
+      for (let i = 0; i < srcQuestions.length; i++) {
+        const q = srcQuestions[i];
+        const options = Array.isArray(q.options) ? q.options : [];
+        const trOptions = [];
+        for (const opt of options) trOptions.push(await _tr(opt, srcCode, tgt));
+        const ref = db.collection('quizzes').doc(newId).collection('questions').doc();
+        batch.set(ref, {
+          question_text: await _tr(q.question_text || '', srcCode, tgt),
+          options: trOptions,
+          correct_answer_index: q.correct_answer_index ?? 0,   // NEVER translated
+          explanation: await _tr(q.explanation || '', srcCode, tgt),
+          sort_order: q.sort_order ?? i,
+          created_at: new Date(),
+        });
+      }
+      await batch.commit();
+      created.push({ lang: tgt, quiz_id: newId });
+    } catch (e) {
+      failed.push({ lang: tgt, error: e.message });
+    }
+  }
+  res.json({ message: 'Translation complete — review each language before publish', group: groupId, created, failed });
+});
+
+// ── POST /extract-subjects — read an uploaded quiz XLSX, return distinct subjects
+// Powers the manual force-translate picker. Accepts the parsed rows from the
+// browser (same rows bulk-upload uses) OR a raw sheet already parsed client-side.
+router.post('/extract-subjects', requirePerm('perm_edit_curriculum'), async (req, res) => {
+  const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
+  const subjects = {};
+  for (const r of rows) {
+    const subj = (r.subject || r.Subject || '').trim();
+    if (!subj) continue;
+    if (!subjects[subj]) subjects[subj] = { subject: subj, count: 0, is_language_subject: isLanguageSubject(subj) };
+    subjects[subj].count++;
+  }
+  res.json({ subjects: Object.values(subjects) });
 });
 
 // ── GET /template — Download a blank XLSX question template ──────────────────

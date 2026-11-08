@@ -802,7 +802,18 @@ router.post('/assets/:id/regenerate', requirePerm('perm_upload_unity'), async (r
       await invalidateManifests(db);
       return res.json({ message: 'Audio re-transcoded', id, languages: done });
     }
-    return res.status(400).json({ error: `Unknown kind "${kind}" (model|transcode; tts/nmt in later phases)` });
+    if (kind === 'nmt') {
+      if (!bhashini.isConfigured()) return res.status(503).json({ error: 'Bhashini not configured' });
+      const src = (req.body.source_lang || 'en').toLowerCase();
+      const targets = (Array.isArray(req.body.target_langs) ? req.body.target_langs : []).map(l => String(l).toLowerCase());
+      const text = req.body.text || '';
+      const out = {};
+      for (const t of targets) { try { out[t] = await bhashini.translate(text, src, t); } catch (e) { out[t] = null; } }
+      const narration_text = { ...(a.narration_text || {}), ...out };
+      await ref.set({ narration_text, updated_at: new Date() }, { merge: true });
+      return res.json({ message: 'Narration text translated', id, narration_text });
+    }
+    return res.status(400).json({ error: `Unknown kind "${kind}" (model|transcode|nmt)` });
   } catch (e) { return res.status(500).json({ error: 'Regenerate failed', detail: e.message }); }
 });
 

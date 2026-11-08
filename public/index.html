@@ -722,6 +722,24 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
   </div>
 </div>
   
+  <div class="modal-bg" id="modal-quiz-translate">
+    <div class="modal" style="max-width:520px">
+      <button class="modal-close" onclick="closeModal('modal-quiz-translate')">✕</button>
+      <div class="modal-title">🌐 Translate quiz</div>
+      <div class="modal-sub" id="qtr-sub">Pick target languages. Each becomes a reviewable language variant.</div>
+      <div id="qtr-langskip" style="display:none;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px">
+        ⚠ This quiz's subject is a <strong>language lesson</strong>. It is normally kept single-language.
+        <label style="display:block;margin-top:6px"><input type="checkbox" id="qtr-force" style="width:auto"> Force-translate anyway</label>
+      </div>
+      <div id="qtr-langs" style="display:flex;gap:10px;flex-wrap:wrap;font-size:12px;margin-bottom:16px"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn btn-s" onclick="closeModal('modal-quiz-translate')">Cancel</button>
+        <button class="btn btn-p" id="qtr-go" onclick="runQuizTranslate()">⚡ Translate</button>
+      </div>
+      <div id="qtr-status" style="font-size:12px;margin-top:10px;color:var(--text2)"></div>
+    </div>
+  </div>
+
   <div class="modal-bg" id="modal-ar-confirm">
     <div class="modal" style="max-width:460px">
       <button class="modal-close" onclick="_arConfirmResolve(false)">✕</button>
@@ -4769,6 +4787,7 @@ async function loadQuizList() {
             ${!['live','published'].includes(q.status) ? `<button class="btn btn-g btn-sm" onclick="quickPublishQuiz('${q.id}')">▶ Live</button>` : ''}
             ${['live','published'].includes(q.status) ? `<button class="btn btn-s btn-sm" onclick="quickPauseQuiz('${q.id}')">⏸</button>` : ''}
             <button class="btn btn-s btn-sm" onclick="openReleaseModal('quiz','${q.id}')" title="When students can see it">📅</button>
+            <button class="btn btn-s btn-sm" onclick="openQuizTranslate('${q.id}')" title="Translate to other languages">🌐 Translate</button>
           </div>
         </td>
       </tr>
@@ -4811,6 +4830,26 @@ async function quickPauseQuiz(id) {
     else showToast('Pause failed');
   } catch(e) { showToast('Pause failed — network error'); }
 }
+
+// ── Quiz translation (Phase 6) ───────────────────────────────────────────────
+let _qtrId = null;
+const _QTR_LANGS = [
+  ['hi','हिंदी'],['en','English'],['gu','ગુજરાતી'],['mr','मराठी'],['ta','தமிழ்'],['te','తెలుగు'],
+  ['kn','ಕನ್ನಡ'],['ml','മലയാളം'],['bn','বাংলা'],['pa','ਪੰਜਾਬੀ'],['or','ଓଡ଼ିଆ'],['as','অসমীয়া'],
+  ['ur','اردو'],['sa','संस्कृत'],['ne','नेपाली'],['kok','कोंकणी'],['mni','ꯃꯅꯤꯄꯨꯔ'],['brx','बड़ो'],
+  ['sat','ᱥᱟᱱᱛᱟᱲᱤ'],['doi','डोगरी'],['ks','کٲشُر'],['mai','मैथिली'],['sd','سنڌي'],
+];
+function openQuizTranslate(id) {
+  _qtrId = id;
+  const q = (window._quizRows || {})[id] || {};
+  const isLangSubj = _isLanguageSubjectName(q.subject);
+  document.getElementById('qtr-sub').textContent = `"${q.title || id}" — pick target languages. Each becomes a reviewable variant (status: submitted).`;
+  document.getElementById('qtr-langskip').style.display = isLangSubj ? 'block' : 'none';
+  document.getElementById('qtr-force').checked = false;
+  const srcCode = (q.language || '').toLowerCase();
+  document.getElementById('qtr-langs').innerHTML = _QTR_LANGS
+    .filter(([c]) => c !== srcCode)
+    .map(([c, name]) => `<label style="display:inline-flex;align-items:center;gap:3px"><input type="checkbox" class="qtr-lang" value="${c}"
 
 async function publishQuizNow() {
   const id = document.getElementById('qm-pub-quiz').value;
