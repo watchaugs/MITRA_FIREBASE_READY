@@ -48,15 +48,39 @@ async function buildReportData({ month, scope, gender }) {
   // ── Pull sessions for the period ───────────────────────────────────────────
   try {
     const db = require('../lib/firebase').getFirestore();
-    let q = db.collection('telemetry_sessions');
-    if (scope && scope !== 'All India') q = q.where('state', '==', scope);
+    // The app writes session events to the 'sessions' collection (batched).
+    // Use a collectionGroup so batched sub-docs are included, then normalise
+    // each event to the flat shape this report expects.
+    const snap = await db.collectionGroup('sessions').limit(100000).get();
+    let S = snap.docs.map(x => {
+      const e = x.data() || {};
+      return {
+        student_id: e.student_id,
+        device_id: e.device_id,
+        school_id: e.school_code || e.school_id,
+        district: e.district,
+        state: e.state,
+        gender: e.gender,
+        session_minutes: e.session_minutes != null
+          ? e.session_minutes
+          : (e.duration_seconds != null ? Math.ceil(e.duration_seconds / 60) : 0),
+        offline: e.offline_session === true || e.was_offline === true,
+        dropped_off: e.dropped_off === true,
+        network_type: e.network_quality || e.network_type,
+        created_at: e.created_at,
+        event_type: e.event_type,
+      };
+    });
+    // Period + scope filters applied in memory (collectionGroup can't compound-filter here).
+    if (scope && scope !== 'All India') S = S.filter(s => s.state === scope);
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       const [yy, mm] = month.split('-').map(Number);
-      q = q.where('created_at', '>=', new Date(Date.UTC(yy, mm - 1, 1)))
-           .where('created_at', '<',  new Date(Date.UTC(yy, mm, 1)));
+      const lo = new Date(Date.UTC(yy, mm - 1, 1)), hi = new Date(Date.UTC(yy, mm, 1));
+      S = S.filter(s => {
+        const t = s.created_at?.toDate ? s.created_at.toDate() : new Date(s.created_at);
+        return t >= lo && t < hi;
+      });
     }
-    const snap = await q.limit(100000).get();
-    const S = snap.docs.map(x => x.data());
     const total = S.length;
 
     if (total > 0) {

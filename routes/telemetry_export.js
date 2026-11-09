@@ -27,4 +27,18 @@ router.post('/telemetry-export', checkSecret, async (req, res) => {
   }
 });
 
+// CERT-In: purge audit logs older than the retention window (≥180 days).
+// Scheduled daily via Cloud Scheduler hitting this secured endpoint.
+router.post('/audit-retention-sweep', checkSecret, async (req, res) => {
+  try {
+    const { purgeOldAuditLogs } = require('../lib/auditRetention');
+    const { query } = require('../lib/db');
+    const purged = await purgeOldAuditLogs(query);
+    res.json({ ok: true, purged });
+  } catch (err) {
+    console.error('Audit retention sweep failed:', err);
+    res.status(500).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
 module.exports = router;

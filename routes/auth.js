@@ -41,7 +41,18 @@ async function isLockedOut(email) {
       .where('email', '==', email)
       .where('created_at', '>=', cutoff)
       .get();
-    return snap.size >= LOCKOUT_THRESHOLD;
+    const locked = snap.size >= LOCKOUT_THRESHOLD;
+    if (locked) {
+      // CERT-In: repeated failed logins = a reportable security event.
+      try {
+        require('../lib/auditLogger').flagSecurityIncident({
+          kind: 'repeated_failed_logins',
+          severity: 'medium',
+          details: { email_hash: require('crypto').createHash('sha256').update(email).digest('hex').slice(0, 16), attempts: snap.size },
+        });
+      } catch (_) {/* never block auth on logging */}
+    }
+    return locked;
   } catch (_) { return false; }
 }
 
