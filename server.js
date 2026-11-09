@@ -122,7 +122,14 @@ async function boot() {
     },
     crossOriginEmbedderPolicy: { policy: 'credentialless' },
     hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   }));
+
+  // Lock down powerful browser features the dashboard never uses.
+  app.use((req, res, next) => {
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+    next();
+  });
 
   app.use(compression());
 
