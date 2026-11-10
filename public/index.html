@@ -343,6 +343,14 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 .tbl thead, .tbl tbody, .data-table thead, .data-table tbody { display: table; width: 100%; min-width: 620px; }
 .tbl th, .tbl td, .data-table th, .data-table td { white-space: nowrap; }
 
+/* AR Assets table: fill the full window on desktop (the global min-width:620px
+   rule under-fills it). Still scrolls horizontally only if it truly overflows
+   on a narrow screen. */
+#ar-assets-table { width: 100%; }
+#ar-assets-table thead, #ar-assets-table tbody { min-width: 100%; width: 100%; }
+#ar-assets-table th, #ar-assets-table td { white-space: normal; }
+#ar-assets-table td:first-child, #ar-assets-table th:first-child { width: 28px; }
+
 /* APP GENERATOR SWATCHES */
 .color-swatch { width: 24px; height: 24px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: .2s; }
 .color-swatch:hover { transform: scale(1.1); }
@@ -2294,7 +2302,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     </div>
     <div class="data-table-wrap" style="margin-top:0">
-      <table class="tbl">
+      <table class="tbl" id="ar-assets-table">
         <thead>
           <tr>
             <th style="width:28px"><input type="checkbox" id="ar-check-all" onchange="toggleAllArChecks(this)"></th>
@@ -2351,16 +2359,38 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="g2">
             <div class="form-row">
               <label class="lbl">Accent colour</label>
-              <input class="inp" type="color" id="notif-color" value="#FF9933" style="height:42px;padding:4px">
+              <input class="inp" type="color" id="notif-color" value="#FF9933" oninput="updateNotifPreview()" style="height:42px;padding:4px">
             </div>
             <div class="form-row">
               <label class="lbl">Banner image URL (optional)</label>
-              <input class="inp" id="notif-image" placeholder="https://… (big picture in the notification)">
+              <input class="inp" id="notif-image" oninput="updateNotifPreview()" placeholder="https://… (big picture in the notification)">
             </div>
           </div>
           <div class="form-row" style="margin-top:8px">
             <label class="lbl">Emoji / icon badge (optional)</label>
-            <input class="inp" id="notif-emoji" maxlength="2" placeholder="📢" style="width:80px;text-align:center">
+            <select class="sel" id="notif-emoji" onchange="updateNotifPreview()" style="width:160px">
+              <option value="">— None —</option>
+              <option value="📢">📢 Announce</option>
+              <option value="🎓">🎓 Education</option>
+              <option value="📚">📚 Books</option>
+              <option value="🔔">🔔 Reminder</option>
+              <option value="⭐">⭐ Star</option>
+              <option value="🏆">🏆 Achievement</option>
+              <option value="🎯">🎯 Target</option>
+              <option value="🧪">🧪 Science</option>
+              <option value="🔬">🔬 Experiment</option>
+              <option value="🧮">🧮 Maths</option>
+              <option value="🌍">🌍 Geography</option>
+              <option value="📜">📜 History</option>
+              <option value="✏️">✏️ Quiz</option>
+              <option value="🎉">🎉 Celebrate</option>
+              <option value="🪔">🪔 Festival</option>
+              <option value="🇮🇳">🇮🇳 National</option>
+              <option value="📝">📝 Exam</option>
+              <option value="⏰">⏰ Deadline</option>
+              <option value="🚀">🚀 New</option>
+              <option value="💡">💡 Tip</option>
+            </select>
           </div>
         </div>
         <!-- Targeting -->
@@ -2424,14 +2454,15 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="background:#0f0f1a;border-radius:16px;padding:16px">
           <div style="font-size:10px;color:#888;margin-bottom:10px;text-align:center">Lock Screen Preview</div>
           <div style="background:#1e1e2e;border-radius:10px;padding:12px;display:flex;gap:10px;align-items:flex-start">
-            <div style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📚</div>
+            <div id="notif-preview-icon" style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📚</div>
             <div style="flex:1;min-width:0">
               <div style="font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:3px" id="notif-preview-title">Notification Title</div>
               <div style="font-size:11px;color:#94a3b8;line-height:1.4" id="notif-preview-body">Your notification body appears here...</div>
               <div id="notif-preview-deeplink" style="display:none;margin-top:6px;font-size:10px;color:#6ee7b7;background:rgba(16,185,129,.1);border-radius:4px;padding:3px 6px">🔗 Opens in MITRA app</div>
             </div>
           </div>
-          <div style="text-align:right;font-size:10px;color:#555;margin-top:6px">now · MITRA</div>
+          <div id="notif-preview-banner" style="display:none;margin-top:10px;height:120px;border-radius:10px;background-size:cover;background-position:center;background-repeat:no-repeat;border:1px solid #2a2a3e"></div>
+          <div style="text-align:right;font-size:10px;color:#555;margin-top:6px">now · MITRA · expand to see banner</div>
         </div>
       </div>
       <div class="card">
@@ -7409,10 +7440,33 @@ function toggleSchedulePicker(show) {
 function updateNotifPreview() {
   const title = document.getElementById('notif-title')?.value || 'Notification Title';
   const body  = document.getElementById('notif-body')?.value  || 'Your notification body appears here...';
+  const emoji = document.getElementById('notif-emoji')?.value || '';
+  const color = document.getElementById('notif-color')?.value || '#6366f1';
+  const banner = document.getElementById('notif-image')?.value?.trim() || '';
+
   const el1 = document.getElementById('notif-preview-title');
   const el2 = document.getElementById('notif-preview-body');
-  if (el1) el1.textContent = title;
+  // Emoji prefixes the title, as Android shows the badge inline.
+  if (el1) el1.textContent = (emoji ? emoji + '  ' : '') + title;
   if (el2) el2.textContent = body;
+
+  // Accent colour tints the notification icon (matches Android behaviour).
+  const icon = document.getElementById('notif-preview-icon');
+  if (icon) {
+    icon.style.background = `linear-gradient(135deg, ${color}, ${color})`;
+    icon.textContent = emoji || '📚';
+  }
+
+  // Banner image: shown below (BigPictureStyle appears on expand / in-app card).
+  const bannerEl = document.getElementById('notif-preview-banner');
+  if (bannerEl) {
+    if (banner) {
+      bannerEl.style.display = 'block';
+      bannerEl.style.backgroundImage = `url("${banner.replace(/"/g, '')}")`;
+    } else {
+      bannerEl.style.display = 'none';
+    }
+  }
 }
 
 async function sendNotification() {
