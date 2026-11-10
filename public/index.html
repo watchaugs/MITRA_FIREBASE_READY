@@ -2478,10 +2478,23 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
 
           <!-- Expanded -->
-          <div id="notif-preview-expanded-wrap" style="display:none">
-            <div style="font-size:10px;color:#777;margin-bottom:6px">Expanded · banner shows on pull-down</div>
+          <div id="notif-preview-expanded-wrap">
+            <div style="font-size:10px;color:#777;margin-bottom:6px">Expanded · pull-down view</div>
             <div style="background:#0f0f1a;border-radius:14px;padding:12px">
-              <div id="notif-preview-banner" style="height:110px;border-radius:9px;background-size:cover;background-position:center;background-repeat:no-repeat;border:1px solid #2a2a3e"></div>
+              <div id="notif-preview-banner" style="display:none;height:110px;border-radius:9px;background-size:cover;background-position:center;background-repeat:no-repeat;border:1px solid #2a2a3e;margin-bottom:10px"></div>
+              <div style="display:flex;gap:10px;align-items:flex-start">
+                <div id="notif-preview-exp-icon" style="width:36px;height:36px;border-radius:8px;background:#6366f1;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📚</div>
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px">
+                    <span id="notif-preview-exp-dot" style="width:11px;height:11px;border-radius:3px;background:#6366f1;display:inline-block"></span>
+                    <span id="notif-preview-exp-appname" style="font-size:10px;color:#6366f1;font-weight:700">MITRA</span>
+                    <span style="font-size:9px;color:#777">· now</span>
+                  </div>
+                  <div style="font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:3px" id="notif-preview-exp-title">Notification Title</div>
+                  <div style="font-size:11px;color:#94a3b8;line-height:1.5" id="notif-preview-exp-body">Your notification body appears here...</div>
+                  <div id="notif-preview-exp-deeplink" style="display:none;margin-top:6px;font-size:10px;color:#6ee7b7;background:rgba(16,185,129,.1);border-radius:4px;padding:3px 6px">🔗 Opens in MITRA app</div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -3085,10 +3098,28 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="card-sub">The app asks for ads by the student's state. (Class and subject targeting were removed — the app does not send them.)</div>
       <div class="checklist-item" style="margin:8px 0"><input type="checkbox" id="adst-all" checked onchange="toggleAllCheck('adstate-cb', {checked:false})"><label for="adst-all" style="cursor:pointer;flex:1"><strong>All India</strong> (untick to pick states)</label></div>
       <div class="checklist-grid" id="ad-target-states" style="max-height:220px;overflow-y:auto"></div>
+
+      <div style="margin-top:16px;padding:12px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.25);border-radius:10px">
+        <div class="checklist-item">
+          <input type="checkbox" id="ad-approve-fp">
+          <label for="ad-approve-fp" style="cursor:pointer;flex:1"><strong>Approve as first-party notice</strong> — lets an official campaign publish even if its wording trips the commercial-content check (e.g. a government book discount). Your approval is recorded on the campaign.</label>
+        </div>
+      </div>
+
       <div style="display:flex;gap:10px;margin-top:16px">
         <button class="btn btn-p" style="flex:1" onclick="saveAdCampaign()">💾 Save as Draft</button>
         <button class="btn btn-g" onclick="publishAdCampaign()">🚀 Publish</button>
         <button class="btn btn-s" onclick="scheduleAdCampaign()">🗓️ Schedule</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">🧹 Flagged commercial terms</div>
+      <div class="card-sub">Campaigns whose wording contains any of these are held back unless approved as a first-party notice above. Edit the list to fit your policy — removing a term stops it flagging for everyone.</div>
+      <div id="ad-keyword-list" style="margin:10px 0">Loading…</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <input class="inp" id="ad-keyword-new" placeholder="add a term, e.g. mega sale" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();addAdKeyword();}">
+        <button class="btn btn-s" onclick="addAdKeyword()">+ Add</button>
       </div>
     </div>
   </div>
@@ -3743,6 +3774,217 @@ function _arConfirmResolve(result) {
       loadAdCampaigns();
     } catch (e) { showToastError('Network error'); }
   };
+
+  // Render the campaign list (the table body was never populated).
+  window.loadAdCampaigns = async function () {
+    const tb = document.getElementById('ad-campaigns-body');
+    if (!tb) return;
+    tb.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text2);padding:16px">Loading campaigns…</td></tr>';
+    try {
+      const r = await A('/api/ads'); const d = await r.json();
+      const rows = d.data || [];
+      if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text2);padding:16px">No campaigns yet.</td></tr>'; return; }
+      const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+      const fmt = (v) => { if (!v) return '—'; const t = v._seconds ? v._seconds * 1000 : Date.parse(v); return isNaN(t) ? '—' : new Date(t).toLocaleDateString('en-IN'); };
+      tb.innerHTML = rows.map(a => {
+        const imp = a.impressions || 0, clk = a.clicks || 0;
+        const ctr = imp > 0 ? ((clk / imp) * 100).toFixed(1) + '%' : '—';
+        const target = (Array.isArray(a.target_states) && a.target_states.length) ? a.target_states.join(', ') : 'All India';
+        const period = (a.publish_at || a.expires_at) ? (fmt(a.publish_at) + ' → ' + fmt(a.expires_at)) : 'Always';
+        const fp = a.approved_first_party ? ' <span title="Approved first-party notice" style="font-size:10px;color:var(--green)">✔ 1P</span>' : '';
+        const sColor = a.status === 'live' ? 'var(--green)' : (a.status === 'scheduled' ? 'var(--accent2)' : 'var(--text2)');
+        const canPublish = a.status !== 'live';
+        return '<tr>' +
+          '<td>' + esc(a.name || a.title || 'Untitled') + fp + '</td>' +
+          '<td>' + (a.media_url ? '<a href="' + esc(a.media_url) + '" target="_blank" style="color:var(--accent2)">view</a>' : '—') + '</td>' +
+          '<td>' + esc(target) + '</td>' +
+          '<td style="font-size:11px">' + period + '</td>' +
+          '<td>' + imp + '</td><td>' + clk + '</td><td>' + ctr + '</td>' +
+          '<td style="color:' + sColor + ';font-weight:600">' + esc(a.status || 'draft') + '</td>' +
+          '<td style="white-space:nowrap">' +
+            '<button class="btn btn-s btn-xs" onclick="openAdEdit(\'' + a.id + '\')">Edit</button> ' +
+            (canPublish ? '<button class="btn btn-p btn-xs" onclick="publishExistingAd(\'' + a.id + '\')">Publish</button> ' : '') +
+            '<button class="btn btn-s btn-xs" onclick="deleteAdCampaign(\'' + a.id + '\')" style="color:var(--red)">Delete</button>' +
+          '</td></tr>';
+      }).join('');
+    } catch (e) { tb.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--red);padding:16px">Could not load campaigns.</td></tr>'; }
+  };
+
+  // Publish an existing draft from the list (with first-party retry on 422).
+  window.publishExistingAd = async function (id) {
+    try {
+      let r = await A('/api/ads/' + encodeURIComponent(id) + '/publish', { method: 'POST', headers: J(), body: JSON.stringify({}) });
+      let d = await r.json();
+      if (r.status === 422) {
+        if (!confirm((d.error || 'Blocked by content policy.') + '\n\nApprove as an official first-party notice and publish anyway?')) return;
+        r = await A('/api/ads/' + encodeURIComponent(id) + '/publish', { method: 'POST', headers: J(), body: JSON.stringify({ approved_first_party: true }) });
+        d = await r.json();
+      }
+      if (!r.ok) return showToastError(d.error || 'Publish failed');
+      showToast('🚀 Published'); loadAdCampaigns();
+    } catch (e) { showToastError('Network error'); }
+  };
+
+  window.deleteAdCampaign = async function (id) {
+    if (!confirm('Delete this campaign permanently?')) return;
+    try {
+      const r = await A('/api/ads/' + encodeURIComponent(id), { method: 'DELETE', headers: J() });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); return showToastError(d.error || 'Delete failed'); }
+      showToast('🗑️ Deleted'); loadAdCampaigns();
+    } catch (e) { showToastError('Network error'); }
+  };
+
+  // ══ AD CAMPAIGN CREATE FLOW (was unbuilt — the Save/Publish/Schedule
+  //    buttons called functions that did not exist) ══════════════════════════
+
+  // Holds the uploaded creative URL between upload and save.
+  window._adMediaUrl = window._adMediaUrl || '';
+
+  window.handleAdUpload = async function (input) {
+    const file = input?.files?.[0];
+    if (!file) return;
+    const status = document.getElementById('ad-upload-status');
+    const fname  = document.getElementById('ad-fname');
+    const fsize  = document.getElementById('ad-fsize');
+    const fill   = document.getElementById('ad-upfill');
+    if (status) status.style.display = 'block';
+    if (fname) fname.textContent = file.name;
+    if (fsize) fsize.textContent = (file.size / 1048576).toFixed(1) + ' MB';
+    if (fill) fill.style.width = '30%';
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await A('/api/ads/upload', { method: 'POST', headers: authHeaders(), body: fd });
+      const d = await r.json();
+      if (!r.ok) { showToastError(d.error || 'Upload failed'); if (fill) fill.style.width = '0%'; return; }
+      window._adMediaUrl = d.url || '';
+      if (fill) fill.style.width = '100%';
+      showToast('✅ Creative uploaded');
+    } catch (e) { showToastError('Upload failed'); if (fill) fill.style.width = '0%'; }
+  };
+
+  // Collect every field on the create form into one campaign body.
+  function _collectAdForm() {
+    const dayIds = ['mon','tue','wed','thu','fri','sat','sun'];
+    const publish_days = dayIds.filter(d => document.getElementById('adday-' + d)?.checked);
+    const allIndia = document.getElementById('adst-all')?.checked;
+    const target_states = allIndia ? []
+      : [...document.querySelectorAll('.adstate-cb:checked')].map(c => c.value);
+    const num = (id) => { const v = document.getElementById(id)?.value; return v === '' || v == null ? null : Number(v); };
+    const dt  = (id) => { const v = document.getElementById(id)?.value; return v ? new Date(v).toISOString() : null; };
+    return {
+      name: document.getElementById('ad-campaign-name')?.value?.trim() || '',
+      advertiser: document.getElementById('ad-advertiser')?.value?.trim() || '',
+      description: document.getElementById('ad-description')?.value?.trim() || '',
+      media_url: window._adMediaUrl || '',
+      close_after_seconds: num('ad-close-after') ?? 10,
+      auto_dismiss_seconds: num('ad-auto-dismiss') ?? 0,
+      skippable: document.getElementById('ad-skippable')?.checked !== false,
+      publish_at: dt('ad-publish-date'),
+      expires_at: dt('ad-expiry-date'),
+      publish_days,
+      target_states,
+      approved_first_party: document.getElementById('ad-approve-fp')?.checked === true,
+    };
+  }
+
+  // Create the campaign (returns its id) or null on failure.
+  async function _createAd(status) {
+    const body = _collectAdForm();
+    if (!body.name) { showToast('Campaign name is required'); return null; }
+    body.status = status; // 'draft' or 'scheduled'
+    try {
+      const r = await A('/api/ads', { method: 'POST', headers: J(), body: JSON.stringify(body) });
+      const d = await r.json();
+      if (!r.ok) { showToastError(d.error || 'Could not save campaign'); return null; }
+      return d.id;
+    } catch (e) { showToastError('Network error'); return null; }
+  }
+
+  window.saveAdCampaign = async function () {
+    const id = await _createAd('draft');
+    if (id) { showToast('✅ Saved as draft'); loadAdCampaigns(); }
+  };
+
+  window.scheduleAdCampaign = async function () {
+    const id = await _createAd('scheduled');
+    if (id) { showToast('🗓️ Scheduled'); loadAdCampaigns(); }
+  };
+
+  window.publishAdCampaign = async function () {
+    const id = await _createAd('draft');
+    if (!id) return;
+    const approve = document.getElementById('ad-approve-fp')?.checked === true;
+    try {
+      const r = await A('/api/ads/' + encodeURIComponent(id) + '/publish',
+        { method: 'POST', headers: J(), body: JSON.stringify({ approved_first_party: approve }) });
+      const d = await r.json();
+      if (!r.ok) {
+        // 422 = commercial-term gate. Offer the first-party approval inline.
+        if (r.status === 422 && !approve) {
+          showToastError(d.error || 'Blocked by content policy — tick “Approve as first-party notice”.');
+        } else {
+          showToastError(d.error || 'Publish failed');
+        }
+        loadAdCampaigns(); // the draft still exists
+        return;
+      }
+      showToast('🚀 Published — live to students in range');
+      loadAdCampaigns();
+    } catch (e) { showToastError('Network error'); }
+  };
+
+  // Render the target-state checkboxes (the list was never populated).
+  window.renderAdTargetStates = function () {
+    const box = document.getElementById('ad-target-states');
+    if (!box || typeof INDIA_STATES === 'undefined') return;
+    box.innerHTML = INDIA_STATES.map(s =>
+      '<div class="checklist-item"><input type="checkbox" class="adstate-cb" value="' + s.code +
+      '" id="adst-' + s.code + '"><label for="adst-' + s.code +
+      '" style="cursor:pointer;flex:1">' + s.name + '</label></div>').join('');
+  };
+
+  // ── Editable flagged-keyword list (works in tandem with the override) ──
+  window.loadAdKeywords = async function () {
+    const box = document.getElementById('ad-keyword-list');
+    if (!box) return;
+    try {
+      const r = await A('/api/ads/keywords'); const d = await r.json();
+      const terms = d.terms || [];
+      box.innerHTML = terms.length
+        ? terms.map(t =>
+            '<span class="kw-chip" style="display:inline-flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:16px;padding:4px 10px;margin:3px;font-size:12px">' +
+            t + '<span onclick="removeAdKeyword(\'' + t.replace(/'/g, "\\'") + '\')" style="cursor:pointer;color:var(--red);font-weight:700">×</span></span>').join('')
+        : '<span style="color:var(--text2);font-size:12px">No terms — the content gate is effectively off.</span>';
+      window._adKeywords = terms;
+    } catch (e) { showToastError('Could not load keywords'); }
+  };
+
+  window.addAdKeyword = function () {
+    const inp = document.getElementById('ad-keyword-new');
+    const t = (inp?.value || '').trim().toLowerCase();
+    if (!t) return;
+    const list = new Set(window._adKeywords || []);
+    list.add(t);
+    _saveAdKeywords([...list]);
+    if (inp) inp.value = '';
+  };
+
+  window.removeAdKeyword = function (term) {
+    const list = (window._adKeywords || []).filter(t => t !== term);
+    _saveAdKeywords(list);
+  };
+
+  async function _saveAdKeywords(terms) {
+    try {
+      const r = await A('/api/ads/keywords', { method: 'PUT', headers: J(), body: JSON.stringify({ terms }) });
+      const d = await r.json();
+      if (!r.ok) return showToastError(d.error || 'Could not save keywords');
+      window._adKeywords = d.terms || terms;
+      loadAdKeywords();
+      showToast('✅ Keyword list updated');
+    } catch (e) { showToastError('Network error'); }
+  }
 
   // ── 3. DEPLOYED STATE APPS (real table + OTA + rollback) ──────
   window.loadDeployedApps = async function () {
@@ -7506,6 +7748,7 @@ function onDeepLinkTypeChange() {
   }
   const dlPrev = document.getElementById('notif-preview-deeplink');
   if (dlPrev) dlPrev.style.display = type ? 'block' : 'none';
+  updateNotifPreview(); // re-sync expanded + in-app previews with the deep-link state
 }
 
 function toggleSchedulePicker(show) {
@@ -7538,25 +7781,41 @@ function updateNotifPreview() {
 
   const safeBanner = banner.replace(/"/g, '');
 
-  // Expanded state — only shown when a banner URL is set.
-  const expWrap = document.getElementById('notif-preview-expanded-wrap');
-  const bannerEl = document.getElementById('notif-preview-banner');
-  if (expWrap && bannerEl) {
+  // Is a deep link selected? (mirror the collapsed deep-link chip to the others)
+  const dlOn = document.getElementById('notif-preview-deeplink')?.style.display !== 'none';
+
+  // ── Expanded preview — ALWAYS visible; banner is optional on top ──
+  const expWrap   = document.getElementById('notif-preview-expanded-wrap');
+  const bannerEl  = document.getElementById('notif-preview-banner');
+  const expIcon   = document.getElementById('notif-preview-exp-icon');
+  const expDot    = document.getElementById('notif-preview-exp-dot');
+  const expApp    = document.getElementById('notif-preview-exp-appname');
+  const expTitle  = document.getElementById('notif-preview-exp-title');
+  const expBody   = document.getElementById('notif-preview-exp-body');
+  const expLink   = document.getElementById('notif-preview-exp-deeplink');
+  if (expWrap) expWrap.style.display = 'block';
+  if (expIcon)  { expIcon.style.background = color; expIcon.textContent = emoji || '📚'; }
+  if (expDot)   expDot.style.background = color;
+  if (expApp)   expApp.style.color = color;
+  if (expTitle) expTitle.textContent = (emoji ? emoji + '  ' : '') + title;
+  if (expBody)  expBody.textContent = body;
+  if (expLink)  expLink.style.display = dlOn ? 'inline-block' : 'none';
+  if (bannerEl) {
     if (banner) {
-      expWrap.style.display = 'block';
+      bannerEl.style.display = 'block';
       bannerEl.style.backgroundImage = `url("${safeBanner}")`;
     } else {
-      expWrap.style.display = 'none';
+      bannerEl.style.display = 'none';
     }
   }
 
-  // In-app card — mirrors the app's rich card (accent sidebar + emoji + banner).
-  const cardTitle = document.getElementById('notif-preview-card-title');
-  const cardBody  = document.getElementById('notif-preview-card-bodytext');
-  const cardEmoji = document.getElementById('notif-preview-card-emoji');
+  // ── In-app card — accent tints the sidebar, emoji badge AND the title ──
+  const cardTitle   = document.getElementById('notif-preview-card-title');
+  const cardBody    = document.getElementById('notif-preview-card-bodytext');
+  const cardEmoji   = document.getElementById('notif-preview-card-emoji');
   const cardBodyBox = document.getElementById('notif-preview-card-body');
-  const cardBanner = document.getElementById('notif-preview-card-banner');
-  if (cardTitle) cardTitle.textContent = title;
+  const cardBanner  = document.getElementById('notif-preview-card-banner');
+  if (cardTitle) { cardTitle.textContent = title; cardTitle.style.color = color; }
   if (cardBody)  cardBody.textContent = body;
   if (cardEmoji) cardEmoji.textContent = emoji || '📚';
   if (cardBodyBox) cardBodyBox.style.borderLeftColor = color;
@@ -7996,6 +8255,9 @@ window.showPage = function showPage(pageId, topBtn, sbBtn) {
     setTimeout(function() {
       if (typeof initAdCharts === 'function') initAdCharts();
       if (typeof loadAdStats === 'function') loadAdStats();
+      if (typeof renderAdTargetStates === 'function') renderAdTargetStates();
+      if (typeof loadAdKeywords === 'function') loadAdKeywords();
+      if (typeof loadAdCampaigns === 'function') loadAdCampaigns();
     }, 100);
   }
   if (pageId === 'notifications') {

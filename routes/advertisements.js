@@ -114,6 +114,27 @@ router.put('/frequency', requirePerm('perm_manage_ads'), async (req, res) => {
   }
 });
 
+router.get('/keywords', requirePerm('perm_manage_ads'), async (req, res) => {
+  try {
+    const terms = await loadCommercialTerms();
+    res.json({ terms, seed: COMMERCIAL_TERMS_SEED });
+  } catch (_) {
+    res.json({ terms: COMMERCIAL_TERMS_SEED, seed: COMMERCIAL_TERMS_SEED });
+  }
+});
+router.put('/keywords', requirePerm('perm_manage_ads'), async (req, res) => {
+  try {
+    const raw = Array.isArray(req.body?.terms) ? req.body.terms : [];
+    const terms = [...new Set(raw.map(t => String(t).trim().toLowerCase()).filter(Boolean))];
+    await getFirestore().collection('ad_settings').doc('commercial_terms')
+      .set({ terms, updated_by: req.user.id, updated_at: new Date() }, { merge: true });
+    res.json({ success: true, terms });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to save commercial terms');
+    res.status(500).json({ error: 'Failed to save keyword list' });
+  }
+});
+
 // ── GET /impressions  — Impression log ────────────────────────────────────────
 router.get('/impressions', async (req, res) => {
   try {
@@ -213,19 +234,33 @@ router.get('/:id', async (req, res) => {
 // This module is ONLY for school/departmental information — quiz competitions,
 // exams, official declarations — NOT product or service promotions. This check
 // blocks obvious commercial campaigns before they can be created or published.
-const COMMERCIAL_TERMS = [
+const COMMERCIAL_TERMS_SEED = [
   'buy now', 'discount', 'sale', 'offer', 'coupon', 'cashback', 'shop',
   'order now', 'price', '% off', 'limited offer', 'subscribe', 'free trial',
   'brand', 'sponsor', 'promo code', 'lowest price', 'book now', 'deal'
 ];
-function noticeScopeError(b) {
+
+async function loadCommercialTerms() {
+  try {
+    const doc = await getFirestore().collection('ad_settings').doc('commercial_terms').get();
+    const list = doc.exists ? doc.data().terms : null;
+    if (Array.isArray(list)) {
+      return list.map(t => String(t).trim().toLowerCase()).filter(Boolean);
+    }
+  } catch (_) {/* fall back to seed */}
+  return COMMERCIAL_TERMS_SEED;
+}
+
+async function noticeScopeError(b) {
+  if (b.approved_first_party === true) return null;
+  const terms = await loadCommercialTerms();
   const hay = [b.name, b.title, b.description, b.cta_text, b.body]
     .filter(Boolean).join(' ').toLowerCase();
-  const hit = COMMERCIAL_TERMS.find(t => hay.includes(t));
+  const hit = terms.find(t => t && hay.includes(t));
   if (hit) {
-    return 'This module is for departmental notices only (quiz competitions, '
-      + 'exams, official school declarations). Content that reads as a product '
-      + 'or service promotion ("' + hit + '") is not allowed.';
+    return 'This reads like a product/service promotion ("' + hit + '"). '
+      + 'If this is an official or first-party notice (e.g. a government '
+      + 'student offer), tick “Approve as first-party notice” to publish it.';
   }
   return null;
 }
@@ -236,11 +271,13 @@ router.post('/', requirePerm('perm_manage_ads'), async (req, res) => {
     const id  = uuidv4();
     const b = req.body || {};
     if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Campaign name is required' });
-    const scopeErr = noticeScopeError(b);
+    const scopeErr = await noticeScopeError(b);
     if (scopeErr) return res.status(422).json({ error: scopeErr });
     const doc = { ...b, id,
                   status: b.status === 'scheduled' ? 'scheduled' : 'draft',
                   target_states: Array.isArray(b.target_states) ? b.target_states : [],
+                  approved_first_party: b.approved_first_party === true,
+                  approved_by: b.approved_first_party === true ? req.user.id : null,
                   impressions: 0, clicks: 0,
                   created_by: req.user.id, created_at: new Date() };
     await db.collection('ad_campaigns').doc(id).set(doc);
@@ -263,7 +300,7 @@ router.put('/:id', requirePerm('perm_manage_ads'), async (req, res) => {
     }
     // Re-check scope on edit using the merged result, so clean content can't be
     // created then edited into a commercial promotion.
-    const scopeErr = noticeScopeError({ ...cur.data(), ...req.body });
+    const scopeErr = await noticeScopeError({ ...cur.data(), ...req.body });
     if (scopeErr) return res.status(422).json({ error: scopeErr });
     // Never let the client overwrite system-owned fields (counters, ownership,
     // id, or publish state) via a plain edit. Publishing has its own endpoint.
@@ -296,10 +333,14 @@ router.post('/:id/publish', requirePerm('perm_manage_ads'), async (req, res) => 
     const db = getFirestore();
     const snap = await db.collection('ad_campaigns').doc(req.params.id).get();
     if (!snap.exists) return res.status(404).json({ error: 'Not found' });
-    const scopeErr = noticeScopeError(snap.data());
+    const approve = req.body && req.body.approved_first_party === true;
+    const merged = { ...snap.data(), ...(approve ? { approved_first_party: true } : {}) };
+    const scopeErr = await noticeScopeError(merged);
     if (scopeErr) return res.status(422).json({ error: scopeErr });
-    await db.collection('ad_campaigns').doc(req.params.id)
-      .update({ status: 'live', published_at: new Date(), published_by: req.user.id });
+    await db.collection('ad_campaigns').doc(req.params.id).update({
+      status: 'live', published_at: new Date(), published_by: req.user.id,
+      ...(approve ? { approved_first_party: true, approved_by: req.user.id } : {}),
+    });
     res.json({ message: 'Ad campaign published', id: req.params.id });
   } catch (err) {
     log.error({ err: err.message, id: req.params.id }, 'Ad publish failed');
