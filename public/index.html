@@ -335,19 +335,23 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
    scroll instead of crushing or being clipped by a card's overflow:hidden.
    `display:block` on the table makes overflow-x apply to the table itself, so
    NO change to .card is needed and chart cards / dropdowns are unaffected. */
+/* Scroll lives on a wrapper, NOT the table itself. Overriding thead/tbody to
+   display:table made them two independent tables that sized columns separately
+   — that was the "rows don't line up under the headers" bug. Keeping the table
+   as a native table means one shared column model: headers and cells always
+   align, and width:100% fills the card. Wide tables scroll via the wrapper. */
 .tbl, .data-table {
-  display: block;
-  overflow-x: auto;
-  max-width: 100%;
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
 }
-.tbl thead, .tbl tbody, .data-table thead, .data-table tbody { display: table; width: 100%; min-width: 620px; }
+.tbl-scroll { width: 100%; overflow-x: auto; }
 .tbl th, .tbl td, .data-table th, .data-table td { white-space: nowrap; }
 
 /* AR Assets table: fill the full window on desktop (the global min-width:620px
    rule under-fills it). Still scrolls horizontally only if it truly overflows
    on a narrow screen. */
-#ar-assets-table { width: 100%; }
-#ar-assets-table thead, #ar-assets-table tbody { min-width: 100%; width: 100%; }
+#ar-assets-table { width: 100%; table-layout: auto; }
 #ar-assets-table th, #ar-assets-table td { white-space: normal; }
 #ar-assets-table td:first-child, #ar-assets-table th:first-child { width: 28px; }
 
