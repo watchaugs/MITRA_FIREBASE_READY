@@ -1437,7 +1437,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div><label class="lbl">Quiz Title</label>
             <input class="inp" id="qc-title" placeholder="e.g. Class 9 Science – Photosynthesis Quiz">
           </div>
-          <button class="btn btn-p" onclick="openModal('modal-quiz-single')" style="margin-top:4px">🧩 Build Quiz with Questions →</button>
+          <button class="btn btn-p" onclick="openQuizBuilderPrefilled()" style="margin-top:4px">🧩 Build Quiz with Questions →</button>
         </div>
       </div>
     </div>
@@ -3482,6 +3482,16 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="font-size:10px;color:var(--text3);margin-top:6px">Only students whose last sign-in and consent are both older than 12 months. You see the count before anything changes.</div>
       </div>
       <div style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:6px">📋 DPDPA data points</div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:8px">These feed the compliance checks directly. Each saves when you click away.</div>
+        <label style="font-size:11px;color:var(--text2)">Privacy policy URL</label>
+        <input class="inp" id="set-privacy-url" placeholder="https://…" style="margin:4px 0 8px" onblur="updateComplianceSetting('privacy_policy_url', this.value.trim(), this)">
+        <label style="font-size:11px;color:var(--text2)">Data retention (days)</label>
+        <input class="inp" id="set-retention-days" type="number" min="1" placeholder="730" style="margin:4px 0 8px" onblur="updateComplianceSetting('retention_days', Number(this.value) || null, this)">
+        <label style="font-size:11px;color:var(--text2)">Breach notification contact</label>
+        <input class="inp" id="set-breach-contact" placeholder="security@… or phone" style="margin:4px 0 0" onblur="updateComplianceSetting('breach_contact', this.value.trim(), this)">
+      </div>
+      <div style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
         <div style="font-size:13px;font-weight:600;margin-bottom:6px">🔐 Sign-in code (MFA)</div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <span style="font-size:11px;color:var(--text2)">Require sign-in code for <strong>all</strong> accounts</span>
@@ -3504,14 +3514,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   <div class="card" style="margin-top:20px">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
-      <div class="card-title" style="font-size:14px;margin-bottom:0">📜 Audit Log</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <input class="inp" id="audit-filter-user" placeholder="User ID" style="width:140px;font-size:11px;padding:5px 8px">
-        <input class="inp" id="audit-filter-action" placeholder="Action (e.g. user_purged)" style="width:170px;font-size:11px;padding:5px 8px">
-        <input type="date" class="inp" id="audit-filter-from" style="width:140px;font-size:11px;padding:5px 8px">
-        <input type="date" class="inp" id="audit-filter-to" style="width:140px;font-size:11px;padding:5px 8px">
-        <button class="btn btn-s btn-sm" onclick="auditLogCurrentPage=1;loadAuditLogs()">🔍 Filter</button>
+      <div>
+        <div class="card-title" style="font-size:14px;margin-bottom:2px">📜 Audit Log</div>
+        <div style="font-size:11px;color:var(--text2)">Collected and retained for 180 days. Download for review, or view inline if needed.</div>
       </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-p btn-sm" onclick="exportData('audit','csv')">⬇️ Download CSV</button>
+        <button class="btn btn-s btn-sm" onclick="toggleAuditTable()" id="audit-toggle-btn">👁️ View logs</button>
+      </div>
+    </div>
+    <div id="audit-table-wrap" style="display:none">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      <input class="inp" id="audit-filter-user" placeholder="User ID" style="width:140px;font-size:11px;padding:5px 8px">
+      <input class="inp" id="audit-filter-action" placeholder="Action (e.g. user_purged)" style="width:170px;font-size:11px;padding:5px 8px">
+      <input type="date" class="inp" id="audit-filter-from" style="width:140px;font-size:11px;padding:5px 8px">
+      <input type="date" class="inp" id="audit-filter-to" style="width:140px;font-size:11px;padding:5px 8px">
+      <button class="btn btn-s btn-sm" onclick="auditLogCurrentPage=1;loadAuditLogs()">🔍 Filter</button>
     </div>
     <div style="overflow-x:auto">
       <table class="data-table">
@@ -3522,6 +3540,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
       <span id="audit-page-info" style="font-size:11px;color:var(--text2)"></span>
       <div style="display:flex;gap:6px"><button class="btn btn-s btn-sm" onclick="auditLogPage(-1)">← Prev</button><button class="btn btn-s btn-sm" onclick="auditLogPage(1)">Next →</button></div>
+    </div>
     </div>
   </div>
 
@@ -5015,6 +5034,28 @@ async function submitQuizBulkUpload() {
 }
 
 // ── Build individual quiz modal ───────────────────────────────────────────────
+// Carry the landing-form values into the modal so nothing is entered twice.
+function openQuizBuilderPrefilled() {
+  const copy = (fromId, toId) => {
+    const f = document.getElementById(fromId), t = document.getElementById(toId);
+    if (f && t) t.value = f.value;
+  };
+  copy('qc-class', 'mqs-class');
+  copy('qc-subject', 'mqs-subject');
+  copy('qc-topic', 'mqs-topic');
+  copy('qc-title', 'mqs-title');
+  // Language dropdown options load async; copy the chosen value if present.
+  const qLang = document.getElementById('qc-language');
+  const mLang = document.getElementById('mqs-language');
+  if (qLang && mLang && qLang.value) {
+    // ensure the option exists in the modal select before selecting it
+    if (![...mLang.options].some(o => o.value === qLang.value)) {
+      mLang.add(new Option(qLang.options[qLang.selectedIndex]?.text || qLang.value, qLang.value));
+    }
+    mLang.value = qLang.value;
+  }
+  openModal('modal-quiz-single');
+}
 let mqsQuestions = [];
 
 function addQuizQuestion() {
@@ -7684,6 +7725,76 @@ async function toggleAutoPurge(enabled) {
   else { const t = document.getElementById('auto-purge-toggle'); if (t) t.checked = !enabled; }
 }
 
+// Saves a single compliance setting to _global_settings via the existing
+// PUT /api/compliance/settings endpoint. The live compliance engine reads
+// these fields, so saving one can flip its DPDPA check green on the next audit.
+async function updateComplianceSetting(field, value, el) {
+  const data = await safeFetch('/api/compliance/settings', {
+    method: 'PUT', body: JSON.stringify({ [field]: value })
+  });
+  if (data?.success) {
+    showToast('✅ Saved');
+    if (typeof refreshComplianceStatus === 'function') refreshComplianceStatus(true);
+  } else if (el && el.type === 'checkbox') {
+    el.checked = !value; // revert a toggle that failed (e.g. SMTP not set for MFA)
+  }
+}
+
+// Appoints the Data Protection Officer. The compliance engine passes its
+// "DPO appointed" check only when dpo_info holds BOTH a name and an email,
+// so we send that exact object shape and refresh the score at once.
+async function saveDPO() {
+  const name  = document.getElementById('dpo-name')?.value?.trim();
+  const email = document.getElementById('dpo-email')?.value?.trim();
+  if (!name || !email) { showToast('Enter the DPO name and email'); return; }
+  const data = await safeFetch('/api/compliance/officers', {
+    method: 'POST', body: JSON.stringify({ dpo: { name, email } })
+  });
+  if (data?.success) {
+    showToast('✅ DPO appointed');
+    if (typeof refreshComplianceStatus === 'function') refreshComplianceStatus(true);
+  }
+}
+
+// Appoints the Grievance Officer. The engine's check passes on a name or email,
+// but IT Rules 2021 wants both publicly listed, so we require both here.
+async function saveGrievanceOfficer() {
+  const name  = document.getElementById('go-name')?.value?.trim();
+  const email = document.getElementById('go-email')?.value?.trim();
+  const phone = document.getElementById('go-phone')?.value?.trim() || null;
+  if (!name || !email) { showToast('Enter the grievance officer name and email'); return; }
+  const data = await safeFetch('/api/compliance/officers', {
+    method: 'POST', body: JSON.stringify({ grievance_officer: { name, email, phone } })
+  });
+  if (data?.success) {
+    showToast('✅ Grievance officer saved');
+    if (typeof refreshComplianceStatus === 'function') refreshComplianceStatus(true);
+  }
+}
+
+// Repopulates the officer fields from what was saved, on page open.
+async function loadComplianceOfficers() {
+  const d = await safeFetch('/api/compliance/officers', { silent: true });
+  if (!d) return;
+  const parse = (v) => { try { return typeof v === 'string' ? JSON.parse(v) : v; } catch (_) { return null; } };
+  const dpo = parse(d.dpo), go = parse(d.grievance_officer);
+  const set = (id, v) => { const e = document.getElementById(id); if (e && v != null) e.value = v; };
+  if (dpo) { set('dpo-name', dpo.name); set('dpo-email', dpo.email); }
+  if (go)  { set('go-name', go.name); set('go-email', go.email); set('go-phone', go.phone); }
+}
+
+// Loads saved _global_settings into the Legal page inputs on open.
+async function loadComplianceSettings() {
+  const s = await safeFetch('/api/compliance/settings', { silent: true });
+  if (!s) return;
+  const set = (id, v) => { const e = document.getElementById(id); if (e && v != null) e.value = v; };
+  set('set-privacy-url', s.privacy_policy_url);
+  set('set-retention-days', s.retention_days);
+  set('set-breach-contact', s.breach_contact);
+  const mfa = document.getElementById('toggle-global-mfa');
+  if (mfa) mfa.checked = s.mfa_required === true;
+}
+
 async function runAutoPurgeNow() {
   // Dry run first: show exactly how many accounts would be anonymised
   const preview = await safeFetch('/api/compliance/run-auto-purge', { method: 'POST', body: JSON.stringify({ dry_run: true }) });
@@ -7715,6 +7826,16 @@ async function logIncident() {
     document.getElementById('incident-desc').value = '';
     loadAuditLogs();
   }
+}
+
+function toggleAuditTable() {
+  const wrap = document.getElementById('audit-table-wrap');
+  const btn = document.getElementById('audit-toggle-btn');
+  if (!wrap) return;
+  const show = wrap.style.display === 'none';
+  wrap.style.display = show ? 'block' : 'none';
+  if (btn) btn.textContent = show ? '🙈 Hide logs' : '👁️ View logs';
+  if (show) { auditLogCurrentPage = 1; loadAuditLogs(); }
 }
 
 async function loadAuditLogs() {
@@ -8508,7 +8629,8 @@ function refreshComplianceStatus(silent) {
   loadComplianceScore();
   if (typeof renderDPDPATracker === 'function') renderDPDPATracker();
   if (typeof loadAuditFindings === 'function') loadAuditFindings();
-  if (typeof loadComplianceSettings === 'function') loadComplianceSettings().then(() => typeof renderCERTInChecklist === 'function' && renderCERTInChecklist());
+  if (typeof loadComplianceSettings === 'function') loadComplianceSettings();
+  if (typeof loadComplianceOfficers === 'function') loadComplianceOfficers();
   if (typeof loadConsentCounts === 'function') loadConsentCounts();
   if (typeof loadDataRequests === 'function') loadDataRequests();
 }

@@ -491,9 +491,14 @@ router.get('/consent-counts', requirePerm('perm_manage_compliance'), async (req,
       granted:   all.filter(d => d.granted && !d.purged).length,
       withdrawn: all.filter(d => !d.granted && !d.purged && d.revoked_at).length,
       pending:   all.filter(d => !d.granted && !d.purged && !d.revoked_at).length,
+      // Parental consent count — records flagged by the /grant route.
+      // verified_parental distinguishes true VPC (OTP/guardian-verified) from
+      // a plain declared grant, once VPC is live.
+      parental:  all.filter(d => d.parental_consent === true && !d.purged).length,
+      verified_parental: all.filter(d => d.verified_parental === true && !d.purged).length,
     });
   } catch (_) {
-    res.json({ total: 0, granted: 0, withdrawn: 0, pending: 0 });
+    res.json({ total: 0, granted: 0, withdrawn: 0, pending: 0, parental: 0, verified_parental: 0 });
   }
 });
 router.get('/settings', requirePerm('perm_manage_compliance'), async (req, res) => {

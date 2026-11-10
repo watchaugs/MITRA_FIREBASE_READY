@@ -37,7 +37,7 @@ async function callerUid(req) {
 
 router.post('/grant', consentLimiter, async (req, res) => {
   try {
-    const { student_id, consents, version } = req.body;
+    const { student_id, consents, version, verified_parental } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id required' });
     if (!Array.isArray(consents) || consents.length === 0) {
       return res.status(400).json({ error: 'consents must be a non-empty array' });
@@ -62,7 +62,10 @@ router.post('/grant', consentLimiter, async (req, res) => {
     // than breaking consent saves — so this is safe to deploy before the key.
     let record = {
       student_id, consents, version, granted: true, granted_at: new Date(),
-      parental_consent: true, guardian_name: guardian
+      parental_consent: true, guardian_name: guardian,
+      // Declared consent is always true here; verified_parental is only true
+      // when the app confirms the guardian's phone was OTP-verified (DPDPA VPC).
+      verified_parental: verified_parental === true,
     };
     try {
       if (process.env.FIELD_ENCRYPTION_KEY) {
