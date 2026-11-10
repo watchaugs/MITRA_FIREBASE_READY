@@ -2451,18 +2451,51 @@ document.addEventListener('DOMContentLoaded', () => {
     <div style="display:flex;flex-direction:column;gap:16px">
       <div class="card">
         <div class="card-title">📱 Push Preview</div>
-        <div style="background:#0f0f1a;border-radius:16px;padding:16px">
-          <div style="font-size:10px;color:#888;margin-bottom:10px;text-align:center">Lock Screen Preview</div>
-          <div style="background:#1e1e2e;border-radius:10px;padding:12px;display:flex;gap:10px;align-items:flex-start">
-            <div id="notif-preview-icon" style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📚</div>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:3px" id="notif-preview-title">Notification Title</div>
-              <div style="font-size:11px;color:#94a3b8;line-height:1.4" id="notif-preview-body">Your notification body appears here...</div>
-              <div id="notif-preview-deeplink" style="display:none;margin-top:6px;font-size:10px;color:#6ee7b7;background:rgba(16,185,129,.1);border-radius:4px;padding:3px 6px">🔗 Opens in MITRA app</div>
+        <div style="display:flex;flex-direction:column;gap:16px">
+
+          <!-- Collapsed -->
+          <div>
+            <div style="font-size:10px;color:#777;margin-bottom:6px">Collapsed · lock screen</div>
+            <div style="background:#0f0f1a;border-radius:14px;padding:12px">
+              <div style="background:#1e1e2e;border-radius:11px;padding:11px;display:flex;gap:10px;align-items:flex-start">
+                <div id="notif-preview-icon" style="width:36px;height:36px;border-radius:8px;background:#6366f1;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📚</div>
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px">
+                    <span id="notif-preview-accentdot" style="width:11px;height:11px;border-radius:3px;background:#6366f1;display:inline-block"></span>
+                    <span id="notif-preview-appname" style="font-size:10px;color:#6366f1;font-weight:700">MITRA</span>
+                    <span style="font-size:9px;color:#777">· now</span>
+                  </div>
+                  <div style="font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:2px" id="notif-preview-title">Notification Title</div>
+                  <div style="font-size:11px;color:#94a3b8;line-height:1.4" id="notif-preview-body">Your notification body appears here...</div>
+                  <div id="notif-preview-deeplink" style="display:none;margin-top:6px;font-size:10px;color:#6ee7b7;background:rgba(16,185,129,.1);border-radius:4px;padding:3px 6px">🔗 Opens in MITRA app</div>
+                </div>
+              </div>
             </div>
           </div>
-          <div id="notif-preview-banner" style="display:none;margin-top:10px;height:120px;border-radius:10px;background-size:cover;background-position:center;background-repeat:no-repeat;border:1px solid #2a2a3e"></div>
-          <div style="text-align:right;font-size:10px;color:#555;margin-top:6px">now · MITRA · expand to see banner</div>
+
+          <!-- Expanded -->
+          <div id="notif-preview-expanded-wrap" style="display:none">
+            <div style="font-size:10px;color:#777;margin-bottom:6px">Expanded · banner shows on pull-down</div>
+            <div style="background:#0f0f1a;border-radius:14px;padding:12px">
+              <div id="notif-preview-banner" style="height:110px;border-radius:9px;background-size:cover;background-position:center;background-repeat:no-repeat;border:1px solid #2a2a3e"></div>
+            </div>
+          </div>
+
+          <!-- In-app card -->
+          <div>
+            <div style="font-size:10px;color:#777;margin-bottom:6px">In-app card · when app is open</div>
+            <div style="background:#12121c;border-radius:12px;padding:4px">
+              <div id="notif-preview-card-banner" style="display:none;height:80px;border-radius:10px 10px 0 0;background-size:cover;background-position:center"></div>
+              <div id="notif-preview-card-body" style="padding:12px;border-left:3px solid #6366f1;background:#1a1a28;border-radius:0 0 10px 10px">
+                <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
+                  <span id="notif-preview-card-emoji" style="font-size:18px">📚</span>
+                  <span id="notif-preview-card-title" style="font-size:13px;font-weight:700;color:#f0f0f8">Notification Title</span>
+                </div>
+                <div id="notif-preview-card-bodytext" style="font-size:11px;color:#aab;line-height:1.5">Your notification body appears here...</div>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
       <div class="card">
@@ -7450,21 +7483,44 @@ function updateNotifPreview() {
   if (el1) el1.textContent = (emoji ? emoji + '  ' : '') + title;
   if (el2) el2.textContent = body;
 
-  // Accent colour tints the notification icon (matches Android behaviour).
+  // Accent colour tints the notification icon + app-name (matches Android).
   const icon = document.getElementById('notif-preview-icon');
-  if (icon) {
-    icon.style.background = `linear-gradient(135deg, ${color}, ${color})`;
-    icon.textContent = emoji || '📚';
+  if (icon) { icon.style.background = color; icon.textContent = emoji || '📚'; }
+  const dot = document.getElementById('notif-preview-accentdot');
+  if (dot) dot.style.background = color;
+  const appname = document.getElementById('notif-preview-appname');
+  if (appname) appname.style.color = color;
+
+  const safeBanner = banner.replace(/"/g, '');
+
+  // Expanded state — only shown when a banner URL is set.
+  const expWrap = document.getElementById('notif-preview-expanded-wrap');
+  const bannerEl = document.getElementById('notif-preview-banner');
+  if (expWrap && bannerEl) {
+    if (banner) {
+      expWrap.style.display = 'block';
+      bannerEl.style.backgroundImage = `url("${safeBanner}")`;
+    } else {
+      expWrap.style.display = 'none';
+    }
   }
 
-  // Banner image: shown below (BigPictureStyle appears on expand / in-app card).
-  const bannerEl = document.getElementById('notif-preview-banner');
-  if (bannerEl) {
+  // In-app card — mirrors the app's rich card (accent sidebar + emoji + banner).
+  const cardTitle = document.getElementById('notif-preview-card-title');
+  const cardBody  = document.getElementById('notif-preview-card-bodytext');
+  const cardEmoji = document.getElementById('notif-preview-card-emoji');
+  const cardBodyBox = document.getElementById('notif-preview-card-body');
+  const cardBanner = document.getElementById('notif-preview-card-banner');
+  if (cardTitle) cardTitle.textContent = title;
+  if (cardBody)  cardBody.textContent = body;
+  if (cardEmoji) cardEmoji.textContent = emoji || '📚';
+  if (cardBodyBox) cardBodyBox.style.borderLeftColor = color;
+  if (cardBanner) {
     if (banner) {
-      bannerEl.style.display = 'block';
-      bannerEl.style.backgroundImage = `url("${banner.replace(/"/g, '')}")`;
+      cardBanner.style.display = 'block';
+      cardBanner.style.backgroundImage = `url("${safeBanner}")`;
     } else {
-      bannerEl.style.display = 'none';
+      cardBanner.style.display = 'none';
     }
   }
 }
