@@ -479,6 +479,170 @@ setGender('MALE', g('male')); setGender('FEMALE', g('female')); setGender('OTHER
         });
     }
 
+// ── NOTIFICATIONS: send-ledger (notifications) + telemetry opens joined ──
+    // Honest limits: the app's notification_events carry action (open/click)
+    // and a generic notification_type ('push'), but NO campaign id/title, so
+    // per-campaign opens can't be attributed. We fill the AGGREGATE send/open
+    // metrics truthfully; per-row NT*_OPEN/_CTR stay '—' (no join key).
+    try {
+      const sentSnap = await db.collection('notifications').orderBy('created_at', 'desc').limit(500).get();
+      const sent = sentSnap.docs.map(x => x.data() || {}).filter(e => {
+        if (scope && scope !== 'All India' && String(e.target_state || '') !== scope) return false;
+        if (month && /^\d{4}-\d{2}$/.test(month)) {
+          const t = e.sent_at && e.sent_at.toDate ? e.sent_at.toDate().toISOString()
+                  : (e.created_at && e.created_at.toDate ? e.created_at.toDate().toISOString() : '');
+          if (!t.startsWith(month)) return false;
+        }
+        return true;
+      });
+      if (sent.length) {
+        const accepted = sent.filter(e => e.fcm_message_id).length; // FCM-accepted = our best "delivered"
+        d.NOTIF_SENT         = n(sent.length);
+        d.NOTIF_DELIVERED    = n(accepted);
+        d.NOTIF_DELIVERY_PCT = pctOf(accepted, sent.length);
+        d.PUSH_DELIVERY      = pctOf(accepted, sent.length);
+        d.NG_ALL_SENT        = n(sent.length);
+        // NT1-4: the four most recent campaigns, SENT + DELIVERED only (no opens).
+        sent.slice(0, 4).forEach((e, i) => {
+          const p = `NT${i + 1}`;
+          d[`${p}_SENT`]   = n(1);                       // one dispatch record = one campaign row
+          d[`${p}_DEL`]    = n(e.fcm_message_id ? 1 : 0);
+          d[`${p}_DELPCT`] = e.fcm_message_id ? '100.0%' : '0.0%';
+        });
+      }
+    } catch (_) { /* notification send metrics stay '—' */ }
+
+    // ── NOTIFICATION opens/clicks (telemetry, aggregate) ──
+    if (notifEv.length) {
+      const opens   = notifEv.filter(e => e.action === 'open'  || e.event_type === 'notification_open').length;
+      const clicks  = notifEv.filter(e => e.action === 'click' || e.event_type === 'notification_click').length;
+      const optOuts = notifEv.filter(e => e.action === 'opt_out' || e.event_type === 'notification_opt_out').length;
+      d.NOTIF_OPENED  = n(opens);
+      d.PUSH_OPEN     = n(opens);
+      d.NOTIF_OPT_OUT = n(optOuts);
+      // open/CTR % against delivered when we have it, else against events seen
+      const denom = (d.NOTIF_DELIVERED && d.NOTIF_DELIVERED !== DEFAULT)
+        ? Number(String(d.NOTIF_DELIVERED).replace(/[^0-9]/g, '')) : notifEv.length;
+      d.NOTIF_OPEN_PCT = pctOf(opens, denom || notifEv.length);
+      d.NOTIF_CTR      = pctOf(clicks, opens || notifEv.length);
+      d.NG_ALL_OPENPCT = pctOf(opens, denom || notifEv.length);
+      d.NG_ALL_CTR     = pctOf(clicks, opens || notifEv.length);
+      // gender split of OPENS (telemetry carries gender when consented)
+      const gBucket = { MALE: notifEv.filter(e => String(e.gender||'').toLowerCase()==='male'),
+                        FEM:  notifEv.filter(e => String(e.gender||'').toLowerCase()==='female') };
+      Object.entries(gBucket).forEach(([k, arr]) => {
+        if (!arr.length) return;
+        const o = arr.filter(e => e.action === 'open').length;
+        const c = arr.filter(e => e.action === 'click').length;
+        d[`NG_${k}_SENT`]    = n(arr.length);
+        d[`NG_${k}_OPENPCT`] = pctOf(o, arr.length);
+        d[`NG_${k}_CTR`]     = pctOf(c, o || arr.length);
+      });
+    }
+
+    // ── AR RENDER-MODE breakdown (requires app render_mode field) ──
+    // Tiers: MARKER / MARKLESS / BASIC3D / INT3D → _SESSIONS/_COMP/_PCT/_AVG_MIN.
+    {
+      const MODE = { marker: 'MARKER', markerless: 'MARKLESS', basic3d: 'BASIC3D', interactive3d: 'INT3D' };
+      const roll = {};
+      arEnds.forEach(e => {
+        const k = MODE[String(e.render_mode || '')]; if (!k) return;
+        (roll[k] ||= { sess: 0, comp: 0, dwell: [] });
+        roll[k].sess++; if (e.completed === true) roll[k].comp++;
+        if (typeof e.duration_seconds === 'number') roll[k].dwell.push(e.duration_seconds);
+      });
+      const totalModed = Object.values(roll).reduce((s, v) => s + v.sess, 0);
+      Object.entries(roll).forEach(([k, v]) => {
+        d[`${k}_SESSIONS`] = n(v.sess);
+        d[`${k}_COMP`]     = pctOf(v.comp, v.sess);
+        d[`${k}_PCT`]      = pctOf(v.sess, totalModed);
+        d[`${k}_AVG_MIN`]  = v.dwell.length ? `${(avgC(v.dwell) / 60).toFixed(1)}` : DEFAULT;
+      });
+    }
+
+    // ── DEVICE-TIER performance (requires app device_tier on envelope) ──
+    {
+      const TIER = { high: 'DEV_HIGH', medium: 'DEV_MID', low: 'DEV_LOW' };
+      const roll = {};
+      const tierOf = (e) => TIER[String(e.device_tier || '').toLowerCase()] || null;
+      S.forEach(e => { const k = tierOf(e); if (!k) return; (roll[k] ||= { sess: 0, mins: [] }); roll[k].sess++; if (e.session_minutes != null) roll[k].mins.push(e.session_minutes); });
+      const compByTier = {};
+      arEnds.forEach(e => { const k = tierOf(e); if (!k) return; (compByTier[k] ||= { end: 0, comp: 0 }); compByTier[k].end++; if (e.completed === true) compByTier[k].comp++; });
+      const totalTier = Object.values(roll).reduce((s, v) => s + v.sess, 0);
+      Object.entries(roll).forEach(([k, v]) => {
+        d[`${k}_PCT`]     = pctOf(v.sess, totalTier);
+        d[`${k}_AVG_MIN`] = v.mins.length ? mins(avgC(v.mins)) : DEFAULT;
+        const c = compByTier[k];
+        d[`${k}_COMP`]    = c ? pctOf(c.comp, c.end) : DEFAULT;
+      });
+    }
+
+    // ── NT1-4 per-campaign OPENS/CLICKS (requires app campaign_id on notif events) ──
+    // Join telemetry notification_events → the 4 most-recent sent campaigns by id.
+    try {
+      const sentSnap2 = await db.collection('notifications').orderBy('created_at', 'desc').limit(4).get();
+      const camps = sentSnap2.docs.map(x => ({ id: x.id, ...(x.data() || {}) }));
+      camps.forEach((c, i) => {
+        const p = `NT${i + 1}`;
+        const evs = notifEv.filter(e => String(e.campaign_id || '') === c.id);
+        const opens  = evs.filter(e => e.action === 'open').length;
+        const clicks = evs.filter(e => e.action === 'click').length;
+        // SENT/DEL already set in Wave 1; add the open/click side when present.
+        if (evs.length) {
+          d[`${p}_OPEN`]    = n(opens);
+          d[`${p}_OPENPCT`] = pctOf(opens, 1);      // 1 dispatch record; audience size unknown here
+          d[`${p}_CLICK`]   = n(clicks);
+          d[`${p}_CTR`]     = pctOf(clicks, opens || evs.length);
+        } else {
+          // Explicit, report-safe "no engagement recorded" rather than a blank.
+          d[`${p}_OPEN`] = '0'; d[`${p}_OPENPCT`] = '0.0%'; d[`${p}_CLICK`] = '0'; d[`${p}_CTR`] = '0.0%';
+        }
+      });
+    } catch (_) { /* NT open/click stay '—' */ }
+
+    // ── ADG: ads by gender (requires per-impression gender; ad_impressions docs) ──
+    try {
+      const impSnap = await db.collection('ad_impressions').limit(10000).get();
+      const imps = impSnap.docs.map(x => x.data() || {}).filter(e => {
+        if (scope && scope !== 'All India' && String(e.state || '') !== scope) return false;
+        if (month && /^\d{4}-\d{2}$/.test(month)) {
+          const t = e.created_at && e.created_at.toDate ? e.created_at.toDate().toISOString() : '';
+          if (!t.startsWith(month)) return false;
+        }
+        return true;
+      });
+      if (imps.length) {
+        const bucket = (g) => imps.filter(e => String(e.gender || '').toLowerCase() === g);
+        const all = imps;
+        const setADG = (sfx, arr) => {
+          if (!arr.length) return;
+          const clk = arr.filter(e => e.clicked === true).length;
+          d[`ADG_${sfx}_IMP`] = n(arr.length);
+          d[`ADG_${sfx}_CTR`] = pctOf(clk, arr.length);
+        };
+        setADG('ALL', all); setADG('MALE', bucket('male')); setADG('FEM', bucket('female'));
+      }
+    } catch (_) { /* ADG stay '—' */ }
+
+    // ── BOUNCE: single-screen sessions that exit fast (needs screen_views) ──
+    try {
+      const svSnap = await db.collectionGroup('screen_views').orderBy('batch_flushed_at', 'desc').limit(5000).get();
+      const sv = [];
+      svSnap.docs.forEach(doc => {
+        const w = doc.data() || {};
+        const arr = Array.isArray(w.batched_events) ? w.batched_events : [w];
+        arr.forEach(e => { if (inScope(e)) sv.push(e); });
+      });
+      if (sv.length) {
+        // bounce = a screen_view with very short dwell (<5s) and rage/exit flag,
+        // counted per student-session proxy (student_id + screen).
+        const bounces = sv.filter(e => (num(e.duration_seconds) < 5) || e.exited_rage_tap === true).length;
+        d.BOUNCE_COUNT = n(bounces);
+        d.BOUNCE_PCT   = pctOf(bounces, sv.length);
+        d.BOUNCE_RATE  = pctOf(bounces, sv.length);
+      }
+    } catch (_) { /* bounce stays '—' */ }
+
   } catch (err) {
     // Never let a data error break the report — it just renders '—'.
     console.error('[reports] buildReportData warning:', err.message);
