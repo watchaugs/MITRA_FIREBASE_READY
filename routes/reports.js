@@ -124,8 +124,361 @@ async function buildReportData({ month, scope, gender }) {
         d[`${pfx}_SESSIONS`] = n(arr.length);
         d[`${pfx}_AVG_MIN`]  = mins(arr.reduce((a, s) => a + (s.session_minutes || 0), 0) / arr.length);
       };
-      setGender('MALE', g('male')); setGender('FEMALE', g('female')); setGender('OTHER', g('other'));
+setGender('MALE', g('male')); setGender('FEMALE', g('female')); setGender('OTHER', g('other'));
     }
+    // ═══════════════════════════════════════════════════════════════════════
+    // TELEMETRY AGGREGATES — fills the quiz / AR / district / language /
+    // accessibility / device-health / notification / feedback / ads sections
+    // of the template. All read straight from Firestore (no BigQuery), using
+    // the same batched-events unwrap as /analytics snapshot. Scope + month
+    // filters applied in memory. Anything with no data stays '—'.
+    // ═══════════════════════════════════════════════════════════════════════
+    const inScope = (e) => {
+      if (scope && scope !== 'All India' && String(e.state || '') !== scope) return false;
+      if (month && /^\d{4}-\d{2}$/.test(month)) {
+        const t = e.batch_flushed_at || e.created_at || e.timestamp;
+        if (!t || !String(t).startsWith(month)) return false;
+      }
+      return true;
+    };
+    const pull = async (collection, cap = 5000) => {
+      try {
+        const snap = await db.collectionGroup(collection)
+          .orderBy('batch_flushed_at', 'desc').limit(cap).get();
+        const out = [];
+        snap.docs.forEach(doc => {
+          const w = doc.data() || {};
+          const arr = Array.isArray(w.batched_events) ? w.batched_events : [w];
+          arr.forEach(e => { const ev = { ...e, batch_flushed_at: w.batch_flushed_at }; if (inScope(ev)) out.push(ev); });
+        });
+        return out;
+      } catch (_) { return []; }
+    };
+    const num = v => Number(v) || 0;
+    const uniqC = a => new Set(a.filter(Boolean)).size;
+    const pctOf = (p, w) => w > 0 ? `${((p / w) * 100).toFixed(1)}%` : DEFAULT;
+    const avgC = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0;
+    const subjOf = (s) => {
+      const x = String(s || '').toLowerCase();
+      if (x.includes('bio')) return 'BIO';
+      if (x.includes('chem')) return 'CHE';
+      if (x.includes('phys')) return 'PHY';
+      if (x.includes('math')) return 'MATH';
+      if (x.includes('geo')) return 'GEO';
+      if (x.includes('hist')) return 'HIST';
+      if (x.includes('social')) return 'SS';
+      if (x.includes('sci')) return 'SCI';
+      return null;
+    };
+
+    const [arViews, quizzesT, langEv, accEv, devEv, notifEv] = await Promise.all([
+      pull('ar_views'), pull('quiz_attempts'), pull('language_events'),
+      pull('accessibility_events'), pull('device_events'), pull('notification_events'),
+    ]);
+
+    // ── QUIZ: totals + per-subject (QBIO_ATT/_SCORE/_CORRECT/_COMP, BIO_ATTEMPTS/_SCORE) ──
+    const quizSubs = quizzesT.filter(e => e.event_type === 'quiz_submit');
+    if (quizSubs.length) {
+      d.TOTAL_QUIZ      = n(quizSubs.length);
+      d.AVG_QUIZ_SCORE  = `${(avgC(quizSubs.map(e => num(e.score_pct) * 100))).toFixed(1)}%`;
+      d.QUIZ_COMP_PCT   = pctOf(quizSubs.filter(e => e.completed === true).length, quizSubs.length);
+      d.QUIZ_ABANDONED  = n(quizSubs.filter(e => e.completed !== true).length);
+      const bySub = {};
+      quizSubs.forEach(e => {
+        const k = subjOf(e.subject); if (!k) return;
+        (bySub[k] ||= { att: 0, score: [], correct: 0, total: 0, comp: 0 });
+        bySub[k].att++; bySub[k].score.push(num(e.score_pct) * 100);
+        bySub[k].correct += num(e.correct_answers); bySub[k].total += num(e.total_questions);
+        if (e.completed === true) bySub[k].comp++;
+      });
+      Object.entries(bySub).forEach(([k, v]) => {
+        d[`Q${k}_ATT`]     = n(v.att);
+        d[`Q${k}_SCORE`]   = `${avgC(v.score).toFixed(1)}%`;
+        d[`Q${k}_CORRECT`] = pctOf(v.correct, v.total);
+        d[`Q${k}_COMP`]    = pctOf(v.comp, v.att);
+        d[`${k}_ATTEMPTS`] = n(v.att);
+        d[`${k}_SCORE`]    = `${avgC(v.score).toFixed(1)}%`;
+      });
+    }
+
+    // ── AR: AR_COMPLETION + per-module M01..M10 (launches/unique/dwell/comp/lift) ──
+    const arEnds = arViews.filter(e => e.event_type === 'ar_end');
+    if (arEnds.length) {
+      d.AR_COMPLETION = pctOf(arEnds.filter(e => e.completed === true).length, arEnds.length);
+      const byMod = {};
+      arViews.forEach(e => {
+        const key = e.module_title || e.topic_id || e.ar_id; if (!key) return;
+        (byMod[key] ||= { launches: 0, users: new Set(), dwell: [], comp: 0, ends: 0, lift: [] });
+        const m = byMod[key];
+        if (e.event_type === 'ar_start') m.launches++;
+        if (e.student_id) m.users.add(e.student_id);
+        if (e.event_type === 'ar_end') {
+          m.ends++;
+          if (typeof e.duration_seconds === 'number') m.dwell.push(e.duration_seconds);
+          if (e.completed === true) m.comp++;
+          if (e.pre_module_score != null && e.post_module_score != null)
+            m.lift.push(num(e.post_module_score) - num(e.pre_module_score));
+        }
+      });
+      const topMods = Object.entries(byMod)
+        .sort((a, b) => b[1].launches - a[1].launches).slice(0, 10);
+      topMods.forEach(([, m], i) => {
+        const p = `M${String(i + 1).padStart(2, '0')}`;
+        d[`${p}_LAUNCHES`] = n(m.launches);
+        d[`${p}_UNIQUE`]   = n(m.users.size);
+        d[`${p}_DWELL`]    = `${(avgC(m.dwell) / 60).toFixed(1)}`;
+        d[`${p}_COMP`]     = pctOf(m.comp, m.ends);
+        d[`${p}_LIFT`]     = m.lift.length ? `${avgC(m.lift).toFixed(1)}` : DEFAULT;
+      });
+    }
+
+    // ── DISTRICT table D01..D10 (sessions/users/schools/ar-comp/quiz/quizscore/risk) ──
+    const allEv = [...S.map(s => ({ ...s, _sess: true })), ...arViews, ...quizSubs];
+    const byDist = {};
+    allEv.forEach(e => {
+      const dist = e.district; if (!dist) return;
+      (byDist[dist] ||= { sess: 0, users: new Set(), schools: new Set(), arEnd: 0, arComp: 0, quiz: 0, qscore: [], risk: [] });
+      const b = byDist[dist];
+      if (e._sess) b.sess++;
+      if (e.student_id) b.users.add(e.student_id);
+      if (e.school_id || e.school_code) b.schools.add(e.school_id || e.school_code);
+      if (e.event_type === 'ar_end') { b.arEnd++; if (e.completed === true) b.arComp++; }
+      if (e.event_type === 'quiz_submit') { b.quiz++; b.qscore.push(num(e.score_pct) * 100); }
+      if (e.risk_level) b.risk.push(String(e.risk_level));
+    });
+    Object.entries(byDist)
+      .sort((a, b) => b[1].users.size - a[1].users.size).slice(0, 10)
+      .forEach(([name, b], i) => {
+        const p = `D${String(i + 1).padStart(2, '0')}`;
+        d[`${p}_SESS`]      = n(b.sess);
+        d[`${p}_USERS`]     = n(b.users.size);
+        d[`${p}_SCHOOLS`]   = n(b.schools.size);
+        d[`${p}_ARCOMP`]    = pctOf(b.arComp, b.arEnd);
+        d[`${p}_QUIZ`]      = n(b.quiz);
+        d[`${p}_QUIZSCORE`] = b.qscore.length ? `${avgC(b.qscore).toFixed(1)}%` : DEFAULT;
+        const hi = b.risk.filter(r => r.toLowerCase() === 'high').length;
+        d[`${p}_RISK`]      = b.risk.length ? pctOf(hi, b.risk.length) : DEFAULT;
+      });
+
+    // ── LANGUAGE: sessions by base language + switches ──
+    const langOf = (e) => {
+      const x = String(e.language || '').toLowerCase();
+      if (x.includes('eng')) return 'ENGLISH';
+      if (x.includes('hin')) return 'HINDI';
+      return 'REGION';
+    };
+    if (S.length) {
+      const lc = { ENGLISH: 0, HINDI: 0, REGION: 0 };
+      S.forEach(e => { lc[langOf(e)]++; });
+      const lt = S.length;
+      d.LANG_ENGLISH_SESSIONS = n(lc.ENGLISH); d.LANG_ENGLISH_PCT = pctOf(lc.ENGLISH, lt);
+      d.LANG_HINDI_SESSIONS   = n(lc.HINDI);   d.LANG_HINDI_PCT   = pctOf(lc.HINDI, lt);
+      d.LANG_REGION_SESSIONS  = n(lc.REGION);  d.LANG_REGION_PCT  = pctOf(lc.REGION, lt);
+    }
+    if (langEv.length) d.LANG_SWITCHES = n(langEv.filter(e => e.event_type === 'language_switch' || e.from_language).length);
+
+    // ── ACCESSIBILITY: % of users with each feature enabled ──
+    if (accEv.length) {
+      const feat = (names) => {
+        const on = accEv.filter(e => {
+          const f = String(e.feature || e.accommodation_type || '').toLowerCase();
+          return names.some(nm => f.includes(nm)) && e.enabled !== false;
+        });
+        return uniqC(on.map(e => e.student_id));
+      };
+      const base = uniqC(accEv.map(e => e.student_id)) || 1;
+      d.ACC_TTS        = pctOf(feat(['tts', 'speech']), base);
+      d.ACC_SCREEN_RDR = pctOf(feat(['screen', 'reader']), base);
+      d.ACC_CONTRAST   = pctOf(feat(['contrast']), base);
+      d.ACC_LGTXT      = pctOf(feat(['large', 'font', 'text']), base);
+      d.ACC_CBLIND     = pctOf(feat(['colbr', 'colour', 'color', 'blind']), base);
+      d.ACC_HAPTIC     = pctOf(feat(['haptic', 'vibrat']), base);
+      d.ACC_SUB        = pctOf(feat(['subtitle', 'caption']), base);
+      d.ACC_2DFALLBACK = pctOf(feat(['2d', 'fallback']), base);
+    }
+
+    // ── DEVICE HEALTH: crash/ANR/cold-start/battery + bounce/rage ──
+    if (devEv.length) {
+      const crashes = devEv.filter(e => e.event_type === 'crash');
+      const colds   = devEv.filter(e => typeof e.cold_start_ms === 'number');
+      const sessN   = Math.max(S.length, 1);
+      d.CRASH_RATE = pctOf(crashes.length, sessN);
+      d.ANR_RATE   = pctOf(devEv.filter(e => e.event_type === 'anr').length, sessN);
+      d.COLD_START = colds.length ? `${(avgC(colds.map(e => num(e.cold_start_ms))) / 1000).toFixed(1)}s` : DEFAULT;
+      const batt = arEnds.filter(e => typeof e.battery_drain_pct === 'number').map(e => num(e.battery_drain_pct));
+      d.BATT_DRAIN = batt.length ? `${avgC(batt).toFixed(1)}%` : DEFAULT;
+    }
+    const rage = arViews.concat(S).filter(e => e.exited_rage_tap === true || e.event_type === 'rage_tap').length;
+    if (rage) d.RAGE_TAPS = n(rage);
+    d.AR_CAPABLE_PCT = S.length ? pctOf(S.filter(e => e.ar_capable === true).length, S.length) : DEFAULT;
+
+    // ── NOTIFICATIONS: app-observed open / click ──
+    if (notifEv.length) {
+      const opened = notifEv.filter(e => e.action === 'open' || e.event_type === 'notification_open').length;
+      const clicked = notifEv.filter(e => e.action === 'click' || e.event_type === 'notification_click').length;
+      const delivered = notifEv.filter(e => e.action === 'deliver' || e.event_type === 'notification_deliver').length;
+      d.NOTIF_OPENED = n(opened);
+      d.NOTIF_DELIVERED = n(delivered);
+      d.NOTIF_OPEN_PCT = pctOf(opened, delivered || notifEv.length);
+      d.NOTIF_CTR = pctOf(clicked, opened || notifEv.length);
+    }
+
+    // ── FEEDBACK / NPS (app_feedback collection) ──
+    try {
+      const fbSnap = await db.collection('app_feedback').limit(5000).get();
+      const fb = fbSnap.docs.map(x => x.data() || {}).filter(e => {
+        if (scope && scope !== 'All India' && String(e.state || '') !== scope) return false;
+        if (month && /^\d{4}-\d{2}$/.test(month)) {
+          const t = e.created_at && e.created_at.toDate ? e.created_at.toDate().toISOString() : '';
+          if (!t.startsWith(month)) return false;
+        }
+        return true;
+      });
+      const ratings = fb.filter(e => typeof e.rating === 'number');
+      if (ratings.length) {
+        const ar = avgC(ratings.map(e => e.rating));
+        d.FB_AVG_RATING = ar.toFixed(1); d.AVG_RATING = ar.toFixed(1);
+        d.FB_TOTAL = n(ratings.length);
+        const tag = (kw) => ratings.filter(e => String(e.message || '').toLowerCase().includes(kw)).length;
+        d.FB_LOVED     = n(ratings.filter(e => e.rating >= 4).length);
+        d.FB_BORING    = n(tag('bor'));
+        d.FB_CONFUSING = n(tag('confus'));
+        d.FB_TOOEASY   = n(tag('easy'));
+        d.FB_TOOFAST   = n(tag('fast'));
+      }
+      const nps = fb.filter(e => typeof e.nps_score === 'number');
+      if (nps.length) {
+        let promo = 0, detr = 0;
+        nps.forEach(e => { if (e.nps_score >= 9) promo++; else if (e.nps_score <= 6) detr++; });
+        d.NPS_SCORE   = `${Math.round(((promo - detr) / nps.length) * 100)}`;
+        d.NPS_PROMO   = pctOf(promo, nps.length);
+        d.NPS_DETRACT = pctOf(detr, nps.length);
+        // gender-split NPS (GN_*), when gender present on the feedback doc
+        const gBuckets = { MALE: [], FEM: [], OTH: [] };
+        nps.forEach(e => {
+          const g = String(e.gender || '').toLowerCase();
+          if (g === 'male') gBuckets.MALE.push(e); else if (g === 'female') gBuckets.FEM.push(e); else gBuckets.OTH.push(e);
+        });
+        Object.entries(gBuckets).forEach(([k, arr]) => {
+          if (!arr.length) return;
+          let p = 0, dt = 0; arr.forEach(e => { if (e.nps_score >= 9) p++; else if (e.nps_score <= 6) dt++; });
+          d[`GN_${k}_NPS`]    = `${Math.round(((p - dt) / arr.length) * 100)}`;
+          d[`GN_${k}_PROMO`]  = pctOf(p, arr.length);
+          d[`GN_${k}_RESP`]   = n(arr.length);
+          const r = arr.filter(e => typeof e.rating === 'number');
+          d[`GN_${k}_RATING`] = r.length ? avgC(r.map(e => e.rating)).toFixed(1) : DEFAULT;
+        });
+      }
+    } catch (_) { /* feedback stays '—' */ }
+
+    // ── ADS (ad_campaigns counters, dashboard-side) ──
+    try {
+      const adSnap = await db.collection('ad_campaigns').limit(500).get();
+      const ads = adSnap.docs.map(x => x.data() || {});
+      if (ads.length) {
+        const imp = ads.reduce((s, a) => s + num(a.impressions), 0);
+        const clk = ads.reduce((s, a) => s + num(a.clicks), 0);
+        d.AD_IMPRESSIONS = n(imp);
+        d.AD_CLICKS      = n(clk);
+        d.AD_CTR         = pctOf(clk, imp);
+        d.AD_REACH       = n(ads.reduce((s, a) => s + num(a.reach || a.unique_reach), 0) || imp);
+        // per-format rows CAD_<FMT>_* by campaign type
+        const fmtMap = { banner: 'BAN', interstitial: 'INT', native: 'NAT', sponsored: 'SPO', video: 'VID' };
+        const byFmt = {};
+        ads.forEach(a => {
+          const f = fmtMap[String(a.format || a.type || '').toLowerCase()]; if (!f) return;
+          (byFmt[f] ||= { imp: 0, clk: 0, reach: 0 });
+          byFmt[f].imp += num(a.impressions); byFmt[f].clk += num(a.clicks); byFmt[f].reach += num(a.reach || a.unique_reach);
+        });
+        Object.entries(byFmt).forEach(([f, v]) => {
+          d[`CAD_${f}_IMP`]   = n(v.imp);
+          d[`CAD_${f}_CLICK`] = n(v.clk);
+          d[`CAD_${f}_CTR`]   = pctOf(v.clk, v.imp);
+          d[`CAD_${f}_REACH`] = n(v.reach || v.imp);
+        });
+      }
+    } catch (_) { /* ads stay '—' */ }
+
+    // ── GENDER × QUIZ (MALE_QUIZ/_SCORE etc.) from quiz_attempts ──
+    if (quizSubs.length) {
+      const gq = { MALE: [], FEMALE: [], OTHER: [] };
+      quizSubs.forEach(e => {
+        const g = String(e.gender || '').toLowerCase();
+        if (g === 'male') gq.MALE.push(e); else if (g === 'female') gq.FEMALE.push(e); else gq.OTHER.push(e);
+      });
+      Object.entries(gq).forEach(([k, arr]) => {
+        if (!arr.length) return;
+        d[`${k}_QUIZ`]  = n(arr.length);
+        d[`${k}_SCORE`] = `${avgC(arr.map(e => num(e.score_pct) * 100)).toFixed(1)}%`;
+      });
+    }
+
+    // ── MOBILE OWNERSHIP rollup (Father/Mother/Self/Other) ──
+    // mobile_ownership is on the base event envelope (only when consented).
+    // Tiles: FAT/MTH/SEL/OTH → _SESS/_STUD/_ARCOMP/_QUIZ/_SCORE.
+    {
+      const OWN = { Father: 'FAT', Mother: 'MTH', Self: 'SEL', Other: 'OTH' };
+      const ownOf = (e) => OWN[String(e.mobile_ownership || '')] || null;
+      const roll = { FAT: null, MTH: null, SEL: null, OTH: null };
+      const ensureO = (k) => (roll[k] ||= { sess: 0, users: new Set(), arEnd: 0, arComp: 0, quiz: 0, qscore: [] });
+      // sessions contribute _SESS / _STUD
+      S.forEach(e => { const k = ownOf(e); if (!k) return; const b = ensureO(k); b.sess++; if (e.student_id) b.users.add(e.student_id); });
+      // ar_views contribute _ARCOMP
+      arEnds.forEach(e => { const k = ownOf(e); if (!k) return; const b = ensureO(k); b.arEnd++; if (e.completed === true) b.arComp++; if (e.student_id) b.users.add(e.student_id); });
+      // quiz contribute _QUIZ / _SCORE
+      quizSubs.forEach(e => { const k = ownOf(e); if (!k) return; const b = ensureO(k); b.quiz++; b.qscore.push(num(e.score_pct) * 100); if (e.student_id) b.users.add(e.student_id); });
+      Object.entries(roll).forEach(([k, b]) => {
+        if (!b) return;
+        d[`${k}_SESS`]   = n(b.sess);
+        d[`${k}_STUD`]   = n(b.users.size);
+        d[`${k}_ARCOMP`] = pctOf(b.arComp, b.arEnd);
+        d[`${k}_QUIZ`]   = n(b.quiz);
+        d[`${k}_SCORE`]  = b.qscore.length ? `${avgC(b.qscore).toFixed(1)}%` : DEFAULT;
+      });
+    }
+
+    // ── NPS by mobile ownership (MN_FAT/MTH/SEL_*) from app_feedback ──
+    try {
+      const mnSnap = await db.collection('app_feedback').where('type', '==', 'nps').limit(5000).get();
+      const MNK = { Father: 'FAT', Mother: 'MTH', Self: 'SEL' };
+      const mn = {};
+      mnSnap.docs.forEach(x => {
+        const e = x.data() || {};
+        if (scope && scope !== 'All India' && String(e.state || '') !== scope) return;
+        if (month && /^\d{4}-\d{2}$/.test(month)) {
+          const t = e.created_at && e.created_at.toDate ? e.created_at.toDate().toISOString() : '';
+          if (!t.startsWith(month)) return;
+        }
+        const k = MNK[String(e.mobile_ownership || '')]; if (!k || typeof e.nps_score !== 'number') return;
+        (mn[k] ||= { promo: 0, detr: 0, n: 0, rating: [] });
+        mn[k].n++;
+        if (e.nps_score >= 9) mn[k].promo++; else if (e.nps_score <= 6) mn[k].detr++;
+        if (typeof e.rating === 'number') mn[k].rating.push(e.rating);
+      });
+      Object.entries(mn).forEach(([k, v]) => {
+        d[`MN_${k}_NPS`]    = `${Math.round(((v.promo - v.detr) / v.n) * 100)}`;
+        d[`MN_${k}_PROMO`]  = pctOf(v.promo, v.n);
+        d[`MN_${k}_RESP`]   = n(v.n);
+        d[`MN_${k}_RATING`] = v.rating.length ? avgC(v.rating).toFixed(1) : DEFAULT;
+      });
+    } catch (_) { /* MN_* stay '—' */ }
+
+    // ── QZ01-06: top 6 quizzes by attempts (from quiz_attempts) ──
+    if (quizSubs.length) {
+      const byQuiz = {};
+      quizSubs.forEach(e => {
+        const key = e.quiz_title || e.quiz_id; if (!key) return;
+        (byQuiz[key] ||= { att: 0, score: [] });
+        byQuiz[key].att++; byQuiz[key].score.push(num(e.score_pct) * 100);
+      });
+      Object.entries(byQuiz).sort((a, b) => b[1].att - a[1].att).slice(0, 6)
+        .forEach(([, v], i) => {
+          const p = `QZ${String(i + 1).padStart(2, '0')}`;
+          d[`${p}_ATT`]   = n(v.att);
+          d[`${p}_SCORE`] = `${avgC(v.score).toFixed(1)}%`;
+        });
+    }
+
   } catch (err) {
     // Never let a data error break the report — it just renders '—'.
     console.error('[reports] buildReportData warning:', err.message);
