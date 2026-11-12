@@ -269,9 +269,130 @@ router.post('/sync-telemetry', requirePerm('perm_view_analytics'), async (req, r
 });
 
 // ── Whole snapshot in one call (1 Firestore read) — used by all Analytics charts
+// Live snapshot: aggregates the app's batched telemetry straight from Firestore
+// (collectionGroup over telemetry_sync/*/{collection}/*, each doc holding a
+// batched_events[] array). No BigQuery, no manual Sync/Refresh — charts show
+// data as soon as the app has flushed any. Bounded reads keep it cheap.
 router.get('/snapshot', requirePerm('perm_view_analytics'), async (req, res) => {
-  const snap = await readSnapshot();
-  res.json(snap || { ...EMPTY, empty: true });
+  try {
+    const db = require('../lib/firebase').getFirestore();
+
+    // Pull the newest batches for the collections the charts need.
+    const pull = async (collection, cap = 1500) => {
+      try {
+        const snap = await db.collectionGroup(collection)
+          .orderBy('batch_flushed_at', 'desc').limit(cap).get();
+        const events = [];
+        snap.docs.forEach(d => {
+          const arr = d.data().batched_events;
+          if (Array.isArray(arr)) events.push(...arr);
+        });
+        return events;
+      } catch (_) { return []; } // missing index / no data → empty, never 500
+    };
+
+    const [sessions, arViews, quiz] = await Promise.all([
+      pull('sessions'), pull('ar_views'), pull('quiz_attempts'),
+    ]);
+
+    const num = v => Number(v) || 0;
+    const uniq = arr => new Set(arr.filter(Boolean)).size;
+
+    // ── Overview KPIs ──
+    const sessionEnds = sessions.filter(e => e.event_type === 'session_end');
+    const avgSessionMins = sessionEnds.length
+      ? Math.round(sessionEnds.reduce((s, e) => s + num(e.duration_seconds), 0) / sessionEnds.length / 60)
+      : 0;
+    const arEnds = arViews.filter(e => e.event_type === 'ar_end');
+    const dropoffs = arEnds.filter(e => e.completed !== true).length;
+    const dropoffPct = arEnds.length ? Math.round((dropoffs / arEnds.length) * 100) : 0;
+    const offlineSessions = sessionEnds.filter(e => e.was_offline === true).length;
+    const offlinePct = sessionEnds.length ? Math.round((offlineSessions / sessionEnds.length) * 100) : 0;
+    const replays = arEnds.filter(e => e.is_replay === true).length;
+    const avgReplays = arEnds.length ? +(replays / arEnds.length).toFixed(2) : 0;
+    const activeUsers = uniq([...sessions, ...arViews].map(e => e.student_id));
+
+    const overview = {
+      active_users: activeUsers,
+      avg_session_mins: avgSessionMins,
+      dropoff_pct: dropoffPct,
+      offline_pct: offlinePct,
+      avg_replays: avgReplays,
+    };
+
+    // ── Group helpers ──
+    const groupCount = (arr, key) => {
+      const m = {};
+      arr.forEach(e => { const k = e[key]; if (k) m[k] = (m[k] || 0) + 1; });
+      return Object.entries(m).map(([k, v]) => ({ [key]: k, count: v }))
+        .sort((a, b) => b.count - a.count);
+    };
+
+    // ── Predictive (drop-offs per topic) ──
+    const dropByTopic = {};
+    arEnds.forEach(e => {
+      const t = e.module_title || e.topic_id || e.ar_id;
+      if (!t) return;
+      dropByTopic[t] = dropByTopic[t] || { topic: t, drop_offs: 0 };
+      if (e.completed !== true) dropByTopic[t].drop_offs++;
+    });
+    const predictive = Object.values(dropByTopic).sort((a, b) => b.drop_offs - a.drop_offs);
+
+    // ── Replay by module ──
+    const replayByModule = {};
+    arEnds.forEach(e => {
+      const t = e.module_title || e.topic_id || e.ar_id;
+      if (!t) return;
+      replayByModule[t] = replayByModule[t] || { topic: t, plays: 0, replays: 0 };
+      replayByModule[t].plays++;
+      if (e.is_replay === true) replayByModule[t].replays++;
+    });
+    const by_module = Object.values(replayByModule).map(r => ({
+      topic: r.topic, avg_replays: r.plays ? r.replays / r.plays : 0,
+    })).sort((a, b) => b.avg_replays - a.avg_replays);
+
+    // ── Classroom (active students by class/subject) ──
+    const classroomMap = {};
+    [...sessions, ...arViews].forEach(e => {
+      const cls = e['class'] || '—', subj = e.subject || '—';
+      const key = cls + '||' + subj;
+      classroomMap[key] = classroomMap[key] || { class_grade: cls, subject: subj, students: new Set() };
+      if (e.student_id) classroomMap[key].students.add(e.student_id);
+    });
+    const classroom = Object.values(classroomMap).map(r => ({
+      class_grade: r.class_grade, subject: r.subject, total_students: r.students.size,
+    }));
+
+    // ── Location (active students by state) ──
+    const stateMap = {};
+    [...sessions, ...arViews].forEach(e => {
+      const st = e.state; if (!st) return;
+      stateMap[st] = stateMap[st] || new Set();
+      if (e.student_id) stateMap[st].add(e.student_id);
+    });
+    const location = Object.entries(stateMap)
+      .map(([state, set]) => ({ state, total_students: set.size }))
+      .sort((a, b) => b.total_students - a.total_students);
+
+    const replayKpi = {
+      total_replays: replays,
+      avg_replays_per_student: activeUsers ? +(replays / activeUsers).toFixed(2) : 0,
+      repeat_sessions: sessions.filter(e => e.event_type === 'session_start').length,
+    };
+
+    res.json({
+      overview,
+      replay: { kpi: replayKpi, by_module, by_subject: [], by_state: location, table: [] },
+      location,
+      classroom,
+      predictive,
+      telemetry_summary: { success: true, data: groupCount(arViews, 'event_type') },
+      refreshed_at: new Date().toISOString(), // always "live now"
+      live: true,
+    });
+  } catch (err) {
+    res.json({ ...EMPTY, empty: true, error: String(err.message || err) });
+  }
 });
 
 // ── Overview KPIs (from snapshot) ─────────────────────────────────────────────
@@ -556,17 +677,33 @@ router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
 router.get('/funnel', requirePerm('perm_view_analytics'), async (req, res) => {
   try {
     const db = require('../lib/firebase').getFirestore();
-    const [arSnap, attemptsSnap] = await Promise.all([
-      db.collection('ar_views').limit(50000).get(),
-      db.collection('quiz_attempts').limit(50000).get(),
+
+    // The app batches telemetry into telemetry_sync/*/{collection}/*, each doc
+    // holding a batched_events[] array — so read via collectionGroup and unwrap,
+    // the same way the live /snapshot does. (A plain collection('ar_views') read
+    // finds nothing, since the events aren't top-level documents.)
+    const pull = async (collection, cap = 1500) => {
+      try {
+        const snap = await db.collectionGroup(collection)
+          .orderBy('batch_flushed_at', 'desc').limit(cap).get();
+        const events = [];
+        snap.docs.forEach(d => {
+          const arr = d.data().batched_events;
+          if (Array.isArray(arr)) events.push(...arr);
+        });
+        return events;
+      } catch (_) { return []; }
+    };
+
+    const [arEvents, quizEvents] = await Promise.all([
+      pull('ar_views'), pull('quiz_attempts'),
     ]);
 
     const mod = {};
     const ensure = (id) => (mod[id] ||= { ar_id: id, title: '', started: new Set(), watched: new Set(), durations: [] });
-    arSnap.docs.forEach(d => {
-      const e = d.data();
-      const id = e.ar_id; if (!id) return;
-      const sid = e.student_id || d.id;
+    arEvents.forEach(e => {
+      const id = e.ar_id || e.topic_id; if (!id) return;
+      const sid = e.student_id || 'anon';
       const m = ensure(id);
       if (e.module_title && !m.title) m.title = e.module_title;
       if (e.event_type === 'ar_start') m.started.add(sid);
@@ -579,10 +716,9 @@ router.get('/funnel', requirePerm('perm_view_analytics'), async (req, res) => {
 
     const quiz = {};
     const qEnsure = (id) => (quiz[id] ||= { attempted: new Set(), mastered: new Set(), scores: [] });
-    attemptsSnap.docs.forEach(d => {
-      const a = d.data();
+    quizEvents.forEach(a => {
       const id = a.ar_id || a.topic_id || a.quiz_id; if (!id) return;
-      const sid = a.student_id || d.id;
+      const sid = a.student_id || 'anon';
       const q = qEnsure(id);
       q.attempted.add(sid);
       const score = Number(a.score), max = Number(a.max_score);
