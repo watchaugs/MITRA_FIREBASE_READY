@@ -22,11 +22,17 @@ router.get('/summary', async (req, res) => {
     // (the app writes students/{id}/sessions, read via collectionGroup).
     let active_students = 0;
     try {
-      const studentSnap = await db.collectionGroup('sessions')
-        .select('student_id').limit(5000).get();
-      active_students = new Set(
-        studentSnap.docs.map(d => d.data().student_id).filter(Boolean)
-      ).size;
+      // Each 'sessions' doc is a BATCH wrapper holding batched_events[]; the
+      // student_id lives inside those events, not on the wrapper — so read the
+      // full doc and unwrap (a .select('student_id') projection returns nothing).
+      const studentSnap = await db.collectionGroup('sessions').limit(5000).get();
+      const ids = new Set();
+      studentSnap.docs.forEach(d => {
+        const data = d.data() || {};
+        const arr = Array.isArray(data.batched_events) ? data.batched_events : [data];
+        arr.forEach(e => { if (e && e.student_id) ids.add(e.student_id); });
+      });
+      active_students = ids.size;
     } catch (err) {
       log.error({ err: err.message }, 'Failed to count active students');
     }
