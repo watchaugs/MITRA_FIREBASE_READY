@@ -656,7 +656,7 @@ function fillTemplate(buf, data) {
     if (/^ppt\/slides\/slide\d+\.xml$/.test(name)) {
       const xml = zip.files[name].asText().replace(
         /\{\{([A-Z0-9_]+)\}\}/g,
-        (_, key) => Object.prototype.hasOwnProperty.call(data, key) ? String(data[key]) : DEFAULT
+        (_, key) => Object.prototype.hasOwnProperty.call(data, key) ? String(data[key]) : 'No data this period'
       );
       zip.file(name, xml);
     }
