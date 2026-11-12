@@ -158,6 +158,17 @@ router.post('/impressions', async (req, res) => {
     if (adId) {
       const { FieldValue } = require('firebase-admin/firestore');
       await db.collection('ad_campaigns').doc(adId).set({ impressions: FieldValue.increment(1), last_impression_at: new Date() }, { merge: true });
+      // Per-impression record so the government report can break ads down by
+      // gender/state (ADG_* tokens). Best-effort; never fail the app.
+      const b = req.body || {};
+      await db.collection('ad_impressions').add({
+        ad_id: adId,
+        gender: b.gender || null,
+        state: b.state || null,
+        district: b.district || null,
+        clicked: false,
+        created_at: new Date(),
+      });
     }
     res.status(202).json({ received: true });
   } catch (_) {

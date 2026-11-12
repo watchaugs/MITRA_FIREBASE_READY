@@ -57,6 +57,7 @@ const CLASS_NEEDS_STATE = 'To target a class, also pick a state (the app listens
 // FCM data values must all be strings.
 function dataPayload(b) {
   const out = { click_action: 'FLUTTER_NOTIFICATION_CLICK' };
+  if (b.id) out.campaign_id = String(b.id);
   if (b.deep_link_type) out.deep_link_type = String(b.deep_link_type);
   if (b.deep_link_id)   out.deep_link_id   = String(b.deep_link_id);
   if (b.target_ar_topic) out.ar_topic_id   = String(b.target_ar_topic);
@@ -156,11 +157,11 @@ router.post('/send', requirePerm('perm_send_notif'), async (req, res) => {
     if (b.target_class && !b.target_state) return res.status(400).json({ error: CLASS_NEEDS_STATE });
 
     const topic = topicFor(b.target_state, b.target_class);
-    const n = { title, body, topic, data_payload: dataPayload(b) };
+    const id = uuidv4();
+    const n = { title, body, topic, data_payload: dataPayload({ ...b, id }) };
     const fcmId = await getMessaging().send(buildMessage(n));
 
     const db = getFirestore();
-    const id = uuidv4();
     const now = new Date();
     await db.collection('notifications').doc(id).set({
       id, ...n, ...targetFields(b),
