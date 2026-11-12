@@ -52,24 +52,33 @@ async function buildReportData({ month, scope, gender }) {
     // Use a collectionGroup so batched sub-docs are included, then normalise
     // each event to the flat shape this report expects.
     const snap = await db.collectionGroup('sessions').limit(100000).get();
-    let S = snap.docs.map(x => {
-      const e = x.data() || {};
-      return {
-        student_id: e.student_id,
-        device_id: e.device_id,
-        school_id: e.school_code || e.school_id,
-        district: e.district,
-        state: e.state,
-        gender: e.gender,
-        session_minutes: e.session_minutes != null
-          ? e.session_minutes
-          : (e.duration_seconds != null ? Math.ceil(e.duration_seconds / 60) : 0),
-        offline: e.offline_session === true || e.was_offline === true,
-        dropped_off: e.dropped_off === true,
-        network_type: e.network_quality || e.network_type,
-        created_at: e.created_at,
-        event_type: e.event_type,
-      };
+    // Each doc is a BATCH wrapper { batched_events[], batch_flushed_at, ... }.
+    // Unwrap to individual events first; the student/session fields live INSIDE
+    // batched_events[], not on the wrapper. Carry batch_flushed_at onto each
+    // event so the month filter has a timestamp.
+    let S = [];
+    snap.docs.forEach(x => {
+      const doc = x.data() || {};
+      const flushedAt = doc.batch_flushed_at;
+      const arr = Array.isArray(doc.batched_events) ? doc.batched_events : [doc];
+      arr.forEach(e => {
+        S.push({
+          student_id: e.student_id,
+          device_id: e.device_id || e.device_model,
+          school_id: e.school_code || e.school_id,
+          district: e.district,
+          state: e.state,
+          gender: e.gender,
+          session_minutes: e.session_minutes != null
+            ? e.session_minutes
+            : (e.duration_seconds != null ? Math.ceil(e.duration_seconds / 60) : 0),
+          offline: e.offline_session === true || e.was_offline === true,
+          dropped_off: e.dropped_off === true || e.completed === false,
+          network_type: e.network_quality || e.network_type || e.connectivity_type,
+          created_at: e.created_at || flushedAt || e.timestamp,
+          event_type: e.event_type,
+        });
+      });
     });
     // Period + scope filters applied in memory (collectionGroup can't compound-filter here).
     if (scope && scope !== 'All India') S = S.filter(s => s.state === scope);

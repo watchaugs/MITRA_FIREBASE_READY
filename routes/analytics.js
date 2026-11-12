@@ -721,11 +721,14 @@ router.get('/funnel', requirePerm('perm_view_analytics'), async (req, res) => {
       const sid = a.student_id || 'anon';
       const q = qEnsure(id);
       q.attempted.add(sid);
-      const score = Number(a.score), max = Number(a.max_score);
-      if (max > 0) {
-        const pct = (score / max) * 100;
+      // App writes score_pct (0–1) on quiz_submit; older events may carry score/max_score.
+      let pct = null;
+      if (a.score_pct != null) pct = Number(a.score_pct) * 100;
+      else if (Number(a.max_score) > 0) pct = (Number(a.score) / Number(a.max_score)) * 100;
+      else if (Number(a.total_questions) > 0) pct = (Number(a.correct_answers) / Number(a.total_questions)) * 100;
+      if (pct != null && !Number.isNaN(pct)) {
         q.scores.push(pct);
-        if (pct >= 100) q.mastered.add(sid);
+        if (pct >= 100 || a.passed === true) q.mastered.add(sid);
       }
     });
 
