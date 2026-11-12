@@ -294,6 +294,24 @@ router.get('/ar-topics', async (req, res) => {
       let sSnap = await db.collection('ar_assets').where('status', '==', 'scheduled').limit(100).get();
       let srows = sSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       srows = visibleInState(srows, req.query.state);
+
+      // On-read lazy auto-publish (zero scheduler, zero idle cost): any
+      // scheduled topic whose reveal_date has passed is flipped to published
+      // inside this request, so it goes live the next time the list is read.
+      const now = Date.now();
+      const revMs = (v) => (v && typeof v.toDate === 'function') ? v.toDate().getTime() : (v ? new Date(v).getTime() : null);
+      const dueNow = srows.filter(r => { const t = revMs(r.reveal_date); return t != null && t <= now; });
+      if (dueNow.length) {
+        const batch = db.batch();
+        for (const r of dueNow) {
+          batch.update(db.collection('ar_assets').doc(r.id), { status: 'published', updated_at: new Date(), auto_published_at: new Date() });
+        }
+        await batch.commit();
+        const dueIds = new Set(dueNow.map(r => r.id));
+        srows = srows.filter(r => !dueIds.has(r.id));
+        for (const r of dueNow) data.push({ ...r, status: 'published' });
+      }
+
       const teasers = srows.slice(0, 5).map(r => ({
         id: r.id,
         topic: r.topic || '',

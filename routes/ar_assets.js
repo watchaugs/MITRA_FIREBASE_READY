@@ -484,9 +484,18 @@ router.post('/assets/:id/publish', requirePerm('perm_approve_content'), async (r
 router.post('/assets/:id/schedule', requirePerm('perm_approve_content'), async (req, res) => {
   try {
     const db = getFirestore();
-    await db.collection('ar_assets').doc(req.params.id).update({ status: 'scheduled', updated_at: new Date() });
+    const patch = { status: 'scheduled', updated_at: new Date() };
+    // Optional reveal date: when it passes, the topic list auto-publishes this
+    // asset on the next read (no scheduler). Omit for an indefinite teaser.
+    const raw = req.body && req.body.reveal_date;
+    if (raw) {
+      const d = new Date(raw);
+      if (isNaN(d.getTime())) return res.status(400).json({ error: 'reveal_date is not a valid date' });
+      patch.reveal_date = d;
+    }
+    await db.collection('ar_assets').doc(req.params.id).update(patch);
     await invalidateManifests(db);
-    res.json({ message: 'Asset scheduled (coming soon)' });
+    res.json({ message: 'Asset scheduled (coming soon)', reveal_date: patch.reveal_date || null });
   } catch { res.status(500).json({ error: 'Schedule failed' }); }
 });
 

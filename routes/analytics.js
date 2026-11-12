@@ -552,4 +552,75 @@ router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
   }
 });
 
+// ── Learning funnel + content-health (live, bounded reads) ───────────────────
+router.get('/funnel', requirePerm('perm_view_analytics'), async (req, res) => {
+  try {
+    const db = require('../lib/firebase').getFirestore();
+    const [arSnap, attemptsSnap] = await Promise.all([
+      db.collection('ar_views').limit(50000).get(),
+      db.collection('quiz_attempts').limit(50000).get(),
+    ]);
+
+    const mod = {};
+    const ensure = (id) => (mod[id] ||= { ar_id: id, title: '', started: new Set(), watched: new Set(), durations: [] });
+    arSnap.docs.forEach(d => {
+      const e = d.data();
+      const id = e.ar_id; if (!id) return;
+      const sid = e.student_id || d.id;
+      const m = ensure(id);
+      if (e.module_title && !m.title) m.title = e.module_title;
+      if (e.event_type === 'ar_start') m.started.add(sid);
+      if (e.event_type === 'ar_end') {
+        m.started.add(sid);
+        if (e.completed === true) m.watched.add(sid);
+        if (typeof e.duration_seconds === 'number') m.durations.push(e.duration_seconds);
+      }
+    });
+
+    const quiz = {};
+    const qEnsure = (id) => (quiz[id] ||= { attempted: new Set(), mastered: new Set(), scores: [] });
+    attemptsSnap.docs.forEach(d => {
+      const a = d.data();
+      const id = a.ar_id || a.topic_id || a.quiz_id; if (!id) return;
+      const sid = a.student_id || d.id;
+      const q = qEnsure(id);
+      q.attempted.add(sid);
+      const score = Number(a.score), max = Number(a.max_score);
+      if (max > 0) {
+        const pct = (score / max) * 100;
+        q.scores.push(pct);
+        if (pct >= 100) q.mastered.add(sid);
+      }
+    });
+
+    const avg = (arr) => arr.length ? Math.round(arr.reduce((s, n) => s + n, 0) / arr.length) : 0;
+    const funnel = Object.values(mod).map(m => {
+      const q = quiz[m.ar_id] || { attempted: new Set(), mastered: new Set(), scores: [] };
+      const started = m.started.size, watched = m.watched.size;
+      const attempted = q.attempted.size, mastered = q.mastered.size;
+      const watchRate = started ? Math.round((watched / started) * 100) : 0;
+      const masteryRate = attempted ? Math.round((mastered / attempted) * 100) : 0;
+      let health = 'ok';
+      if (started >= 5 && watchRate < 50) health = 'low_engagement';
+      else if (attempted >= 5 && masteryRate < 30) health = 'too_hard';
+      else if (attempted >= 5 && masteryRate > 95) health = 'too_easy';
+      return {
+        ar_id: m.ar_id, title: m.title || m.ar_id,
+        started, watched, attempted, mastered,
+        watch_rate: watchRate, mastery_rate: masteryRate,
+        avg_watch_seconds: avg(m.durations), avg_score: avg(q.scores), health,
+      };
+    }).sort((a, b) => b.started - a.started);
+
+    const totals = funnel.reduce((t, m) => {
+      t.started += m.started; t.watched += m.watched;
+      t.attempted += m.attempted; t.mastered += m.mastered; return t;
+    }, { started: 0, watched: 0, attempted: 0, mastered: 0 });
+
+    res.json({ totals, modules: funnel, generated_at: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: 'Funnel failed', detail: String(err.message || err) });
+  }
+});
+
 module.exports = router;

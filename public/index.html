@@ -1593,6 +1593,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="an-tab active" onclick="switchAnTab('student', this)">🧑‍🎓 Student App Usage</div>
     <div class="an-tab" onclick="switchAnTab('classroom', this)">🏫 Classroom & Subject</div>
     <div class="an-tab" onclick="switchAnTab('replay', this)">🔁 Replay & Repeat Engagement</div>
+    <div class="an-tab" onclick="switchAnTab('funnel', this); loadFunnel()">🫗 Learning Funnel</div>
     <div class="an-tab" onclick="switchAnTab('location', this)">📍 Location & Infra</div>
     <div class="an-tab" onclick="switchAnTab('predictive', this)">💡 Predictive & Deep-Tech</div>
     <div class="an-tab" onclick="switchAnTab('rawdata', this)">🗄️ Raw Data View</div>
@@ -1651,6 +1652,20 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="card-title">Replay Share by Module</div>
         <div class="card-sub">Share of each module's AR views that were replays (top 10)</div>
         <div class="chart-container"><canvas id="chart-replay-detail"></canvas></div>
+      </div>
+      <div class="an-panel" id="an-panel-funnel" style="display:none">
+        <div class="card">
+          <div class="card-title">🫗 Learning funnel — per module</div>
+          <div class="card-sub">Started → watched AR → attempted quiz → mastered (100%). Health flags weak or mis-levelled content.</div>
+          <div id="funnel-totals" style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0"></div>
+          <div style="overflow-x:auto">
+            <table class="tbl"><thead><tr>
+              <th>Module</th><th>Started</th><th>Watched</th><th>Attempted</th><th>Mastered</th><th>Watch %</th><th>Mastery %</th><th>Avg score</th><th>Health</th>
+            </tr></thead><tbody id="funnel-body">
+              <tr><td colspan="9" style="text-align:center;color:var(--text2);padding:16px">Open this tab to load.</td></tr>
+            </tbody></table>
+          </div>
+        </div>
       </div>
       <div class="card">
         <div class="card-title">Students Who Replayed, by Subject</div>
@@ -6703,6 +6718,32 @@ async function publishArAsset(id) {
 async function scheduleArAsset(id) {
   const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}/schedule`, { method: 'POST', body: '{}' });
   if (d) { showToast('📅 Scheduled — shows as "Coming soon" to students'); refreshArAssetList(); }
+}
+
+// Learning funnel loader — started → watched → attempted → mastered, per module.
+async function loadFunnel() {
+  const body = document.getElementById('funnel-body');
+  const totalsEl = document.getElementById('funnel-totals');
+  if (!body) return;
+  body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text2);padding:16px">Loading…</td></tr>';
+  const d = await safeFetch('/api/analytics/funnel');
+  if (!d || !Array.isArray(d.modules)) { body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--red);padding:16px">Could not load funnel.</td></tr>'; return; }
+  const t = d.totals || {};
+  if (totalsEl) totalsEl.innerHTML = [
+    ['Started', t.started], ['Watched', t.watched], ['Attempted', t.attempted], ['Mastered', t.mastered]
+  ].map(([k, v]) => `<div style="background:var(--bg3);border-radius:10px;padding:10px 14px"><div style="font-size:11px;color:var(--text2)">${k}</div><div style="font-size:20px;font-weight:600">${v || 0}</div></div>`).join('');
+  const badge = (h) => {
+    const map = { ok: ['#10b981', 'OK'], low_engagement: ['#f59e0b', 'Low engagement'], too_hard: ['#ef4444', 'Too hard'], too_easy: ['#6366f1', 'Too easy'] };
+    const [c, label] = map[h] || map.ok;
+    return `<span style="color:${c};font-weight:600">${label}</span>`;
+  };
+  body.innerHTML = d.modules.length
+    ? d.modules.map(m => `<tr>
+        <td>${(m.title || m.ar_id).replace(/[<>&]/g, '')}</td>
+        <td>${m.started}</td><td>${m.watched}</td><td>${m.attempted}</td><td>${m.mastered}</td>
+        <td>${m.watch_rate}%</td><td>${m.mastery_rate}%</td><td>${m.avg_score}%</td>
+        <td>${badge(m.health)}</td></tr>`).join('')
+    : '<tr><td colspan="9" style="text-align:center;color:var(--text2);padding:16px">No module data yet.</td></tr>';
 }
 
 // AR-watch threshold (% of narration needed before a quiz unlocks).
