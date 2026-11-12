@@ -696,18 +696,6 @@ router.post('/assets/:id/narration', requirePerm('perm_upload_unity'), async (re
   res.json({ message: 'Narration generated', id, done, needs_manual, failed, audios });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Phase 3d — Download the original uploaded GLB
-// ═══════════════════════════════════════════════════════════════════════════
-router.get('/assets/:id/original', requirePerm('perm_upload_unity'), async (req, res) => {
-  const key = `ar_assets/${req.params.id}_original.glb`;
-  try {
-    if (!(await storage.exists(key))) return res.status(404).json({ error: 'No original on file for this asset' });
-    res.setHeader('Content-Type', 'model/gltf-binary');
-    res.setHeader('Content-Disposition', `attachment; filename="${req.params.id}_original.glb"`);
-    (await storage.createReadStream(key)).pipe(res);
-  } catch (e) { res.status(500).json({ error: 'Failed to read original', detail: e.message }); }
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Phase 3e — Replace a single media file in place
