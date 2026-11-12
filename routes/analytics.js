@@ -241,16 +241,72 @@ async function buildReportScopes(db) {
     const s = await db.collection('curriculum').limit(3000).get();
     s.forEach(d => { const c = d.data(); joins.curriculum.push([c.class_grade || c.class || '', c.subject || '', c.topic || c.title || '', c.board || '', c.language || '']); });
   } catch (_) {}
+// Firestore-sourced joins the BigQuery warehouse doesn't carry:
+  // notification send-ledger, per-impression ad gender, and app feedback/NPS.
+  const notifLedger = {}, adsByGender = {}, feedbackData = {};
+  const _bump = (o, sc, f, v) => { (o[sc] ||= {}); o[sc][f] = (o[sc][f] || 0) + v; };
+  const _scopesOf = (state) => ['All India', state && String(state)].filter(Boolean);
+  try { // notification send ledger
+    const snap = await db.collection('notifications').limit(2000).get();
+    snap.forEach(d => { const nnn = d.data(); const acc = nnn.fcm_message_id ? 1 : 0;
+      _scopesOf(nnn.target_state).forEach(sc => { _bump(notifLedger, sc, 'sent', 1); _bump(notifLedger, sc, 'delivered', acc); }); });
+  } catch (_) {}
+  try { // ad impressions by gender
+    const snap = await db.collection('ad_impressions').limit(20000).get();
+    snap.forEach(d => { const a = d.data(); const g = String(a.gender || '').toLowerCase();
+      _scopesOf(a.state).forEach(sc => { (adsByGender[sc] ||= { all:{imp:0,clk:0,reach:0}, male:{imp:0,clk:0}, fem:{imp:0,clk:0}, byFmt:{} });
+        const B = adsByGender[sc]; B.all.imp++; if (a.clicked) B.all.clk++;
+        if (g === 'male') { B.male.imp++; if (a.clicked) B.male.clk++; }
+        else if (g === 'female') { B.fem.imp++; if (a.clicked) B.fem.clk++; } }); });
+  } catch (_) {}
+  try { // app feedback + NPS (overall, by gender, by mobile-owner)
+    const snap = await db.collection('app_feedback').limit(10000).get();
+    const acc = {};
+    snap.forEach(d => { const e = d.data();
+      _scopesOf(e.state).forEach(sc => {
+        const A = (acc[sc] ||= { ratings:[], nps:[], msgs:[], g:{}, o:{} });
+        if (typeof e.rating === 'number') { A.ratings.push(e.rating); A.msgs.push(String(e.message||'').toLowerCase()); }
+        if (typeof e.nps_score === 'number') {
+          A.nps.push(e.nps_score);
+          const gk = ({male:'MALE',female:'FEM'})[String(e.gender||'').toLowerCase()];
+          if (gk) { (A.g[gk] ||= []).push(e.nps_score); }
+          const ok = ({Father:'FAT',Mother:'MTH',Self:'SEL'})[String(e.mobile_ownership||'')];
+          if (ok) { (A.o[ok] ||= []).push(e); }
+        }
+      });
+    });
+    const npsAgg = (arr) => { let p=0,dt=0; arr.forEach(x=>{ if(x>=9)p++; else if(x<=6)dt++; }); return { nps: arr.length?Math.round(((p-dt)/arr.length)*100):0, promo:p, resp:arr.length }; };
+    Object.entries(acc).forEach(([sc, A]) => {
+      const avg = (xs) => xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : null;
+      const tag = (kw) => A.msgs.filter(m=>m.includes(kw)).length;
+      const base = npsAgg(A.nps);
+      const byGender = {}; Object.entries(A.g).forEach(([k,xs])=>{ const r=npsAgg(xs); byGender[k]={...r, rating:null}; });
+      const byOwner = {}; Object.entries(A.o).forEach(([k,es])=>{ const r=npsAgg(es.map(e=>e.nps_score)); const rr=es.map(e=>e.rating).filter(x=>typeof x==='number'); byOwner[k]={...r, rating: rr.length?avg(rr):null}; });
+      feedbackData[sc] = {
+        avgRating: avg(A.ratings), total: A.ratings.length,
+        loved: A.ratings.filter(x=>x>=4).length, boring: tag('bor'), confusing: tag('confus'), tooEasy: tag('easy'), tooFast: tag('fast'),
+        nps: base.nps, npsPromo: base.promo, npsDetract: A.nps.filter(x=>x<=6).length, npsN: A.nps.length,
+        byGender, byOwner,
+      };
+    });
+  } catch (_) {}
+  joins.notifLedger = notifLedger; joins.adsByGender = adsByGender; joins.feedbackData = feedbackData;
+
   rb.setJoins(joins);
   const { generated, scopes } = await rb.buildAllScopes();
   const entries = Object.entries(scopes);
   for (let i = 0; i < entries.length; i += 300) {
     const batch = db.batch();
     for (const [name, data] of entries.slice(i, i + 300)) {
-      batch.set(db.collection('analytics_cache').doc('scope__' + slugScope(name)), { scope: name, generated, data });
+      const sc = slugScope(name);
+      batch.set(db.collection('analytics_cache').doc('scope__' + sc), { scope: name, generated, data });
+      // PPT token cache (flat 402-token map) — read by /monthly.pptx, no compute at download.
+      if (data.ppt_tokens) batch.set(db.collection('report_cache').doc('ppt__' + sc), { scope: name, generated, tokens: data.ppt_tokens });
     }
     await batch.commit();
   }
+  await db.collection('analytics_cache').doc('report_index').set({ scopes: entries.map(e => e[0]), generated });
+  return entries.length;
   await db.collection('analytics_cache').doc('report_index').set({ scopes: entries.map(e => e[0]), generated });
   return entries.length;
 }
