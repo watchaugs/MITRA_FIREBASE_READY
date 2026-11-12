@@ -1,0 +1,41 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "login_attempts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "email", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "quizzes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "scheduled_at", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "app_builds",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    { "collectionGroup": "sessions",            "fieldPath": "processed", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] },
+    { "collectionGroup": "ar_views",            "fieldPath": "processed", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] },
+    { "collectionGroup": "quiz_attempts",       "fieldPath": "processed", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] },
+    { "collectionGroup": "screen_views",        "fieldPath": "processed", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] },
+    { "collectionGroup": "notification_events", "fieldPath": "processed", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] },
+    { "collectionGroup": "accessibility_events","fieldPath": "processed", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] },
+    { "collectionGroup": "language_events",     "fieldPath": "processed", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] },
+    { "collectionGroup": "compliance_events",   "fieldPath": "processed", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] },
+    { "collectionGroup": "profile_events",      "fieldPath": "processed", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] },
+    { "collectionGroup": "sync_events",         "fieldPath": "processed", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] },
+    { "collectionGroup": "device_events",       "fieldPath": "processed", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] }
+  ]
+}
