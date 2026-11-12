@@ -8573,6 +8573,11 @@ function initUserManagementPage() {
     const el = document.getElementById(id);
     if (el && typeof INDIA_STATES !== 'undefined') {
       while (el.options.length > 1) el.remove(1);
+      // "All India" grants nationwide access (createUser maps it to null).
+      // Only on the create/edit user selects, not the list filter.
+      if (id === 'cu-state' || id === 'eu-state') {
+        el.appendChild(new Option('All India', 'All India'));
+      }
       INDIA_STATES.forEach(s => { const o = new Option(s.name, s.name); el.appendChild(o); });
     }
   });
@@ -8727,14 +8732,16 @@ async function bulkToggleStatus(active) {
 async function bulkDelete() {
   const ids = [...umSelected];
   if (!ids.length) return;
-  if (!confirm(`Deactivate ${ids.length} user(s)? They will lose dashboard access immediately.`)) return;
-  const data = await safeFetch('/api/users/bulk-delete', { method:'POST', body:JSON.stringify({ ids }) }, true);
-  if (data?.success) {
-    showToast(`🗑️ ${data.count} users deactivated`);
-    clearUmSelection(); loadUserList();
-  } else {
-    showToast('⚠️ Bulk deactivate failed — check console');
+  if (!confirm(`Permanently DELETE ${ids.length} user(s)? They will be deactivated and then removed from the database. This cannot be undone.`)) return;
+  // Per spec: deactivate at the backend, then hard-delete from the DB + list.
+  await safeFetch('/api/users/bulk-delete', { method:'POST', body:JSON.stringify({ ids }) }, true); // deactivate
+  let deleted = 0;
+  for (const id of ids) {
+    const d = await safeFetch(`/api/users/${encodeURIComponent(id)}`, { method:'DELETE' }, true);
+    if (d) deleted++;
   }
+  showToast(`🗑️ ${deleted} user(s) deleted`);
+  clearUmSelection(); loadUserList();
 }
 
 function openEditUser(id) {

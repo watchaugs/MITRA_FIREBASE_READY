@@ -100,12 +100,23 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
     await db.collection('password_reset_tokens').doc(setupToken).set({
       userId: id, email, expiresAt: setupExpires, used: false,
     });
-    sendWelcomeEmail({ to: email, full_name, role, setupUrl })
-      .then(() => log.info({ userId: id, email }, 'Welcome/setup email sent'))
-      .catch(err => log.error({ err: err.message, userId: id }, 'Welcome email failed — account still created'));
+    // AWAIT the email before responding. On Cloud Run with min-instances=0 the
+    // instance can freeze/scale-to-zero the instant the response is sent, which
+    // was killing the fire-and-forget SMTP connection mid-handshake (user
+    // created, but no mail). Awaiting keeps the instance alive until Gmail
+    // accepts the message. A failure is logged but does NOT fail user creation.
+    let emailSent = false, emailError = null;
+    try {
+      await sendWelcomeEmail({ to: email, full_name, role, setupUrl });
+      emailSent = true;
+      log.info({ userId: id, email }, 'Welcome/setup email sent');
+    } catch (err) {
+      emailError = err.message;
+      log.error({ err: err.message, userId: id }, 'Welcome email failed — account still created');
+    }
 
     const { password_hash: _, ...safeUser } = userData;
-    res.status(201).json({ id, ...safeUser, _emailQueued: true });
+    res.status(201).json({ id, ...safeUser, email_sent: emailSent, email_error: emailError });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to create user');
     res.status(500).json({ error: 'Failed to create user' });
