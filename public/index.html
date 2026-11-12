@@ -612,8 +612,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
     </div>
     <div style="margin-bottom:22px">
       <label class="lbl" style="font-size:12px;margin-bottom:6px;display:block">Password</label>
-      <input class="inp" id="login-pass" type="password" placeholder="••••••••" autocomplete="current-password"
-        onkeydown="if(event.key==='Enter') doLogin()" style="width:100%;box-sizing:border-box">
+      <div style="position:relative">
+        <input class="inp" id="login-pass" type="password" placeholder="••••••••" autocomplete="current-password"
+          onkeydown="if(event.key==='Enter') doLogin()" style="width:100%;box-sizing:border-box;padding-right:40px">
+        <button type="button" onclick="togglePwdVisibility('login-pass','login-pwd-eye')" id="login-pwd-eye"
+          style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text2);font-size:16px;padding:0">👁</button>
+      </div>
     </div>
     <button class="btn btn-p" id="login-btn" onclick="doLogin()" style="width:100%;justify-content:center;font-size:14px;padding:12px">
       Sign In →
@@ -2645,9 +2649,9 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="card">
         <div class="card-title" style="font-size:13px">Change Password</div>
         <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
-          <div class="form-row"><label class="lbl">Current Password</label><input class="inp" type="password" id="setting-cur-pass" placeholder="Current password"></div>
-          <div class="form-row"><label class="lbl">New Password</label><input class="inp" type="password" id="setting-new-pass" placeholder="New password (min 8 chars)"></div>
-          <div class="form-row"><label class="lbl">Confirm New Password</label><input class="inp" type="password" id="setting-confirm-pass" placeholder="Repeat new password"></div>
+          <div class="form-row"><label class="lbl">Current Password</label><div style="position:relative"><input class="inp" type="password" id="setting-cur-pass" placeholder="Current password" style="padding-right:40px"><button type="button" onclick="togglePwdVisibility('setting-cur-pass','setting-cur-eye')" id="setting-cur-eye" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text2);font-size:16px;padding:0">👁</button></div></div>
+          <div class="form-row"><label class="lbl">New Password</label><div style="position:relative"><input class="inp" type="password" id="setting-new-pass" placeholder="New password (min 8 chars)" style="padding-right:40px"><button type="button" onclick="togglePwdVisibility('setting-new-pass','setting-new-eye')" id="setting-new-eye" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text2);font-size:16px;padding:0">👁</button></div></div>
+          <div class="form-row"><label class="lbl">Confirm New Password</label><div style="position:relative"><input class="inp" type="password" id="setting-confirm-pass" placeholder="Repeat new password" style="padding-right:40px"><button type="button" onclick="togglePwdVisibility('setting-confirm-pass','setting-confirm-eye')" id="setting-confirm-eye" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text2);font-size:16px;padding:0">👁</button></div></div>
           <button class="btn btn-s btn-sm" onclick="changeMyPassword()">🔑 Update Password</button>
           <div style="font-size:10px;color:var(--text2)">⚠️ Default passwords must be changed before going live (IT Act §43A)</div>
         </div>

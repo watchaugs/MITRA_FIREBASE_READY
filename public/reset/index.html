@@ -22,14 +22,30 @@
     <div class="login-logo">MITRA</div>
     <div class="login-sub">Secure Password Setup</div>
 
-    <input class="inp" id="new-password" type="password" placeholder="New Password (min 12 chars)">
-    <input class="inp" id="confirm-password" type="password" placeholder="Confirm Password">
+    <div style="position:relative">
+      <input class="inp" id="new-password" type="password" placeholder="New Password (min 12 chars)" style="padding-right:42px">
+      <button type="button" onclick="togglePwd('new-password','eye1')" id="eye1"
+        style="position:absolute;right:12px;top:12px;background:none;border:none;cursor:pointer;color:#888;font-size:16px;padding:0">👁</button>
+    </div>
+    <div style="position:relative">
+      <input class="inp" id="confirm-password" type="password" placeholder="Confirm Password" style="padding-right:42px">
+      <button type="button" onclick="togglePwd('confirm-password','eye2')" id="eye2"
+        style="position:absolute;right:12px;top:12px;background:none;border:none;cursor:pointer;color:#888;font-size:16px;padding:0">👁</button>
+    </div>
 
     <button class="btn btn-p" onclick="submitNewPassword()">Save Password →</button>
     <div id="message"></div>
   </div>
 
   <script>
+    function togglePwd(inputId, btnId) {
+      const inp = document.getElementById(inputId);
+      const btn = document.getElementById(btnId);
+      if (!inp) return;
+      if (inp.type === 'password') { inp.type = 'text'; if (btn) btn.textContent = '🙈'; }
+      else { inp.type = 'password'; if (btn) btn.textContent = '👁'; }
+    }
+
     async function submitNewPassword() {
       // 1. Grab the secure token from the URL bar
       const urlParams = new URLSearchParams(window.location.search);
