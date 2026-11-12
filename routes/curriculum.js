@@ -287,6 +287,24 @@ router.get('/ar-topics', async (req, res) => {
       chroma_color:     r.chroma_color     || null,
       ar_mode:          r.ar_mode          || null,
     }));
+    // Rule 3 — "coming soon" teasers: append up to 5 scheduled (not-yet-live)
+    // topics for this state so the app can show them greyed/locked, keeping
+    // the student's interest alive. Name + lock only (no date exposed).
+    try {
+      let sSnap = await db.collection('ar_assets').where('status', '==', 'scheduled').limit(100).get();
+      let srows = sSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      srows = visibleInState(srows, req.query.state);
+      const teasers = srows.slice(0, 5).map(r => ({
+        id: r.id,
+        topic: r.topic || '',
+        class_name: r.class_name || '',
+        subject: r.subject || '',
+        language: r.language || 'English',
+        status: 'scheduled',
+        locked: true, // the app greys these and blocks opening them
+      }));
+      data.push(...teasers);
+    } catch (_) {/* teasers are best-effort; never fail the main list */}
     // The app reads res.data['data'] — it was getting a bare array, so it always
     // fell back to its built-in demo list.
     return res.json({ data, total: data.length, territory_supported: true });
@@ -295,6 +313,35 @@ router.get('/ar-topics', async (req, res) => {
   // whether to say "coming soon" (true) or "not in your area yet" (false).
   const territory_supported = await _territorySupported(db, req.query.state);
   res.json({ data: [], total: 0, territory_supported });
+});
+
+// ── Learning rules (dashboard-configurable) ─────────────────────────────────
+// Serves the app's learning gates: ar_watch_threshold (% of AR narration a
+// student must hear before the quiz unlocks). Stored in curriculum_settings.
+router.get('/learning-settings', async (req, res) => {
+  try {
+    const db = getFirestore();
+    const doc = await db.collection('curriculum_settings').doc('rules').get();
+    const d = doc.exists ? doc.data() : {};
+    const n = Number(d.ar_watch_threshold);
+    res.json({ ar_watch_threshold: (n >= 1 && n <= 100) ? n : 80 });
+  } catch (_) {
+    res.json({ ar_watch_threshold: 80 });
+  }
+});
+
+router.put('/learning-settings', requirePerm('perm_edit_curriculum'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const n = Number(req.body?.ar_watch_threshold);
+    if (!(n >= 1 && n <= 100)) return res.status(400).json({ error: 'ar_watch_threshold must be 1–100' });
+    await db.collection('curriculum_settings').doc('rules')
+      .set({ ar_watch_threshold: n, updated_by: req.user.id, updated_at: new Date() }, { merge: true });
+    res.json({ success: true, ar_watch_threshold: n });
+  } catch (err) {
+    log.error({ err: err.message }, 'Failed to save learning settings');
+    res.status(500).json({ error: 'Failed to save learning settings' });
+  }
 });
 
 // ── State Hierarchy ────────────────────────────────────────────────────────────

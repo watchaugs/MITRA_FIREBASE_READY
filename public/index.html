@@ -1297,6 +1297,8 @@ document.addEventListener('DOMContentLoaded', () => {
         <button class="btn btn-s btn-sm" onclick="currAddStateBlock()">🗺️ Add State Block</button>
         <button class="btn btn-g btn-sm" id="curr-save-btn" onclick="saveCurriculum()">💾 Save curriculum</button>
         <span id="curr-dirty" style="font-size:11px;color:var(--text3)">All changes saved</span>
+        <span style="margin-left:16px;font-size:12px;color:var(--text2)">AR watch % to unlock quiz:</span>
+        <input class="inp" id="ar-watch-threshold" type="number" min="1" max="100" placeholder="80" style="width:70px" onblur="saveArWatchThreshold(this.value)">
       </div>
     </div>
 
@@ -6625,6 +6627,7 @@ function renderArAssetsTable(assets) {
       <td>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           ${a.status !== 'published' ? `<button class="btn btn-g btn-sm" onclick="publishArAsset('${a.id}')">▶ Publish</button>` : ''}
+          ${a.status !== 'scheduled' && a.status !== 'published' ? `<button class="btn btn-s btn-sm" onclick="scheduleArAsset('${a.id}')">📅 Coming soon</button>` : ''}
           <button class="btn btn-s btn-sm" onclick="openReleaseModal('ar','${a.id}')" title="When students can see it">📅</button>
           <button class="btn btn-s btn-sm" onclick="replaceArMedia('${a.id}','model')" title="Replace 3D model">🔁 Model</button>
           <button class="btn btn-s btn-sm" onclick="regenArAsset('${a.id}','model')" title="Rebuild model from original">♻ Draco</button>
@@ -6694,6 +6697,26 @@ function _syncBulkButtons() {
 async function publishArAsset(id) {
   const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}/publish`, { method: 'POST', body: '{}' });
   if (d) { showToast('✅ Published — students see it according to its 📅 Release setting'); refreshArAssetList(); }
+}
+
+// Mark an AR asset "coming soon" — students see it greyed in the app (Rule 3).
+async function scheduleArAsset(id) {
+  const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}/schedule`, { method: 'POST', body: '{}' });
+  if (d) { showToast('📅 Scheduled — shows as "Coming soon" to students'); refreshArAssetList(); }
+}
+
+// AR-watch threshold (% of narration needed before a quiz unlocks).
+async function saveArWatchThreshold(v) {
+  const n = Number(v);
+  if (!(n >= 1 && n <= 100)) return showToast('Enter 1–100');
+  const d = await safeFetch('/api/curriculum/learning-settings', { method: 'PUT', body: JSON.stringify({ ar_watch_threshold: n }) });
+  if (d) showToast('✅ Saved');
+}
+
+async function loadArWatchThreshold() {
+  const d = await safeFetch('/api/curriculum/learning-settings', { silent: true });
+  const el = document.getElementById('ar-watch-threshold');
+  if (d && el) el.value = d.ar_watch_threshold || 80;
 }
 
 // Type-to-confirm delete (no undo window, immediate backend delete).

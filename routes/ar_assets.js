@@ -479,6 +479,17 @@ router.post('/assets/:id/publish', requirePerm('perm_approve_content'), async (r
   } catch { res.status(500).json({ error: 'Publish failed' }); }
 });
 
+// Mark an asset "scheduled" (coming soon). Students see it greyed/locked in the
+// app as a teaser (Rule 3), but it is not yet openable. Publish it later to go live.
+router.post('/assets/:id/schedule', requirePerm('perm_approve_content'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    await db.collection('ar_assets').doc(req.params.id).update({ status: 'scheduled', updated_at: new Date() });
+    await invalidateManifests(db);
+    res.json({ message: 'Asset scheduled (coming soon)' });
+  } catch { res.status(500).json({ error: 'Schedule failed' }); }
+});
+
 router.post('/assets/:id/review', requirePerm('perm_upload_unity'), async (req, res) => {
   try {
     await getFirestore().collection('ar_assets').doc(req.params.id)
