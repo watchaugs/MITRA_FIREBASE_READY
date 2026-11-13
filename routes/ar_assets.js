@@ -882,4 +882,161 @@ router.put('/language-config/:region', requirePerm('perm_edit_curriculum'), asyn
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// NARRATION STUDIO — standalone TTS workspace. Generate audio from text in many
+// languages into a reusable library (narration_library), preview/approve, then
+// associate to any AR asset for publishing. Decoupled from a specific asset.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Bhashini-supported Indian languages for the Studio multi-select.
+const STUDIO_LANGUAGES = [
+  { code: 'hi', name: 'हिंदी (Hindi)' }, { code: 'en', name: 'English' },
+  { code: 'bn', name: 'বাংলা (Bengali)' }, { code: 'mr', name: 'मराठी (Marathi)' },
+  { code: 'te', name: 'తెలుగు (Telugu)' }, { code: 'ta', name: 'தமிழ் (Tamil)' },
+  { code: 'gu', name: 'ગુજરાતી (Gujarati)' }, { code: 'kn', name: 'ಕನ್ನಡ (Kannada)' },
+  { code: 'ml', name: 'മലയാളം (Malayalam)' }, { code: 'pa', name: 'ਪੰਜਾਬੀ (Punjabi)' },
+  { code: 'or', name: 'ଓଡ଼ିଆ (Odia)' }, { code: 'as', name: 'অসমীয়া (Assamese)' },
+  { code: 'ur', name: 'اردو (Urdu)' }, { code: 'ne', name: 'नेपाली (Nepali)' },
+  { code: 'sa', name: 'संस्कृतम् (Sanskrit)' }, { code: 'brx', name: 'बड़ो (Bodo)' },
+  { code: 'mni', name: 'ꯃꯤꯇꯩ (Manipuri)' }, { code: 'doi', name: 'डोगरी (Dogri)' },
+  { code: 'ks', name: 'کٲشُر (Kashmiri)' }, { code: 'kok', name: 'कोंकणी (Konkani)' },
+  { code: 'mai', name: 'मैथिली (Maithili)' }, { code: 'sat', name: 'ᱥᱟᱱᱛᱟᱲᱤ (Santali)' },
+  { code: 'sd', name: 'سنڌي (Sindhi)' },
+];
+
+// GET /bhashini/languages — the Studio language dropdown (engine-supported set).
+router.get('/bhashini/languages', requirePerm('perm_upload_unity'), (req, res) => {
+  res.json({ languages: STUDIO_LANGUAGES, configured: bhashini.isConfigured() });
+});
+
+// Build a friendly, sanitised download filename from the item's tags.
+function studioFileName(item, ext) {
+  const part = (v) => String(v || '').trim().replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const bits = [part(item.class_name) && 'Class' + part(item.class_name), part(item.subject), part(item.topic), part(item.language).toUpperCase(), part(item.state)].filter(Boolean);
+  return (bits.join('_') || 'narration') + (ext || '.mp3');
+}
+
+// POST /narration-studio/generate — bulk text→TTS into the library.
+// body: { text, languages:[], gender, class_name, subject, topic, state }
+router.post('/narration-studio/generate', requirePerm('perm_upload_unity'), async (req, res) => {
+  if (!bhashini.isConfigured()) return res.status(503).json({ error: 'Bhashini not configured' });
+  const b = req.body || {};
+  const text = String(b.text || '').trim();
+  const languages = Array.isArray(b.languages) ? b.languages.map(l => String(l).toLowerCase()) : [];
+  const gender = (b.gender || 'female').toLowerCase();
+  if (!text) return res.status(400).json({ error: 'Narration text is required' });
+  if (!languages.length) return res.status(400).json({ error: 'Pick at least one language' });
+
+  const db = getFirestore();
+  const pub = (k) => process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${k}` : `/api/ar/file/${k.replace('ar_assets/', '')}`;
+  const done = [], needs_manual = [], failed = [];
+
+  for (const lang of languages) {
+    try {
+      const { audio } = await bhashini.tts(text, lang, { gender });
+      let opus, aac;
+      try { ({ opus, aac } = await transcodeNarration(audio)); }
+      catch (tc) { failed.push({ lang, error: 'transcode: ' + tc.message }); continue; }
+      const itemId = uuidv4();
+      // Stored under ar_assets/ prefix so the existing /file/:name serve route plays them.
+      const baseKey = `ar_assets/nlib_${itemId}_${lang}`;
+      await storage.putRaw(opus, `${baseKey}.opus`, { contentType: 'audio/ogg' });
+      await storage.putRaw(aac,  `${baseKey}.m4a`,  { contentType: 'audio/aac' });
+      const item = {
+        id: itemId, language: lang, text,
+        gender, class_name: b.class_name || null, subject: b.subject || null,
+        topic: b.topic || null, state: b.state || null,
+        url: pub(`${baseKey}.opus`), url_aac: pub(`${baseKey}.m4a`),
+        status: 'pending', created_by: req.user.id, created_at: new Date(),
+      };
+      await db.collection('narration_library').doc(itemId).set(item);
+      done.push(item);
+    } catch (e) {
+      if (String(e.message).toLowerCase().includes('voice') || String(e.message).includes('No audio')) needs_manual.push(lang);
+      else failed.push({ lang, error: e.message });
+    }
+  }
+  res.json({ message: 'Narration generated', done, needs_manual, failed });
+});
+
+// GET /narration-studio/library — list generated items (optional filters).
+router.get('/narration-studio/library', requirePerm('perm_upload_unity'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const snap = await db.collection('narration_library').limit(500).get();
+    let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const { language, subject, topic, status } = req.query;
+    if (language) rows = rows.filter(r => String(r.language) === String(language).toLowerCase());
+    if (subject)  rows = rows.filter(r => String(r.subject || '').toLowerCase() === String(subject).toLowerCase());
+    if (topic)    rows = rows.filter(r => String(r.topic || '').toLowerCase().includes(String(topic).toLowerCase()));
+    if (status)   rows = rows.filter(r => String(r.status) === String(status));
+    rows.sort((a, b) => (b.created_at?.toMillis?.() || 0) - (a.created_at?.toMillis?.() || 0));
+    res.json({ data: rows, total: rows.length });
+  } catch (e) { res.status(500).json({ error: 'Failed to load narration library', detail: e.message }); }
+});
+
+// POST /narration-studio/:itemId/approve — flag reviewed/approved.
+router.post('/narration-studio/:itemId/approve', requirePerm('perm_upload_unity'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    await db.collection('narration_library').doc(req.params.itemId).update({ status: 'approved', approved_by: req.user.id, approved_at: new Date() });
+    res.json({ message: 'Approved', id: req.params.itemId });
+  } catch (e) { res.status(500).json({ error: 'Approve failed', detail: e.message }); }
+});
+
+// POST /narration-studio/:itemId/associate — attach a library item to an asset.
+// body: { asset_id }. Keeps the library copy (reusable for other assets).
+router.post('/narration-studio/:itemId/associate', requirePerm('perm_upload_unity'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const item = (await db.collection('narration_library').doc(req.params.itemId).get()).data();
+    if (!item) return res.status(404).json({ error: 'Library item not found' });
+    const assetId = req.body && req.body.asset_id;
+    if (!assetId) return res.status(400).json({ error: 'asset_id required' });
+    const ref = db.collection('ar_assets').doc(assetId);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'Asset not found' });
+    const data = snap.data() || {};
+    const lang = item.language;
+    const audios = { ...(data.audios || {}), [lang]: item.url };
+    const audios_aac = { ...(data.audios_aac || {}), [lang]: item.url_aac || item.url };
+    const update = { audios, audios_aac };
+    if (!data.audio_url) { update.audio_url = item.url; update.language = lang; }
+    await ref.set(update, { merge: true });
+    await invalidateManifests(db);
+    res.json({ message: 'Narration associated to asset', asset_id: assetId, language: lang, audios });
+  } catch (e) { res.status(500).json({ error: 'Associate failed', detail: e.message }); }
+});
+
+// DELETE /narration-studio/:itemId — discard (removes files + record).
+router.delete('/narration-studio/:itemId', requirePerm('perm_upload_unity'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const ref = db.collection('narration_library').doc(req.params.itemId);
+    const item = (await ref.get()).data();
+    if (item) {
+      for (const ext of ['.opus', '.m4a']) {
+        try { await storage.delete(`ar_assets/nlib_${req.params.itemId}_${item.language}${ext}`); } catch (_) {}
+      }
+    }
+    await ref.delete();
+    res.json({ message: 'Narration discarded', id: req.params.itemId });
+  } catch (e) { res.status(500).json({ error: 'Discard failed', detail: e.message }); }
+});
+
+// GET /narration-studio/:itemId/download — friendly-named audio download.
+router.get('/narration-studio/:itemId/download', requirePerm('perm_upload_unity'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const item = (await db.collection('narration_library').doc(req.params.itemId).get()).data();
+    if (!item) return res.status(404).json({ error: 'Library item not found' });
+    const key = `ar_assets/nlib_${req.params.itemId}_${item.language}.m4a`;
+    if (!(await storage.exists(key))) return res.status(404).json({ error: 'Audio file missing' });
+    res.setHeader('Content-Type', 'audio/aac');
+    res.setHeader('Content-Disposition', `attachment; filename="${studioFileName(item, '.m4a')}"`);
+    (await storage.createReadStream(key)).pipe(res);
+  } catch (e) { res.status(500).json({ error: 'Download failed', detail: e.message }); }
+});
+
+
 module.exports = router;

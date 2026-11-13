@@ -2278,6 +2278,49 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
   </div>
 
+<!-- 🗣 NARRATION STUDIO — standalone TTS workspace -->
+  <div class="card" id="narration-studio">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div>
+        <div class="card-title">🗣 Narration Studio</div>
+        <div class="card-sub">Generate TTS narration in any language, preview & approve, then associate to any AR asset below.</div>
+      </div>
+      <button class="btn btn-s btn-sm" onclick="toggleStudio()">▾ Show / Hide</button>
+    </div>
+    <div id="studio-body">
+      <textarea class="inp" id="studio-text" rows="3" placeholder="Narration text (source language)…" style="width:100%;font-size:13px;margin-bottom:8px"></textarea>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-bottom:8px">
+        <input class="inp" id="studio-class"   placeholder="Class"   style="width:80px">
+        <input class="inp" id="studio-subject" placeholder="Subject" style="width:120px">
+        <input class="inp" id="studio-topic"   placeholder="Topic"   style="width:150px">
+        <input class="inp" id="studio-state"   placeholder="State (optional)" style="width:140px">
+        <label style="font-size:12px">Voice:
+          <select class="sel" id="studio-gender" style="width:90px"><option value="female">Female</option><option value="male">Male</option></select>
+        </label>
+      </div>
+      <div style="margin-bottom:8px">
+        <div style="font-size:12px;font-weight:600;margin-bottom:4px">Languages (tick any — multiple):
+          <a href="#" onclick="studioLangAll(true);return false" style="font-size:11px;margin-left:8px">select all</a> ·
+          <a href="#" onclick="studioLangAll(false);return false" style="font-size:11px">none</a>
+        </div>
+        <div id="studio-langs" style="display:flex;gap:10px;flex-wrap:wrap;font-size:12px"></div>
+      </div>
+      <button class="btn btn-p btn-sm" onclick="studioGenerate()">⚡ Generate narration</button>
+      <span id="studio-status" style="font-size:12px;margin-left:8px;color:var(--text2)"></span>
+
+      <div style="margin-top:14px;border-top:1px dashed var(--border,#333);padding-top:10px">
+        <div style="font-weight:600;margin-bottom:6px">Generated library</div>
+        <div style="margin-bottom:6px;font-size:11px">
+          Filter: <select class="sel" id="studio-filter-status" style="width:120px" onchange="studioLoadLibrary()">
+            <option value="">All</option><option value="pending">Pending</option><option value="approved">Approved</option>
+          </select>
+        </div>
+        <div id="studio-library"><em style="color:var(--text3)">No narration generated yet.</em></div>
+      </div>
+    </div>
+  </div>
+
+  
   <!-- ASSET LIBRARY TABLE -->
   <div class="card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
@@ -6331,6 +6374,110 @@ async function removeLangAudio(assetId, lang) {
   if (typeof refreshArAssetList === 'function') refreshArAssetList();
 }
 
+// ═══ NARRATION STUDIO (standalone TTS) ═══════════════════════════════════════
+let _studioLangs = null;           // [{code,name}] full supported list
+let _studioAssetsCache = [];       // for the associate picker
+
+function toggleStudio() {
+  const b = document.getElementById('studio-body');
+  if (b) b.style.display = b.style.display === 'none' ? 'block' : 'none';
+}
+async function _loadStudioLanguages() {
+  if (_studioLangs) return _studioLangs;
+  try {
+    const r = await fetch('/api/ar/bhashini/languages', { headers: authHeaders() });
+    const j = await r.json();
+    _studioLangs = j.languages || [];
+  } catch { _studioLangs = [{ code: 'hi', name: 'Hindi' }, { code: 'en', name: 'English' }]; }
+  return _studioLangs;
+}
+async function initNarrationStudio() {
+  const host = document.getElementById('studio-langs');
+  if (!host) return;
+  const langs = await _loadStudioLanguages();
+  host.innerHTML = langs.map(l =>
+    `<label style="display:inline-flex;align-items:center;gap:3px"><input type="checkbox" class="studio-lang" value="${l.code}" style="width:auto"> ${l.name}</label>`
+  ).join('');
+  studioLoadLibrary();
+}
+function studioLangAll(on) { document.querySelectorAll('.studio-lang').forEach(c => { c.checked = on; }); }
+
+async function studioGenerate() {
+  const text = (document.getElementById('studio-text')?.value || '').trim();
+  const languages = [...document.querySelectorAll('.studio-lang:checked')].map(c => c.value);
+  const st = document.getElementById('studio-status');
+  if (!text) { if (st) st.textContent = '⚠ Enter narration text'; return; }
+  if (!languages.length) { if (st) st.textContent = '⚠ Tick at least one language'; return; }
+  if (st) st.textContent = '⏳ Generating ' + languages.length + ' language(s)…';
+  const body = {
+    text, languages, gender: document.getElementById('studio-gender')?.value || 'female',
+    class_name: document.getElementById('studio-class')?.value || '',
+    subject: document.getElementById('studio-subject')?.value || '',
+    topic: document.getElementById('studio-topic')?.value || '',
+    state: document.getElementById('studio-state')?.value || '',
+  };
+  const d = await safeFetch('/api/ar/narration-studio/generate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!d) { if (st) st.textContent = '✗ Failed'; return; }
+  let msg = '✅ ' + (d.done || []).length + ' generated';
+  if ((d.needs_manual || []).length) msg += ' · ⚠ no voice: ' + d.needs_manual.join(', ').toUpperCase();
+  if ((d.failed || []).length) msg += ' · ✗ ' + d.failed.length + ' failed';
+  if (st) st.textContent = msg;
+  studioLoadLibrary();
+}
+
+async function studioLoadLibrary() {
+  const host = document.getElementById('studio-library');
+  if (!host) return;
+  const status = document.getElementById('studio-filter-status')?.value || '';
+  const q = status ? ('?status=' + encodeURIComponent(status)) : '';
+  let d;
+  try { const r = await fetch('/api/ar/narration-studio/library' + q, { headers: authHeaders() }); d = await r.json(); }
+  catch { host.innerHTML = '<em style="color:var(--text3)">Could not load library.</em>'; return; }
+  const rows = (d && d.data) || [];
+  if (!rows.length) { host.innerHTML = '<em style="color:var(--text3)">No narration generated yet.</em>'; return; }
+  host.innerHTML = rows.map(it => {
+    const tag = [it.class_name && ('Class ' + it.class_name), it.subject, it.topic, (it.language || '').toUpperCase(), it.state].filter(Boolean).join(' · ');
+    const badge = it.status === 'approved' ? '<span class="tag tag-g">approved</span>' : '<span class="tag tag-y">pending</span>';
+    return `<div style="border:1px solid var(--border,#333);border-radius:8px;padding:8px;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <div style="font-size:12px">${tag || '(untagged)'} ${badge}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${it.status !== 'approved' ? `<button class="btn btn-s btn-sm" onclick="studioApprove('${it.id}')">✓ Approve</button>` : ''}
+          <button class="btn btn-s btn-sm" onclick="studioAssociate('${it.id}')">🔗 Associate to asset</button>
+          <a class="btn btn-s btn-sm" href="/api/ar/narration-studio/${it.id}/download" target="_blank">⬇ Download</a>
+          <button class="btn btn-r btn-sm" onclick="studioDiscard('${it.id}')">✕</button>
+        </div>
+      </div>
+      <audio controls preload="none" src="${it.url_aac || it.url}" style="width:100%;margin-top:6px;height:34px"></audio>
+    </div>`;
+  }).join('');
+}
+async function studioApprove(id) {
+  await safeFetch('/api/ar/narration-studio/' + id + '/approve', { method: 'POST' });
+  studioLoadLibrary();
+}
+async function studioDiscard(id) {
+  if (!confirm('Discard this narration permanently?')) return;
+  await safeFetch('/api/ar/narration-studio/' + id, { method: 'DELETE' });
+  studioLoadLibrary();
+}
+async function studioAssociate(id) {
+  // Offer the current AR assets as targets.
+  const assets = _studioAssetsCache.length ? _studioAssetsCache : Object.values(window._arAll || {});
+  if (!assets.length) { alert('Load the AR assets list first.'); return; }
+  const list = assets.map((a, i) => `${i + 1}. ${a.title || a.original_name} (${a.class_name || '-'} / ${a.subject || '-'})`).join('\n');
+  const pick = prompt('Associate to which asset? Enter number:\n\n' + list);
+  const idx = parseInt(pick, 10) - 1;
+  if (isNaN(idx) || !assets[idx]) return;
+  const d = await safeFetch('/api/ar/narration-studio/' + id + '/associate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asset_id: assets[idx].id }),
+  });
+  if (d) { showToast('🔗 Narration associated'); if (typeof refreshArAssetList === 'function') refreshArAssetList(); }
+}
+
+
 // ── Bhashini narration (Phase 5) ─────────────────────────────────────────────
 // Allowed languages per asset come from its target states via /language-config.
 let _bhLangConfig = null;
@@ -6593,6 +6740,7 @@ async function refreshArAssetList() {
     if (res.ok) {
       const data = await res.json();
       renderArAssetsTable(data.data || data || []);
+      if (typeof initNarrationStudio === 'function') initNarrationStudio();
       return;
     }
   } catch (e) {}
