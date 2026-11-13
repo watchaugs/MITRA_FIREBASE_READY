@@ -440,6 +440,32 @@ async function purgeAssetFiles(id, a) {
   for (const k of assetFileKeys(id, a)) { try { await storage.delete(k); } catch (_) { /* ignore */ } }
 }
 
+// ── Deletion guards — a government content system must never orphan live media.
+// A published/scheduled/in-review asset is LOCKED and must be unpublished first.
+// A narration file referenced by any asset cannot be discarded.
+const LIVE_STATUSES = ['published', 'scheduled', 'review'];
+function assetDeletionBlock(a) {
+  if (!a) return null;
+  if (LIVE_STATUSES.includes(a.status)) {
+    return { status: a.status,
+      reason: `This asset is "${a.status}". Live or pending content cannot be deleted directly.`,
+      steps: ['1. Open this asset and set its status to Draft (Unpublish).',
+        '2. If it is released in any state, clear its Release settings first.',
+        '3. Once it shows "draft" / "uploaded", delete it again.'] };
+  }
+  return null;
+}
+async function narrationInUse(db, url) {
+  if (!url) return [];
+  const snap = await db.collection('ar_assets').limit(1000).get();
+  const users = [];
+  snap.forEach(d => { const a = d.data() || {};
+    const urls = [a.audio_url, ...Object.values(a.audios || {}), ...Object.values(a.audios_aac || {})];
+    if (urls.includes(url)) users.push({ id: d.id, title: a.title || a.original_name || d.id, status: a.status });
+  });
+  return users;
+}
+
 // Immediate delete. The UI gets its safety from a type-to-confirm dialog, so the
 // backend requires an explicit confirm flag in the body to avoid accidental calls.
 router.delete('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => {
@@ -452,6 +478,8 @@ router.delete('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) 
       return res.status(400).json({ error: 'Delete must be confirmed', hint: 'send { "confirm": true }' });
     }
     const a = doc.data();
+    const block = assetDeletionBlock(a);
+    if (block) return res.status(409).json({ error: 'Asset is live — cannot delete', locked: true, ...block });
     await purgeAssetFiles(req.params.id, a);   // best-effort file cleanup (never blocks record delete)
     await ref.delete();
     await invalidateManifests(db);
@@ -617,6 +645,8 @@ router.delete('/assets/:id/audio/:lang', requirePerm('perm_upload_unity'), async
     const ref = db.collection('ar_assets').doc(id);
     const snap = await ref.get();
     if (!snap.exists) return res.status(404).json({ error: 'AR asset not found' });
+    const block = assetDeletionBlock(snap.data());
+    if (block) return res.status(409).json({ error: 'Asset is live — unpublish before changing its narration', locked: true, ...block });
     const audios = { ...((snap.data() || {}).audios || {}) };
     delete audios[(lang || '').toLowerCase()];
     await ref.set({ audios }, { merge: true });
@@ -840,6 +870,8 @@ router.post('/assets/bulk', requirePerm('perm_upload_unity'), async (req, res) =
       const snap = await ref.get();
       if (!snap.exists) { results.push({ id, ok: false, error: 'not found' }); continue; }
       if (action === 'delete') {
+        const block = assetDeletionBlock(snap.data());
+        if (block) { results.push({ id, ok: false, error: `locked (${block.status}) — unpublish first` }); continue; }
         await purgeAssetFiles(id, snap.data());
         await ref.delete();
         results.push({ id, ok: true });
@@ -1014,10 +1046,19 @@ router.delete('/narration-studio/:itemId', requirePerm('perm_upload_unity'), asy
     const db = getFirestore();
     const ref = db.collection('narration_library').doc(req.params.itemId);
     const item = (await ref.get()).data();
-    if (item) {
-      for (const ext of ['.opus', '.m4a']) {
-        try { await storage.delete(`ar_assets/nlib_${req.params.itemId}_${item.language}${ext}`); } catch (_) {}
-      }
+    if (!item) return res.status(404).json({ error: 'Library item not found' });
+    const u1 = await narrationInUse(db, item.url).catch(() => []);
+    const u2 = await narrationInUse(db, item.url_aac).catch(() => []);
+    const all = [...u1, ...u2].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i);
+    if (all.length) {
+      return res.status(409).json({ error: 'Narration is in use — cannot discard', locked: true, used_by: all,
+        reason: `This audio is associated with ${all.length} asset(s).`,
+        steps: ['1. Unpublish each listed asset (set status to Draft).',
+          '2. Remove this language\'s narration from each of those assets.',
+          '3. Then discard this library item.'] });
+    }
+    for (const ext of ['.opus', '.m4a']) {
+      try { await storage.delete(`ar_assets/nlib_${req.params.itemId}_${item.language}${ext}`); } catch (_) {}
     }
     await ref.delete();
     res.json({ message: 'Narration discarded', id: req.params.itemId });

@@ -6825,20 +6825,7 @@ function renderArAssetsTable(assets) {
             <input type="file" id="lang-file-${a.id}" accept="audio/*" style="font-size:11px">
             <button class="btn btn-s btn-sm" onclick="addLangAudio('${a.id}')">+ Add narration (manual)</button>
           </div>
-          <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border,#333)">
-            <div style="font-weight:600;margin-bottom:6px">🗣 Generate with Bhashini</div>
-            <textarea class="inp" id="bh-text-${a.id}" rows="2" placeholder="Narration text (source language). Translation to each ticked language happens if NMT is enabled." style="width:100%;font-size:12px;margin-bottom:6px"></textarea>
-            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-              <label style="font-size:11px">Voice:
-                <select class="sel" id="bh-gender-${a.id}" style="width:90px">
-                  <option value="female">Female</option><option value="male">Male</option>
-                </select>
-              </label>
-              <span id="bh-langs-${a.id}" style="display:flex;gap:8px;flex-wrap:wrap;font-size:11px"></span>
-            </div>
-            <button class="btn btn-p btn-sm" onclick="generateBhashiniNarration('${a.id}')">⚡ Generate ticked languages</button>
-            <span id="bh-status-${a.id}" style="font-size:11px;margin-left:8px;color:var(--text2)"></span>
-          </div>
+          <div style="margin-top:8px;font-size:11px;color:var(--text3)">🗣 Generate narration in the <strong>Narration Studio</strong> panel at the top of this page, then use its "Associate to asset" action to attach it here.</div>
         </div>
       </td>
     </tr>`).join('');
@@ -6916,14 +6903,39 @@ async function loadArWatchThreshold() {
 async function deleteArAsset(id) {
   const a = (window._arAll || {})[id] || {};
   const name = a.title || a.original_name || id;
+  if (['published', 'scheduled', 'review'].includes(a.status)) {
+    await arAlert({ title: '🔒 Cannot delete a live asset',
+      message: `"${name}" is currently "${a.status}". Published, scheduled or in-review content cannot be deleted directly — it must be taken down first.`,
+      steps: ['Open this asset and set its status to Draft (Unpublish).',
+        'If it is released in any state, clear its Release settings.',
+        'Once it shows "draft"/"uploaded", delete it again.'] });
+    return;
+  }
   const okDel = await arConfirm({ title: 'Delete AR asset', message: `This permanently deletes "${name}" and all its files. This cannot be undone.`, typeToConfirm: 'DELETE', okLabel: 'Delete' });
   if (!okDel) return;
-  const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}`, {
-    method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true })
+  const res = await fetch(`/api/ar/assets/${encodeURIComponent(id)}`, {
+    method: 'DELETE', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true })
   });
-  if (!d) return;
+  if (res.status === 409) {
+    const j = await res.json().catch(() => ({}));
+    await arAlert({ title: '🔒 Cannot delete', message: j.reason || j.error || 'This asset is live.', steps: j.steps || [] });
+    return;
+  }
+  if (!res.ok) { showToast('✗ Delete failed'); return; }
   showToast('🗑️ Asset deleted');
   refreshArAssetList();
+}
+
+// Informational dialog with optional numbered steps (plain text, safe rendering).
+async function arAlert({ title, message, steps }) {
+  const body = message + ((steps && steps.length) ? ('\n\n' + steps.map((x, i) => (i + 1) + '. ' + x).join('\n')) : '');
+  const titleEl = document.getElementById('ar-confirm-title');
+  if (titleEl && typeof arConfirm === 'function') {
+    const msgEl = document.getElementById('ar-confirm-msg');
+    if (msgEl) msgEl.style.whiteSpace = 'pre-line';
+    return arConfirm({ title, message: body, okLabel: 'Got it' });
+  }
+  alert(title + '\n\n' + body);
 }
 
 function replaceArMedia(id, field) {
