@@ -6440,14 +6440,16 @@ async function studioLoadLibrary() {
   host.innerHTML = rows.map(it => {
     const tag = [it.class_name && ('Class ' + it.class_name), it.subject, it.topic, (it.language || '').toUpperCase(), it.state].filter(Boolean).join(' · ');
     const badge = it.status === 'approved' ? '<span class="tag tag-g">approved</span>' : '<span class="tag tag-y">pending</span>';
+    const usedN = it.used_count || 0;
+    const usedBadge = usedN ? `<span class="tag tag-b" title="${(it.used_by||[]).map(u=>u.title).join(', ')}">used by ${usedN} asset${usedN>1?'s':''}</span>` : '<span class="tag" style="opacity:.6">unused</span>';
     return `<div style="border:1px solid var(--border,#333);border-radius:8px;padding:8px;margin-bottom:6px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-        <div style="font-size:12px">${tag || '(untagged)'} ${badge}</div>
+        <div style="font-size:12px">${tag || '(untagged)'} ${badge} ${usedBadge}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           ${it.status !== 'approved' ? `<button class="btn btn-s btn-sm" onclick="studioApprove('${it.id}')">✓ Approve</button>` : ''}
           <button class="btn btn-s btn-sm" onclick="studioAssociate('${it.id}')">🔗 Associate to asset</button>
           <a class="btn btn-s btn-sm" href="/api/ar/narration-studio/${it.id}/download" target="_blank">⬇ Download</a>
-          <button class="btn btn-r btn-sm" onclick="studioDiscard('${it.id}')">✕</button>
+          <button class="btn btn-r btn-sm" ${usedN ? 'disabled title="In use — detach from assets first"' : ''} onclick="studioDiscard('${it.id}')">✕</button>
         </div>
       </div>
       <audio controls preload="none" src="${it.url_aac || it.url}" style="width:100%;margin-top:6px;height:34px"></audio>
@@ -6793,8 +6795,10 @@ function renderArAssetsTable(assets) {
       <td style="font-size:11px">${a.created_at ? new Date(a.created_at).toLocaleDateString('en-IN') : '—'}</td>
       <td>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
-          ${a.status !== 'published' ? `<button class="btn btn-g btn-sm" onclick="publishArAsset('${a.id}')">▶ Publish</button>` : ''}
-          ${a.status !== 'scheduled' && a.status !== 'published' ? `<button class="btn btn-s btn-sm" onclick="scheduleArAsset('${a.id}')">📅 Coming soon</button>` : ''}
+          ${a.status !== 'published' && a.status !== 'archived' ? `<button class="btn btn-g btn-sm" onclick="publishArAsset('${a.id}')">▶ Publish</button>` : ''}
+          ${(a.status === 'published' || a.status === 'scheduled' || a.status === 'review') ? `<button class="btn btn-s btn-sm" onclick="unpublishArAsset('${a.id}')" title="Take down so it can be edited/deleted">⏸ Unpublish</button>` : ''}
+          ${a.status === 'archived' ? `<button class="btn btn-g btn-sm" onclick="restoreArAsset('${a.id}')" title="Recover from recycle bin">♻ Restore</button>` : ''}
+          ${a.status !== 'scheduled' && a.status !== 'published' && a.status !== 'archived' ? `<button class="btn btn-s btn-sm" onclick="scheduleArAsset('${a.id}')">📅 Coming soon</button>` : ''}
           <button class="btn btn-s btn-sm" onclick="openReleaseModal('ar','${a.id}')" title="When students can see it">📅</button>
           <button class="btn btn-s btn-sm" onclick="replaceArMedia('${a.id}','model')" title="Replace 3D model">🔁 Model</button>
           <button class="btn btn-s btn-sm" onclick="regenArAsset('${a.id}','model')" title="Rebuild model from original">♻ Draco</button>
@@ -6851,6 +6855,24 @@ function _syncBulkButtons() {
 async function publishArAsset(id) {
   const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}/publish`, { method: 'POST', body: '{}' });
   if (d) { showToast('✅ Published — students see it according to its 📅 Release setting'); refreshArAssetList(); }
+}
+async function arAlert({ title, message, steps }) {
+  const body = message + ((steps && steps.length) ? ('\n\n' + steps.map((x, i) => (i + 1) + '. ' + x).join('\n')) : '');
+  if (typeof arConfirm === 'function') { const m = document.getElementById('ar-confirm-msg'); if (m) m.style.whiteSpace = 'pre-line'; return arConfirm({ title, message: body, okLabel: 'Got it' }); }
+  alert(title + '\n\n' + body);
+}
+async function unpublishArAsset(id) {
+  const a = (window._arAll || {})[id] || {};
+  const ok = await arConfirm({ title: 'Unpublish (take down)', message: `Take "${a.title || a.original_name || id}" down from students? It becomes a draft you can then edit or delete.`, okLabel: 'Unpublish' });
+  if (!ok) return;
+  const res = await fetch(`/api/ar/assets/${encodeURIComponent(id)}/unpublish`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: '{}' });
+  if (res.status === 409) { const j = await res.json().catch(() => ({})); await arAlert({ title: '🔒 Two-person rule', message: j.reason || 'A different approver must take this down.', steps: j.steps || [] }); return; }
+  if (!res.ok) { showToast('✗ Unpublish failed'); return; }
+  showToast('⏸ Unpublished — now a draft'); refreshArAssetList();
+}
+async function restoreArAsset(id) {
+  const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}/restore`, { method: 'POST', body: '{}' });
+  if (d) { showToast('♻ Restored from recycle bin'); refreshArAssetList(); }
 }
 
 // Mark an AR asset "coming soon" — students see it greyed in the app (Rule 3).
@@ -6922,7 +6944,7 @@ async function deleteArAsset(id) {
     return;
   }
   if (!res.ok) { showToast('✗ Delete failed'); return; }
-  showToast('🗑️ Asset deleted');
+  showToast('🗑️ Moved to recycle bin (30-day recovery)');
   refreshArAssetList();
 }
 

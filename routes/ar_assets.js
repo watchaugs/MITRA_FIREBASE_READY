@@ -480,11 +480,11 @@ router.delete('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) 
     const a = doc.data();
     const block = assetDeletionBlock(a);
     if (block) return res.status(409).json({ error: 'Asset is live — cannot delete', locked: true, ...block });
-    await purgeAssetFiles(req.params.id, a);   // best-effort file cleanup (never blocks record delete)
-    await ref.delete();
+    const purgeAfter = new Date(Date.now() + 30 * 86400000);
+    await ref.set({ status: 'archived', prev_status: a.status || 'uploaded', archived_by: req.user.id, archived_at: new Date(), purge_after: purgeAfter }, { merge: true });
     await invalidateManifests(db);
-    await db.collection('audit_log').add({ action: 'ar_asset_deleted', actor: req.user.id, detail: { asset_id: req.params.id, title: a.title || a.original_name || null }, created_at: new Date() }).catch(() => {});
-    res.json({ message: 'Asset deleted', id: req.params.id });
+    await db.collection('audit_log').add({ action: 'ar_asset_archived', actor: req.user.id, detail: { asset_id: req.params.id, title: a.title || a.original_name || null }, created_at: new Date() }).catch(() => {});
+    res.json({ message: 'Asset moved to recycle bin (30-day recovery)', id: req.params.id, purge_after: purgeAfter });
   } catch (err) { log.error({ err: err.message }, 'AR asset delete failed'); res.status(500).json({ error: 'Failed to delete asset' }); }
 });
 
@@ -505,6 +505,54 @@ router.post('/assets/:id/publish', requirePerm('perm_approve_content'), async (r
     await invalidateManifests(db);
     res.json({ message: 'Asset published' });
   } catch { res.status(500).json({ error: 'Publish failed' }); }
+});
+
+router.post('/assets/:id/unpublish', requirePerm('perm_approve_content'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const ref = db.collection('ar_assets').doc(req.params.id);
+    const doc = await ref.get();
+    if (!doc.exists) return res.status(404).json({ error: 'Asset not found' });
+    const a = doc.data();
+    if (a.published_by && a.published_by === req.user.id && req.body?.override !== true) {
+      return res.status(409).json({ error: 'Two-person rule', locked: true, reason: 'You published this asset — a different approver must take it down.', steps: ['Ask another user with approval rights to unpublish it.', 'This protects live government content from unilateral takedown.'] });
+    }
+    await ref.update({ status: 'draft', unpublished_by: req.user.id, unpublished_at: new Date(), updated_at: new Date() });
+    await invalidateManifests(db);
+    await db.collection('audit_log').add({ action: 'ar_asset_unpublished', actor: req.user.id, detail: { asset_id: req.params.id, was: a.status }, created_at: new Date() }).catch(() => {});
+    res.json({ message: 'Asset unpublished — now a draft and deletable', id: req.params.id });
+  } catch (e) { res.status(500).json({ error: 'Unpublish failed', detail: e.message }); }
+});
+
+router.post('/assets/:id/restore', requirePerm('perm_upload_unity'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const ref = db.collection('ar_assets').doc(req.params.id);
+    const doc = await ref.get();
+    if (!doc.exists) return res.status(404).json({ error: 'Asset not found' });
+    const a = doc.data();
+    if (a.status !== 'archived') return res.status(400).json({ error: 'Asset is not in the recycle bin' });
+    const { FieldValue } = require('firebase-admin/firestore');
+    await ref.update({ status: a.prev_status || 'draft', restored_by: req.user.id, restored_at: new Date(), archived_by: FieldValue.delete(), archived_at: FieldValue.delete(), purge_after: FieldValue.delete(), prev_status: FieldValue.delete() });
+    await invalidateManifests(db);
+    res.json({ message: 'Asset restored', id: req.params.id, status: a.prev_status || 'draft' });
+  } catch (e) { res.status(500).json({ error: 'Restore failed', detail: e.message }); }
+});
+
+router.delete('/assets/:id/purge', requirePerm('perm_approve_content'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const ref = db.collection('ar_assets').doc(req.params.id);
+    const doc = await ref.get();
+    if (!doc.exists) return res.status(404).json({ error: 'Asset not found' });
+    const a = doc.data();
+    if (a.status !== 'archived') return res.status(409).json({ error: 'Only archived assets can be purged — delete (archive) it first' });
+    if (req.body?.confirm !== true && req.body?.confirm !== 'true') return res.status(400).json({ error: 'Purge must be confirmed', hint: 'send { "confirm": true }' });
+    await purgeAssetFiles(req.params.id, a);
+    await ref.delete();
+    await db.collection('audit_log').add({ action: 'ar_asset_purged', actor: req.user.id, detail: { asset_id: req.params.id }, created_at: new Date() }).catch(() => {});
+    res.json({ message: 'Asset permanently deleted', id: req.params.id });
+  } catch (e) { res.status(500).json({ error: 'Purge failed', detail: e.message }); }
 });
 
 // Mark an asset "scheduled" (coming soon). Students see it greyed/locked in the
@@ -1002,6 +1050,10 @@ router.get('/narration-studio/library', requirePerm('perm_upload_unity'), async 
     if (subject)  rows = rows.filter(r => String(r.subject || '').toLowerCase() === String(subject).toLowerCase());
     if (topic)    rows = rows.filter(r => String(r.topic || '').toLowerCase().includes(String(topic).toLowerCase()));
     if (status)   rows = rows.filter(r => String(r.status) === String(status));
+    const assetsSnap = await db.collection('ar_assets').limit(1000).get();
+    const urlToAssets = {};
+    assetsSnap.forEach(d => { const a = d.data() || {}; [a.audio_url, ...Object.values(a.audios || {}), ...Object.values(a.audios_aac || {})].forEach(u => { if (u) (urlToAssets[u] ||= []).push({ id: d.id, title: a.title || a.original_name || d.id, status: a.status }); }); });
+    rows = rows.map(r => { const used = [...(urlToAssets[r.url] || []), ...(urlToAssets[r.url_aac] || [])].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i); return { ...r, used_by: used, used_count: used.length }; });
     rows.sort((a, b) => (b.created_at?.toMillis?.() || 0) - (a.created_at?.toMillis?.() || 0));
     res.json({ data: rows, total: rows.length });
   } catch (e) { res.status(500).json({ error: 'Failed to load narration library', detail: e.message }); }
