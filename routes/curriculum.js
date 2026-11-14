@@ -98,7 +98,10 @@ router.post('/', requirePerm('perm_edit_curriculum'), async (req, res) => {
   } catch { res.status(500).json({ error: 'Failed to create node' }); }
 });
 
-router.put('/:id', requirePerm('perm_edit_curriculum'), async (req, res) => {
+router.put('/:id', requirePerm('perm_edit_curriculum'), async (req, res, next) => {
+  // '/:id' is declared before '/learning-settings', so Express sent the AR
+  // watch-threshold save here and it failed with 500. Hand it on.
+  if (req.params.id === 'learning-settings') return next();
   try {
     const { name, icon, sort_order, is_active } = req.body;
     const db = getFirestore();

@@ -266,7 +266,7 @@ function groupBy(rows, key) {
     .sort((x, y) => y.attempts - x.attempts);
 }
 
-router.get('/analytics/deep', async (req, res) => {
+router.get('/analytics/deep', staffOnly, async (req, res) => {
   try {
     const { rows } = await loadAttempts(getFirestore(), { days: req.query.days });
     const total = rows.length;
@@ -701,7 +701,7 @@ router.post('/bulk-action', requirePerm('perm_edit_curriculum'), async (req, res
 });
 
 // ── POST /dispatch-scheduled ─ Cloud Scheduler flips due scheduled quizzes live ─
-router.post('/dispatch-scheduled', async (req, res) => {
+router.post('/dispatch-scheduled', staffOnly, async (req, res) => {
   try {
     const db  = getFirestore();
     const now = new Date();

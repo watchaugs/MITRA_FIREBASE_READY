@@ -20,6 +20,9 @@
 const router   = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { authenticate, requirePerm } = require('../middleware/auth');
+// Student/teacher app tokens pass authenticate(); block them from staff-only routes.
+const staffOnly = (req, res, next) => (['student', 'teacher'].includes(req.user?.role)
+  ? res.status(403).json({ error: 'Dashboard staff only' }) : next());
 const { getFirestore }              = require('../lib/firebase');
 const { State }                     = require('country-state-city');
 const log = require('../lib/logger');
@@ -217,7 +220,7 @@ router.post('/dispatch-due', requirePerm('perm_send_notif'), async (req, res) =>
 });
 
 // ── POST /dispatch-scheduled  — optional cron (kept for compatibility) ──────
-router.post('/dispatch-scheduled', async (req, res) => {
+router.post('/dispatch-scheduled', staffOnly, async (req, res) => {
   try {
     const dispatched = await dispatchDue(getFirestore());
     res.json({ dispatched });
@@ -227,7 +230,7 @@ router.post('/dispatch-scheduled', async (req, res) => {
 });
 
 // ── GET /history  — sent + scheduled, with filters and paging ───────────────
-router.get('/history', async (req, res) => {
+router.get('/history', staffOnly, async (req, res) => {
   try {
     const db = getFirestore();
     const [sentSnap, schedSnap] = await Promise.all([
@@ -281,7 +284,7 @@ router.delete('/:id/cancel', requirePerm('perm_send_notif'), cancelScheduled);
 router.delete('/:id',        requirePerm('perm_send_notif'), cancelScheduled);
 
 // ── GET /filters  — targeting options (no telemetry scan: near-zero reads) ──
-router.get('/filters', async (req, res) => {
+router.get('/filters', staffOnly, async (req, res) => {
   const states   = State.getStatesOfCountry('IN').map(s => ({ code: s.isoCode, name: s.name }));
   const classes  = Array.from({ length: 12 }, (_, i) => ({ name: `Class ${i + 1}` }));
   let topics = [], quizzes = [];
@@ -304,7 +307,7 @@ router.get('/filters', async (req, res) => {
 // ── GET /analytics  — what we can honestly measure ───────────────────────────
 // Delivery receipts / opens are not reported by the app, so we show sent,
 // accepted by FCM, scheduled-pending and failed — nothing invented.
-router.get('/analytics', async (req, res) => {
+router.get('/analytics', staffOnly, async (req, res) => {
   try {
     const db   = getFirestore();
     const days = Math.min(365, parseInt(req.query.days, 10) || 30);
@@ -334,7 +337,7 @@ router.get('/analytics', async (req, res) => {
 });
 
 // ── GET /analytics/export  — CSV of sent notifications ──────────────────────
-router.get('/analytics/export', async (req, res) => {
+router.get('/analytics/export', staffOnly, async (req, res) => {
   try {
     const db   = getFirestore();
     const days = Math.min(365, parseInt(req.query.days, 10) || 30);

@@ -307,8 +307,6 @@ async function buildReportScopes(db) {
   }
   await db.collection('analytics_cache').doc('report_index').set({ scopes: entries.map(e => e[0]), generated });
   return entries.length;
-  await db.collection('analytics_cache').doc('report_index').set({ scopes: entries.map(e => e[0]), generated });
-  return entries.length;
 }
 
 // ── Sync telemetry: Firestore → BigQuery (manual, admin-triggered) ───────────

@@ -75,6 +75,7 @@ router.get('/file/:name', async (req, res) => {
       // We only needed the size; drop this probe stream.
       if (head.stream && head.stream.destroy) head.stream.destroy();
     } catch (e) {
+      res.set('Cache-Control', 'no-store');
       return res.status(404).json({ error: 'File not found' });
     }
 

@@ -598,7 +598,7 @@ router.get('/consent-log/export', requirePerm('perm_export_data'), async (req, r
 router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
   try {
     const db     = getFirestore();
-    const result = await calculateComplianceScore(db);
+    const result = await liveScore();
     const format = (req.query.format || 'xlsx').toLowerCase();
     const rows = result.checks.map(c => ({
       'Check': c.label, 'Severity': c.severity, 'Status': c.pass ? 'Pass' : 'Fail',
