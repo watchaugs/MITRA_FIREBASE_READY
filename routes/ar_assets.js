@@ -474,7 +474,7 @@ router.delete('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) 
     const ref = db.collection('ar_assets').doc(req.params.id);
     const doc = await ref.get();
     if (!doc.exists) return res.status(404).json({ error: 'Asset not found' });
-    if (req.body && req.body.confirm !== true && req.body.confirm !== 'true') {
+    if (req.body?.confirm !== true && req.body?.confirm !== 'true') {
       return res.status(400).json({ error: 'Delete must be confirmed', hint: 'send { "confirm": true }' });
     }
     const a = doc.data();
@@ -495,13 +495,14 @@ async function invalidateManifests(db) {
     const batch = db.batch();
     snap.docs.forEach(d => batch.delete(d.ref));
     await batch.commit();
-  } catch (e) { /* non-fatal: manifests rebuild on demand */ }
+  } catch (e) { log.error({ err: e.message }, 'invalidateManifests failed — app may serve stale content'); return false; }
+  return true;
 }
 
 router.post('/assets/:id/publish', requirePerm('perm_approve_content'), async (req, res) => {
   try {
     const db = getFirestore();
-    await db.collection('ar_assets').doc(req.params.id).update({ status: 'published', updated_at: new Date() });
+    await db.collection('ar_assets').doc(req.params.id).update({ status: 'published', published_by: req.user.id, published_at: new Date(), updated_at: new Date() });
     await invalidateManifests(db);
     res.json({ message: 'Asset published' });
   } catch { res.status(500).json({ error: 'Publish failed' }); }
@@ -514,7 +515,7 @@ router.post('/assets/:id/unpublish', requirePerm('perm_approve_content'), async 
     const doc = await ref.get();
     if (!doc.exists) return res.status(404).json({ error: 'Asset not found' });
     const a = doc.data();
-    if (a.published_by && a.published_by === req.user.id && req.body?.override !== true) {
+    if (a.published_by && a.published_by === req.user.id) {
       return res.status(409).json({ error: 'Two-person rule', locked: true, reason: 'You published this asset — a different approver must take it down.', steps: ['Ask another user with approval rights to unpublish it.', 'This protects live government content from unilateral takedown.'] });
     }
     await ref.update({ status: 'draft', unpublished_by: req.user.id, unpublished_at: new Date(), updated_at: new Date() });
@@ -560,7 +561,7 @@ router.delete('/assets/:id/purge', requirePerm('perm_approve_content'), async (r
 router.post('/assets/:id/schedule', requirePerm('perm_approve_content'), async (req, res) => {
   try {
     const db = getFirestore();
-    const patch = { status: 'scheduled', updated_at: new Date() };
+    const patch = { status: 'scheduled', published_by: req.user.id, published_at: new Date(), updated_at: new Date() };
     // Optional reveal date: when it passes, the topic list auto-publishes this
     // asset on the next read (no scheduler). Omit for an indefinite teaser.
     const raw = req.body && req.body.reveal_date;
@@ -696,8 +697,23 @@ router.delete('/assets/:id/audio/:lang', requirePerm('perm_upload_unity'), async
     const block = assetDeletionBlock(snap.data());
     if (block) return res.status(409).json({ error: 'Asset is live — unpublish before changing its narration', locked: true, ...block });
     const audios = { ...((snap.data() || {}).audios || {}) };
-    delete audios[(lang || '').toLowerCase()];
-    await ref.set({ audios }, { merge: true });
+    const audiosAac = { ...((snap.data() || {}).audios_aac || {}) };
+    const lk = (lang || '').toLowerCase();
+    const targetUrl = audios[lk];
+    if (targetUrl) {
+      const others = (await narrationInUse(db, targetUrl)).filter(u => u.id !== id);
+      if (others.length) {
+        return res.status(409).json({
+          error: 'Narration in use by other assets — cannot delete',
+          locked: true,
+          used_by: others,
+          steps: ['This audio file is associated with other asset(s).', 'Remove it from those assets (or unpublish them) before deleting it here.'],
+        });
+      }
+    }
+    delete audios[lk];
+    delete audiosAac[lk];
+    await ref.set({ audios, audios_aac: audiosAac }, { merge: true });
     return res.json({ message: 'Language audio removed', id, lang, audios });
   } catch (e) {
     return res.status(500).json({ error: 'Failed to remove language audio', detail: e.message });
