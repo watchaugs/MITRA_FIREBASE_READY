@@ -7,6 +7,9 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
+// Student/teacher app tokens pass authenticate(); block them from staff-only routes.
+const staffOnly = (req, res, next) => (['student', 'teacher'].includes(req.user?.role)
+  ? res.status(403).json({ error: 'Dashboard staff only' }) : next());
 const { visibleInState, parseTargetStates } = require('../lib/stateScope');
 const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
 const { stripFields } = require('../lib/writeGuard');

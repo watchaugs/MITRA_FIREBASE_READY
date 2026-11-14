@@ -12,9 +12,24 @@ router.get('/status', consentLimiter, async (req, res) => {
   try {
     const { student_id } = req.query;
     if (!student_id) return res.json({ granted: true, version: '1.0', consents: ['data_collection', 'analytics'] });
+    // DPDPA: a consent record is the Data Principal's personal data. Only that
+    // signed-in student may read it, and only the fields the app needs
+    // (data minimisation) — never guardian details.
+    const uid = await callerUid(req);
+    if (!uid || uid !== student_id) {
+      return res.status(401).json({ error: 'Sign in to view your own consent' });
+    }
     const db  = getFirestore();
     const doc = await db.collection('consent_records').doc(student_id).get();
-    res.json(doc.exists ? doc.data() : { student_id, granted: false, version: null });
+    const r   = doc.exists ? doc.data() : {};
+    res.json({
+      student_id,
+      granted:    r.granted === true,
+      version:    r.version || null,
+      consents:   Array.isArray(r.consents) ? r.consents : [],
+      granted_at: r.granted_at || null,
+      revoked_at: r.revoked_at || null,
+    });
   } catch { res.json({ granted: false }); }
 });
 
@@ -108,11 +123,16 @@ router.post('/ad-consent', authenticate, async (req, res) => {
       user_id: userId, consented_at: new Date(), granted: true
     }, { merge: true });
     res.json({ success: true, granted: true });
-  } catch { res.json({ success: true, granted: true }); }
+  } catch { res.status(500).json({ error: 'Ad consent save failed' }); }
 });
 
 router.get('/ad-consent/:userId', authenticate, async (req, res) => {
   try {
+    // DPDPA: a student/teacher may read only their own record; staff may read any.
+    const isAppUser = ['student', 'teacher'].includes(req.user?.role);
+    if (isAppUser && req.user?.id !== req.params.userId) {
+      return res.status(403).json({ error: 'You can only view your own ad consent' });
+    }
     const db  = getFirestore();
     const doc = await db.collection('ad_consent_log').doc(req.params.userId).get();
     res.json(doc.exists ? doc.data() : { granted: false, user_id: req.params.userId });

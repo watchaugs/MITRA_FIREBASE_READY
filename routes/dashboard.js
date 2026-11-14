@@ -4,6 +4,7 @@
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const log = require('../lib/logger');
+const { isRunning } = require('./advertisements');
 router.use(authenticate);
 
 router.get('/summary', async (req, res) => {
@@ -14,7 +15,7 @@ router.get('/summary', async (req, res) => {
       db.collection('dashboard_users').where('is_active', '==', true).get(),
       db.collection('ar_assets').where('status', '==', 'published').get(),
       db.collection('quizzes').where('status', '==', 'published').get(),
-      db.collection('ad_campaigns').where('status', '==', 'active').get(),
+      db.collection('ad_campaigns').where('status', 'in', ['live', 'scheduled']).get(),
       db.collection('geofences').where('is_active', '==', true).get(),
       db.collection('ar_assets').where('status', '==', 'review').get(),
     ]);
@@ -27,8 +28,14 @@ router.get('/summary', async (req, res) => {
       // full doc and unwrap (a .select('student_id') projection returns nothing).
       const studentSnap = await db.collectionGroup('sessions').limit(5000).get();
       const ids = new Set();
+      // The app syncs sessions about every 12 h, so "today" would undercount.
+      // Count students whose session batch arrived in the last 7 days.
+      const cutoff = Date.now() - 7 * 86400000;
+      const msOf = v => (v && typeof v.toDate === 'function') ? v.toDate().getTime() : Date.parse(v || '');
       studentSnap.docs.forEach(d => {
         const data = d.data() || {};
+        const t = msOf(data.batch_flushed_at || data.timestamp || data.created_at);
+        if (!(t >= cutoff)) return;
         const arr = Array.isArray(data.batched_events) ? data.batched_events : [data];
         arr.forEach(e => { if (e && e.student_id) ids.add(e.student_id); });
       });
@@ -42,7 +49,7 @@ router.get('/summary', async (req, res) => {
       user_accounts:     users.size,
       published_assets:  assets.size,
       published_quizzes: quizzes.size,
-      live_ad_campaigns: campaigns.size,
+      live_ad_campaigns: campaigns.docs.filter(d => isRunning(d.data())).length,
       active_students,
       active_geofences:  geofences.size,   // was missing → card always showed 0
       pending_approvals: reviews.size,     // was missing → Pending Reviews always 0

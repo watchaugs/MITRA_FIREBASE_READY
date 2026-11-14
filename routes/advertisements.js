@@ -360,3 +360,6 @@ router.post('/:id/publish', requirePerm('perm_manage_ads'), async (req, res) => 
 });
 
 module.exports = router;
+// Shared with routes/dashboard.js so the Home "Live Ad Campaigns" KPI uses the
+// exact same running-now rule as the Ads page.
+module.exports.isRunning = isRunning;

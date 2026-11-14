@@ -1005,7 +1005,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
   <!-- LIVE KPI CARDS — loaded from /api/dashboard/summary -->
   <div class="stat-row" id="home-kpi-row">
     <div class="sc" style="--gc:rgba(99,102,241,.18)"><div class="sc-label">Live AR Apps</div><div class="sc-val" id="hk-live-apps">—</div><div class="sc-trend" id="hk-live-apps-sub">Loading…</div></div>
-    <div class="sc" style="--gc:rgba(16,185,129,.15)"><div class="sc-label">Active Students</div><div class="sc-val" id="hk-students">—</div><div class="sc-trend">App sessions today</div></div>
+    <div class="sc" style="--gc:rgba(16,185,129,.15)"><div class="sc-label">Active Students</div><div class="sc-val" id="hk-students">—</div><div class="sc-trend">Synced in last 7 days</div></div>
     <div class="sc" style="--gc:rgba(245,158,11,.15)"><div class="sc-label">Active Geofences</div><div class="sc-val" id="hk-geofences">—</div><div class="sc-trend">State regions live</div></div>
     <div class="sc" style="--gc:rgba(236,72,153,.15)"><div class="sc-label">Pending Reviews</div><div class="sc-val" id="hk-pending" style="cursor:pointer" onclick="showPage('ar-assets',null,null)">—</div><div class="sc-trend">Click to review</div></div>
     <div class="sc" style="--gc:rgba(6,182,212,.15)"><div class="sc-label">User Accounts</div><div class="sc-val" id="hk-users">—</div><div class="sc-trend">Dashboard access</div></div>
@@ -1018,12 +1018,14 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
     <div class="card">
       <div class="card-title">Recent AR Assets</div>
       <div class="card-sub">Latest uploads across all states</div>
+      <div class="tbl-scroll">
       <table class="tbl">
         <thead><tr><th>Title</th><th>Subject</th><th>Class</th><th>Status</th></tr></thead>
         <tbody id="home-ar-tbody">
           <tr><td colspan="4" style="text-align:center;color:var(--text2);padding:16px">Loading…</td></tr>
         </tbody>
       </table>
+      </div>
       <div style="margin-top:10px">
         <button class="btn btn-s btn-sm" onclick="showPage('ar-assets',null,null)">View All AR Assets →</button>
       </div>
@@ -1040,6 +1042,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
     </select>
   </div>
 
+  <div class="tbl-scroll">
   <table class="tbl" id="home-tele-table">
     <thead>
       <tr><th>State</th><th>Active Users</th><th>Drop-off</th><th>Offline %</th></tr>
@@ -1048,6 +1051,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
       <tr><td colspan="4" style="text-align:center;color:var(--text2);padding:12px">Loading…</td></tr>
     </tbody>
   </table>
+  </div>
 
   <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">
     <span id="home-tele-count" style="font-size:11px;color:var(--text2)"></span>
@@ -1059,21 +1063,30 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 
   </div>
 
-  <div class="g2" style="margin-top:16px">
+  <div class="g3" style="margin-top:16px">
 
     <!-- RECENT NOTIFICATIONS -->
     <div class="card">
       <div class="card-title">Recent Notifications</div>
       <div class="card-sub">Last 5 sent to students</div>
+      <div class="tbl-scroll">
       <table class="tbl">
         <thead><tr><th>Title</th><th>State</th><th>Sent</th></tr></thead>
         <tbody id="home-notif-tbody">
           <tr><td colspan="3" style="text-align:center;color:var(--text2);padding:16px">Loading…</td></tr>
         </tbody>
       </table>
+      </div>
       <div style="margin-top:10px">
         <button class="btn btn-s btn-sm" onclick="showPage('notifications',null,null)">All Notifications →</button>
       </div>
+    </div>
+
+    <!-- ACTIVE GEOFENCES — live from /api/geofence (list filled by loadHomeDashboard) -->
+    <div class="card">
+      <div class="card-title">Active Geofences</div>
+      <div class="card-sub">State regions currently live</div>
+      <div id="home-geo-list"><div style="color:var(--text2);font-size:12px;padding:8px">Loading…</div></div>
     </div>
 
     <!-- QUICK ACTIONS — role-aware -->
@@ -1119,6 +1132,19 @@ async function dispatchDueNotifications(showResult) {
   } catch (_) { if (showResult) showToast('Could not reach the server'); }
 }
 
+// Firestore Timestamps reach the browser as {_seconds,_nanoseconds}, which
+// new Date() turns into "Invalid Date". These read both that and ISO strings.
+function fsMs(v) {
+  if (!v) return 0;
+  if (typeof v === 'object' && v._seconds != null) return v._seconds * 1000;
+  const t = Date.parse(v);
+  return isNaN(t) ? 0 : t;
+}
+function fsDate(v) {
+  const t = fsMs(v);
+  return t ? new Date(t).toLocaleDateString('en-IN') : '—';
+}
+
 // Load all home page data from live APIs
 async function loadHomeDashboard() {
   // GUARD: If no auth token is saved yet, abort immediately.
@@ -1150,11 +1176,16 @@ async function loadHomeDashboard() {
   }
 
   // Recent AR assets
-  const ar = await safeFetch('/api/ar/assets?limit=5', { silent: true });
+  const ar = await safeFetch('/api/ar/assets', { silent: true });
   const arTbody = document.getElementById('home-ar-tbody');
-  if (arTbody && ar?.data?.length) {
+  // The API returns up to 100 assets unsorted; pick the 5 newest live ones here.
+  const recentAr = (ar?.data || [])
+    .filter(a => a.status !== 'archived')
+    .sort((x, y) => fsMs(y.created_at) - fsMs(x.created_at))
+    .slice(0, 5);
+  if (arTbody && recentAr.length) {
     const statusDot = s => s==='published'?'green':s==='review'?'yellow':'grey';
-    arTbody.innerHTML = ar.data.map(a => `
+    arTbody.innerHTML = recentAr.map(a => `
       <tr>
         <td style="font-size:12px">${escHtml(a.title||a.name||'Untitled')}</td>
         <td><span class="tag tag-b" style="font-size:10px">${escHtml(a.subject||'—')}</span></td>
@@ -1168,8 +1199,8 @@ async function loadHomeDashboard() {
   // Active geofences
   const geo = await safeFetch('/api/geofence', { silent: true });
   const geoList = document.getElementById('home-geo-list');
-  if (geoList && geo?.length) {
-    const active = geo.filter(g => g.is_active).slice(0, 6);
+  if (geoList) {
+    const active = (Array.isArray(geo) ? geo : []).filter(g => g.is_active).slice(0, 6);
     if (active.length) {
       geoList.innerHTML = active.map(g => `
         <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(30,45,74,.5)">
@@ -1182,7 +1213,7 @@ async function loadHomeDashboard() {
   }
 
   // Recent notifications
-  const notif = await safeFetch('/api/notifications/history?limit=5', { silent: true });
+  const notif = await safeFetch('/api/notifications/history?limit=5&status=sent', { silent: true });
   const notifTbody = document.getElementById('home-notif-tbody');
   if (notifTbody && notif?.data?.length) {
     notifTbody.innerHTML = notif.data.map(n => `
@@ -1716,10 +1747,12 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="card">
       <div class="card-title">Modules Where Students Give Up</div>
       <div class="card-sub">AR lessons most often left before the end — candidates for a shorter or clearer version</div>
+      <div class="tbl-scroll">
       <table class="tbl">
         <thead><tr><th>Module / Topic</th><th>Ended Early</th><th>Avg Time Before Leaving</th></tr></thead>
         <tbody id="dropoff-tbody"><tr><td colspan="3" style="text-align:center;color:var(--text2);padding:16px">Loading…</td></tr></tbody>
       </table>
+      </div>
     </div>
   </div>
 
@@ -2049,7 +2082,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <select class="sel" id="tf-filter-state" onchange="loadTenantFiles()" style="font-size:11px;padding:5px 10px">
           <option value="">All States</option>
         </select>
-        <select class="sel" id="tf-filter-status" onchange="loadTenantFiles()" style="font-size:11px;padding:5px 10px">
+        <select class="sel" id="tf-filter-status" onchange="loadTenantFiles()" style="font-size:11px;padding:5px 10px;width:auto;min-width:130px">
           <option value="">All Status</option>
           <option value="live">Live</option>
           <option value="update_pending">Update Pending</option>
@@ -2127,12 +2160,14 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>
 
   <div class="card" style="padding:0;overflow:hidden">
+    <div class="tbl-scroll">
     <table class="tbl">
       <thead><tr><th>App Name</th><th>Target State</th><th>Version</th><th>Active Students</th><th>Theme</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody id="am-deployed-tbody">
         <tr><td colspan="7" style="text-align:center;color:var(--text2);padding:20px">Loading deployed apps…</td></tr>
       </tbody>
     </table>
+    </div>
   </div>
 </div>
 
@@ -2379,7 +2414,7 @@ document.addEventListener('DOMContentLoaded', () => {
           </tr>
         </thead>
         <tbody id="ar-assets-tbody">
-          <tr><td colspan="10" style="text-align:center;color:var(--text2);padding:24px">
+          <tr><td colspan="11" style="text-align:center;color:var(--text2);padding:24px">
             Loading assets... <span style="font-size:11px">(connect backend to show live data)</span>
           </td></tr>
         </tbody>
@@ -2591,8 +2626,8 @@ document.addEventListener('DOMContentLoaded', () => {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <div><div class="card-title" style="margin:0">📋 Notification History</div><div class="card-sub" style="margin:0">All sent and scheduled push notifications</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <select class="sel" id="nh-filter-status" onchange="loadNotifHistory()" style="font-size:11px;padding:5px 10px"><option value="">All Status</option><option value="sent">Sent</option><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select>
-        <select class="sel" id="nh-filter-state" onchange="loadNotifHistory()" style="font-size:11px;padding:5px 10px"><option value="">All States</option></select>
+        <select class="sel" id="nh-filter-status" onchange="loadNotifHistory()" style="font-size:11px;padding:5px 10px;width:auto;min-width:130px"><option value="">All Status</option><option value="sent">Sent</option><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select>
+        <select class="sel" id="nh-filter-state" onchange="loadNotifHistory()" style="font-size:11px;padding:5px 10px;width:auto;min-width:130px"><option value="">All States</option></select>
         <input type="date" class="inp" id="nh-filter-from" onchange="loadNotifHistory()" style="font-size:11px;padding:5px 10px;max-width:140px">
         <button class="btn btn-s" onclick="loadNotifHistory()" style="font-size:11px;padding:5px 12px">🔄 Refresh</button>
         <button class="btn btn-p" onclick="dispatchDueNotifications(true)" style="font-size:11px;padding:5px 12px" title="Send every scheduled notification whose time has passed">📤 Send due now</button>
@@ -3229,12 +3264,14 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="card-title" style="margin-bottom:0">🗄️ Campaign History</div>
         <button class="btn btn-s btn-sm" onclick="exportAdGranular('xlsx')">📥 Export XLSX</button>
       </div>
+      <div class="tbl-scroll">
       <table class="tbl">
         <thead><tr><th>Campaign</th><th>Period</th><th>Target</th><th>Impressions</th><th>Clicks</th><th>CTR</th><th>Status</th></tr></thead>
         <tbody id="ad-history-body">
           <tr><td colspan="7" style="text-align:center;color:var(--text2);padding:16px">Loading…</td></tr>
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 </div>
@@ -3415,7 +3452,10 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
           <div class="card-title" style="font-size:14px;margin-bottom:0">📋 DPDPA 2023 Compliance Tracker</div>
-          <button class="btn btn-s btn-xs" onclick="refreshDPDPATracker()">🔄 Refresh</button>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span id="dpdpa-score" style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--bg3);color:var(--text2)">—</span>
+            <button class="btn btn-s btn-xs" onclick="refreshDPDPATracker()">🔄 Refresh</button>
+          </div>
         </div>
         <div id="dpdpa-tracker"><!-- Populated by renderDPDPATracker() --></div>
         <button class="btn btn-s btn-sm" style="width:100%;justify-content:center;margin-top:10px" onclick="exportDPDPAReport()">📥 Export DPDPA Report</button>
@@ -6792,7 +6832,7 @@ function renderArAssetsTable(assets) {
       <td><span class="tag tag-b">.${escHtml(a.file_format||'pkg')}</span></td>
       <td>${a.file_size_mb ? a.file_size_mb+'MB' : '—'}</td>
       <td><span class="quiz-status-${a.status==='published'?'live':'draft'}">${a.status||'uploaded'}</span></td>
-      <td style="font-size:11px">${a.created_at ? new Date(a.created_at).toLocaleDateString('en-IN') : '—'}</td>
+      <td style="font-size:11px">${fsDate(a.created_at)}</td>
       <td>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           ${a.status !== 'published' && a.status !== 'archived' ? `<button class="btn btn-g btn-sm" onclick="publishArAsset('${a.id}')">▶ Publish</button>` : ''}
