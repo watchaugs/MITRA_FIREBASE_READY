@@ -16,7 +16,8 @@
 
   setInterval(function() {
       idleTime++;
-      if (idleTime >= idleLimit) {
+      // Fire once (it used to repeat every minute after the logout).
+      if (idleTime === idleLimit) {
           console.log("⚠️ 10 minutes of inactivity. Forcing logout.");
           localStorage.clear(); 
           
@@ -2325,10 +2326,24 @@ document.addEventListener('DOMContentLoaded', () => {
     <div id="studio-body">
       <textarea class="inp" id="studio-text" rows="3" placeholder="Narration text (source language)…" style="width:100%;font-size:13px;margin-bottom:8px"></textarea>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-bottom:8px">
-        <input class="inp" id="studio-class"   placeholder="Class"   style="width:80px">
-        <input class="inp" id="studio-subject" placeholder="Subject" style="width:120px">
+        <select class="sel" id="studio-class" style="width:110px">
+          <option value="">Class</option>
+          <option>Class 1</option><option>Class 2</option><option>Class 3</option>
+          <option>Class 4</option><option>Class 5</option><option>Class 6</option>
+          <option>Class 7</option><option>Class 8</option><option>Class 9</option>
+          <option>Class 10</option><option>Class 11</option><option>Class 12</option>
+        </select>
+        <select class="sel" id="studio-subject" style="width:170px">
+          <option value="">Subject</option>
+          <option>Science</option><option>Mathematics</option><option>History</option>
+          <option>Geography</option><option>Biology</option><option>Chemistry</option>
+          <option>Physics</option><option>Languages</option><option>Civics</option>
+          <option>Economics</option><option>Environmental Science</option>
+        </select>
         <input class="inp" id="studio-topic"   placeholder="Topic"   style="width:150px">
-        <input class="inp" id="studio-state"   placeholder="State (optional)" style="width:140px">
+        <select class="sel" id="studio-state" style="width:190px">
+          <option value="">All India (optional)</option>
+        </select>
         <label style="font-size:12px">Voice:
           <select class="sel" id="studio-gender" style="width:90px"><option value="female">Female</option><option value="male">Male</option></select>
         </label>
@@ -6367,6 +6382,11 @@ function populateArUploadDropdowns() {
     statesSel.add(new Option('All India (no restriction)', ''));
     INDIA_STATES.forEach(s => statesSel.add(new Option(s.name, s.code)));
   }
+  // Narration Studio state dropdown (same list as the upload form).
+  const studioState = document.getElementById('studio-state');
+  if (studioState && studioState.options.length <= 1) {
+    INDIA_STATES.forEach(s => studioState.add(new Option(s.name, s.code)));
+  }
 }
 
 // ── AR pipeline: browser-side engines (assimp WASM + MindAR compiler) ────────
@@ -6848,33 +6868,9 @@ function renderArAssetsTable(assets) {
         </div>
       </td>
     </tr>
-    <tr>
-      <td colspan="11" style="padding:8px 12px 14px;border-top:1px dashed var(--border, #333)">
-        <div style="font-size:12px;color:var(--text2)">
-          <strong>Narration languages</strong> (students see only those allowed for their state):
-          <span id="audios-chips-${a.id}" style="margin-left:6px">
-            ${Object.keys(a.audios||{}).map(l =>
-              `<span class="tag tag-b" style="margin-right:4px">${l.toUpperCase()} <a href="#" style="color:var(--text3);text-decoration:none" onclick="removeLangAudio('${a.id}','${l}');return false">×</a></span>`
-            ).join(' ') || '<em style="color:var(--text3)">none yet</em>'}
-          </span>
-          <div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <select class="sel" id="lang-sel-${a.id}" style="width:130px">
-              <option value="hi">हिंदी (hi)</option><option value="en">English (en)</option>
-              <option value="gu">ગુજરાતી (gu)</option><option value="mr">मराठी (mr)</option>
-              <option value="ta">தமிழ் (ta)</option><option value="te">తెలుగు (te)</option>
-              <option value="kn">ಕನ್ನಡ (kn)</option><option value="ml">മലയാളം (ml)</option>
-              <option value="bn">বাংলা (bn)</option><option value="pa">ਪੰਜਾਬੀ (pa)</option>
-              <option value="or">ଓଡ଼ିଆ (or)</option><option value="as">অসমীয়া (as)</option>
-            </select>
-            <input type="file" id="lang-file-${a.id}" accept="audio/*" style="font-size:11px">
-            <button class="btn btn-s btn-sm" onclick="addLangAudio('${a.id}')">+ Add narration (manual)</button>
-          </div>
-          <div style="margin-top:8px;font-size:11px;color:var(--text3)">🗣 Generate narration in the <strong>Narration Studio</strong> panel at the top of this page, then use its "Associate to asset" action to attach it here.</div>
-        </div>
-      </td>
-    </tr>`).join('');
-  // Populate the per-asset language tick lists after the table renders.
-  rows.forEach(a => _populateBhashiniLangs(a));
+`).join('');
+
+
   _syncBulkButtons();
 }
 

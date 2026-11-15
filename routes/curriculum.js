@@ -152,6 +152,9 @@ async function _territorySupported(db, state) {
 // hard, and let the app read just this. Regenerated when an admin saves a
 // state's curriculum; served with a long Cache-Control so repeat reads are free
 // at the CDN/proxy. (Later: push the same JSON to R2 — format stays identical.)
+// Bump when the manifest shape changes: cached copies with an older version
+// are rebuilt on the next read instead of being served stale.
+const MANIFEST_VERSION = 2;
 async function buildStateManifest(db, stateCode, stateName) {
   const hDoc = await db.collection('curriculum_hierarchy').doc(stateCode).get();
   const structure = hDoc.exists ? (hDoc.data().structure || []) : [];
@@ -175,6 +178,10 @@ async function buildStateManifest(db, stateCode, stateName) {
     .map(a => ({ id: a.id, title: a.title || a.topic || a.id,
                  flutter_url: a.flutter_url || null, native_url: a.native_url || null,
                  audio_url: a.audio_url || null,
+                 // Multi-language narration { lang: url } + AAC fallback — the
+                 // app reads these; they were never sent, so only the single
+                 // audio_url ever played.
+                 audios: a.audios || {}, audios_aac: a.audios_aac || {},
                  mind_url: a.mind_url || null, video_url: a.video_url || null,
                  chroma_enabled: a.chroma_enabled === true, chroma_color: a.chroma_color || null,
                  ar_mode: a.ar_mode || null }));
@@ -227,7 +234,7 @@ async function buildStateManifest(db, stateCode, stateName) {
   }
 
   return {
-    version: 1,
+    version: MANIFEST_VERSION,
     state_code: stateCode,
     state_name: stateName || stateCode,
     generated_at: new Date().toISOString(),
@@ -246,7 +253,7 @@ router.get('/manifest/:state', async (req, res) => {
     let manifest = null;
     try {
       const cached = await db.collection('curriculum_manifests').doc(stateKey).get();
-      if (cached.exists) manifest = cached.data();
+      if (cached.exists && cached.data().version === MANIFEST_VERSION) manifest = cached.data();
     } catch (_) {}
     if (!manifest) {
       manifest = await buildStateManifest(db, stateKey, req.query.state_name || stateKey);
@@ -284,6 +291,8 @@ router.get('/ar-topics', async (req, res) => {
       flutter_url:r.flutter_url|| null,
       mind_url:         r.mind_url         || null,
       audio_url:        r.audio_url        || null,
+      audios:           r.audios           || {},
+      audios_aac:       r.audios_aac       || {},
       target_image_url: r.target_image_url || null,
       video_url:        r.video_url        || null,
       chroma_enabled:   r.chroma_enabled   === true,
