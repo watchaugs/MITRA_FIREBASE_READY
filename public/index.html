@@ -2186,9 +2186,15 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
   </div>
 
+  <!-- AR page sub-tabs: 3D models & published content | Narration (Bhashini) -->
+  <div style="display:flex;gap:8px;margin:0 0 16px;flex-wrap:wrap">
+    <button class="sub-tab-btn on" id="ar-tab-models" onclick="switchArSubTab('models')">📦 3D Models &amp; Published</button>
+    <button class="sub-tab-btn" id="ar-tab-narration" onclick="switchArSubTab('narration')">🗣 Narration (Bhashini)</button>
+  </div>
+
   <!-- UPLOAD SECTION -->
   <div style="width:100%;max-width:100%;display:flex;flex-direction:column;align-items:flex-start">
-  <div class="card" style="margin-bottom:20px;width:100%">
+  <div class="card" id="ar-upload-card" style="margin-bottom:20px;width:100%">
     <div class="card-title">📦 Upload 3D / AR Lesson</div>
     <div class="card-sub">GLB/FBX/OBJ model + optional page image (marker AR) + optional narration. Tag before uploading for automatic curriculum association.</div>
 
@@ -2278,9 +2284,15 @@ document.addEventListener('DOMContentLoaded', () => {
         <label class="lbl">Textbook Page Image <span style="color:var(--text2);font-weight:400">(optional — enables marker AR)</span></label>
         <input class="inp" type="file" id="ar-up-image" accept="image/*" onchange="handleArExtraSelect('image',event)">
       </div>
-      <div>
-        <label class="lbl">Narration Audio <span style="color:var(--text2);font-weight:400">(optional — .mp3/.aac/.wav)</span></label>
-        <input class="inp" type="file" id="ar-up-audio" accept="audio/*" onchange="handleArExtraSelect('audio',event)">
+      <div id="ar-narr-block">
+        <label class="lbl">Narration <span style="color:var(--text2);font-weight:400">(approved files for this Class + Subject · same topic listed first · only the target states' languages)</span></label>
+        <div id="ar-narr-pickers" style="font-size:12px;color:var(--text2)"><em>Pick Class and Subject above to see narration files.</em></div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border,#333);display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px">
+          <span>Or upload a file:</span>
+          <select class="sel" id="ar-narr-up-lang" style="width:130px"></select>
+          <input type="file" id="ar-narr-up-file" accept="audio/*" style="font-size:11px;max-width:190px">
+          <button class="btn btn-s btn-sm" onclick="arNarrUpload()">⬆ Add to library</button>
+        </div>
       </div>
       <div>
         <label class="lbl">AR Video <span style="color:var(--text2);font-weight:400">(optional — plays on a plane in AR, .mp4/.webm)</span></label>
@@ -2308,6 +2320,8 @@ document.addEventListener('DOMContentLoaded', () => {
       <button class="btn btn-p" id="ar-upload-btn" style="display:none" onclick="submitArUpload()">
         🚀 Upload &amp; Tag Asset
       </button>
+      <button class="btn btn-p" id="ar-edit-save-btn" style="display:none" onclick="saveArEdit()">💾 Save changes</button>
+      <button class="btn btn-s" id="ar-edit-cancel-btn" style="display:none" onclick="cancelArEdit()">Cancel edit</button>
       <button class="btn btn-g" id="ar-save-apply-btn" style="display:none" onclick="saveAndApplyArAsset()">
         ✅ Save &amp; Apply to Curriculum
       </button>
@@ -2315,13 +2329,13 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>
 
 <!-- 🗣 NARRATION STUDIO — standalone TTS workspace -->
-  <div class="card" id="narration-studio">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+  <div class="card" id="narration-studio" style="display:none;width:100%">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;flex-wrap:wrap">
       <div>
         <div class="card-title">🗣 Narration Studio</div>
-        <div class="card-sub">Generate TTS narration in any language, preview & approve, then associate to any AR asset below.</div>
+        <div class="card-sub">Type the narration once → Bhashini translates it → review/edit each language → generate one audio file per language → preview &amp; approve. Approved files appear in the Upload form's Narration picker.</div>
       </div>
-      <button class="btn btn-s btn-sm" onclick="toggleStudio()">▾ Show / Hide</button>
+      <button class="btn btn-s btn-sm" onclick="checkBhashiniHealth()">🔌 Test Bhashini keys</button>
     </div>
     <div id="studio-body">
       <textarea class="inp" id="studio-text" rows="3" placeholder="Narration text (source language)…" style="width:100%;font-size:13px;margin-bottom:8px"></textarea>
@@ -2344,6 +2358,9 @@ document.addEventListener('DOMContentLoaded', () => {
         <select class="sel" id="studio-state" style="width:190px">
           <option value="">All India (optional)</option>
         </select>
+        <label style="font-size:12px">Text is in:
+          <select class="sel" id="studio-source-lang" style="width:150px"><option value="en">English</option></select>
+        </label>
         <label style="font-size:12px">Voice:
           <select class="sel" id="studio-gender" style="width:90px"><option value="female">Female</option><option value="male">Male</option></select>
         </label>
@@ -2355,8 +2372,13 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
         <div id="studio-langs" style="display:flex;gap:10px;flex-wrap:wrap;font-size:12px"></div>
       </div>
-      <button class="btn btn-p btn-sm" onclick="studioGenerate()">⚡ Generate narration</button>
-      <span id="studio-status" style="font-size:12px;margin-left:8px;color:var(--text2)"></span>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-s btn-sm" onclick="studioTranslate()">🌐 Step 1 · Translate for review</button>
+        <button class="btn btn-p btn-sm" id="studio-gen-btn" onclick="studioGenerate()" disabled>⚡ Step 2 · Generate audio</button>
+        <span id="studio-status" style="font-size:12px;color:var(--text2)"></span>
+      </div>
+      <!-- Per-language translations to review/edit before voicing -->
+      <div id="studio-review" style="margin-top:10px"></div>
 
       <div style="margin-top:14px;border-top:1px dashed var(--border,#333);padding-top:10px">
         <div style="font-weight:600;margin-bottom:6px">Generated library</div>
@@ -2364,6 +2386,8 @@ document.addEventListener('DOMContentLoaded', () => {
           Filter: <select class="sel" id="studio-filter-status" style="width:120px" onchange="studioLoadLibrary()">
             <option value="">All</option><option value="pending">Pending</option><option value="approved">Approved</option>
           </select>
+          <select class="sel" id="studio-filter-class" style="width:110px" onchange="studioLoadLibrary()"><option value="">All classes</option></select>
+          <select class="sel" id="studio-filter-subject" style="width:150px" onchange="studioLoadLibrary()"><option value="">All subjects</option></select>
         </div>
         <div id="studio-library"><em style="color:var(--text3)">No narration generated yet.</em></div>
       </div>
@@ -2372,12 +2396,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   
   <!-- ASSET LIBRARY TABLE -->
-  <div class="card">
+  <div class="card" id="ar-library-card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div>
         <div class="card-title">📚 Uploaded AR Assets</div>
         <div class="card-sub">All Unity assets tagged and ready for deployment
-          <button class="btn btn-s btn-sm" style="margin-left:8px" onclick="checkBhashiniHealth()">🔌 Test Bhashini keys</button>
+
         </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -6385,7 +6409,8 @@ function populateArUploadDropdowns() {
   // Narration Studio state dropdown (same list as the upload form).
   const studioState = document.getElementById('studio-state');
   if (studioState && studioState.options.length <= 1) {
-    INDIA_STATES.forEach(s => studioState.add(new Option(s.name, s.code)));
+    // Value = state NAME (it becomes part of the file name, e.g. Gujarat_Class9_…).
+    INDIA_STATES.forEach(s => studioState.add(new Option(s.name, s.name)));
   }
 }
 
@@ -6436,7 +6461,6 @@ async function removeLangAudio(assetId, lang) {
 
 // ═══ NARRATION STUDIO (standalone TTS) ═══════════════════════════════════════
 let _studioLangs = null;           // [{code,name}] full supported list
-let _studioAssetsCache = [];       // for the associate picker
 
 function toggleStudio() {
   const b = document.getElementById('studio-body');
@@ -6458,63 +6482,162 @@ async function initNarrationStudio() {
   host.innerHTML = langs.map(l =>
     `<label style="display:inline-flex;align-items:center;gap:3px"><input type="checkbox" class="studio-lang" value="${l.code}" style="width:auto"> ${l.name}</label>`
   ).join('');
+  // Source-language picker (default English) and library filters.
+  const src = document.getElementById('studio-source-lang');
+  if (src && src.options.length <= 1) {
+    src.innerHTML = '';
+    langs.forEach(l => src.add(new Option(l.name, l.code, l.code === 'en', l.code === 'en')));
+  }
+  const copyOpts = (fromId, toId) => {
+    const from = document.getElementById(fromId), to = document.getElementById(toId);
+    if (!from || !to || to.options.length > 1) return;
+    [...from.options].filter(o => o.value).forEach(o => to.add(new Option(o.text, o.value)));
+  };
+  copyOpts('studio-class', 'studio-filter-class');
+  copyOpts('studio-subject', 'studio-filter-subject');
+  const up = document.getElementById('ar-narr-up-lang');
+  if (up && !up.options.length) {
+    up.add(new Option('Language…', ''));
+    langs.forEach(l => up.add(new Option(l.name, l.code)));
+  }
   studioLoadLibrary();
 }
 function studioLangAll(on) { document.querySelectorAll('.studio-lang').forEach(c => { c.checked = on; }); }
 
-async function studioGenerate() {
+// ── AR page sub-tabs ─────────────────────────────────────────────────────────
+function switchArSubTab(tab) {
+  const models = tab !== 'narration';
+  ['ar-upload-card', 'ar-library-card'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = models ? '' : 'none';
+  });
+  const studio = document.getElementById('narration-studio');
+  if (studio) studio.style.display = models ? 'none' : '';
+  document.getElementById('ar-tab-models')?.classList.toggle('on', models);
+  document.getElementById('ar-tab-narration')?.classList.toggle('on', !models);
+  if (!models) studioLoadLibrary();
+}
+
+// ── Step 1: translate for review ────────────────────────────────────────────
+// One request per language keeps each call short (no hosting timeout) and lets
+// us show progress. Every translation lands in an editable box.
+async function studioTranslate() {
   const text = (document.getElementById('studio-text')?.value || '').trim();
   const languages = [...document.querySelectorAll('.studio-lang:checked')].map(c => c.value);
+  const source_lang = document.getElementById('studio-source-lang')?.value || 'en';
   const st = document.getElementById('studio-status');
+  const box = document.getElementById('studio-review');
   if (!text) { if (st) st.textContent = '⚠ Enter narration text'; return; }
   if (!languages.length) { if (st) st.textContent = '⚠ Tick at least one language'; return; }
-  if (st) st.textContent = '⏳ Generating ' + languages.length + ' language(s)…';
-  const body = {
-    text, languages, gender: document.getElementById('studio-gender')?.value || 'female',
+  const langs = await _loadStudioLanguages();
+  const nameOf = (c) => (langs.find(l => l.code === c) || {}).name || c.toUpperCase();
+  box.innerHTML = '';
+  document.getElementById('studio-gen-btn').disabled = true;
+  let ok = 0; const failed = [];
+  for (let i = 0; i < languages.length; i++) {
+    const lang = languages[i];
+    if (st) st.textContent = `⏳ Translating ${i + 1}/${languages.length} · ${nameOf(lang)}…`;
+    const d = await safeFetch('/api/ar/narration-studio/translate', {
+      method: 'POST', silent: true,
+      body: JSON.stringify({ text, source_lang, languages: [lang] }),
+    });
+    const t = d && d.translations && d.translations[lang];
+    if (!t) { failed.push(nameOf(lang)); continue; }
+    ok++;
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-bottom:8px';
+    wrap.innerHTML = `<div style="font-size:12px;font-weight:600;margin-bottom:3px">${escHtml(nameOf(lang))}${lang === source_lang ? ' <span style="font-weight:400;color:var(--text3)">(original)</span>' : ' <span style="font-weight:400;color:var(--text3)">— check &amp; edit if needed</span>'}</div>
+      <textarea class="inp studio-review-text" data-lang="${lang}" rows="3" style="width:100%;font-size:13px"></textarea>`;
+    wrap.querySelector('textarea').value = t;
+    box.appendChild(wrap);
+  }
+  if (st) st.textContent = `✅ ${ok} translation(s) ready — review, then Step 2` + (failed.length ? ` · ✗ failed: ${failed.join(', ')}` : '');
+  document.getElementById('studio-gen-btn').disabled = ok === 0;
+}
+
+// ── Step 2: generate audio from the reviewed text (one file per language) ──
+async function studioGenerate() {
+  const boxes = [...document.querySelectorAll('.studio-review-text')];
+  const st = document.getElementById('studio-status');
+  if (!boxes.length) { if (st) st.textContent = '⚠ Run Step 1 (Translate) first'; return; }
+  const base = {
+    text: (document.getElementById('studio-text')?.value || '').trim(),
+    source_lang: document.getElementById('studio-source-lang')?.value || 'en',
+    gender: document.getElementById('studio-gender')?.value || 'female',
     class_name: document.getElementById('studio-class')?.value || '',
     subject: document.getElementById('studio-subject')?.value || '',
-    topic: document.getElementById('studio-topic')?.value || '',
+    topic: (document.getElementById('studio-topic')?.value || '').trim(),
     state: document.getElementById('studio-state')?.value || '',
   };
-  const d = await safeFetch('/api/ar/narration-studio/generate', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
-  if (!d) { if (st) st.textContent = '✗ Failed'; return; }
-  let msg = '✅ ' + (d.done || []).length + ' generated';
-  if ((d.needs_manual || []).length) msg += ' · ⚠ no voice: ' + d.needs_manual.join(', ').toUpperCase();
-  if ((d.failed || []).length) msg += ' · ✗ ' + d.failed.length + ' failed';
+  if (!base.class_name || !base.subject || !base.topic) {
+    if (st) st.textContent = '⚠ Pick Class, Subject and Topic — they name the files and drive the Upload-form filter';
+    return;
+  }
+  const btn = document.getElementById('studio-gen-btn'); if (btn) btn.disabled = true;
+  const made = [], noVoice = [], failed = [];
+  for (let i = 0; i < boxes.length; i++) {
+    const lang = boxes[i].dataset.lang;
+    const text = boxes[i].value.trim();
+    if (!text) continue;
+    if (st) st.textContent = `⏳ Generating audio ${i + 1}/${boxes.length} · ${lang.toUpperCase()}…`;
+    const d = await safeFetch('/api/ar/narration-studio/generate', {
+      method: 'POST', silent: true,
+      body: JSON.stringify({ ...base, languages: [lang], texts: { [lang]: text } }),
+    });
+    if (!d) { failed.push(lang.toUpperCase()); continue; }
+    (d.done || []).forEach(x => made.push(x.name));
+    (d.needs_manual || []).forEach(l => noVoice.push(l.toUpperCase()));
+    (d.failed || []).forEach(f => failed.push(f.lang.toUpperCase()));
+  }
+  let msg = `✅ ${made.length} file(s) added to the library (pending approval)`;
+  if (noVoice.length) msg += ` · ⚠ no voice for ${noVoice.join(', ')} — upload a file instead`;
+  if (failed.length) msg += ` · ✗ failed: ${failed.join(', ')}`;
   if (st) st.textContent = msg;
+  if (btn) btn.disabled = false;
   studioLoadLibrary();
 }
 
 async function studioLoadLibrary() {
   const host = document.getElementById('studio-library');
   if (!host) return;
-  const status = document.getElementById('studio-filter-status')?.value || '';
-  const q = status ? ('?status=' + encodeURIComponent(status)) : '';
+  const qs = new URLSearchParams();
+  const v = (id) => document.getElementById(id)?.value || '';
+  if (v('studio-filter-status'))  qs.set('status', v('studio-filter-status'));
+  if (v('studio-filter-class'))   qs.set('class_name', v('studio-filter-class'));
+  if (v('studio-filter-subject')) qs.set('subject', v('studio-filter-subject'));
   let d;
-  try { const r = await fetch('/api/ar/narration-studio/library' + q, { headers: authHeaders() }); d = await r.json(); }
+  try { const r = await fetch('/api/ar/narration-studio/library' + (qs.toString() ? '?' + qs : ''), { headers: authHeaders() }); d = await r.json(); }
   catch { host.innerHTML = '<em style="color:var(--text3)">Could not load library.</em>'; return; }
   const rows = (d && d.data) || [];
-  if (!rows.length) { host.innerHTML = '<em style="color:var(--text3)">No narration generated yet.</em>'; return; }
+  if (!rows.length) { host.innerHTML = '<em style="color:var(--text3)">No narration files match.</em>'; return; }
   host.innerHTML = rows.map(it => {
-    const tag = [it.class_name && ('Class ' + it.class_name), it.subject, it.topic, (it.language || '').toUpperCase(), it.state].filter(Boolean).join(' · ');
     const badge = it.status === 'approved' ? '<span class="tag tag-g">approved</span>' : '<span class="tag tag-y">pending</span>';
+    const origin = it.origin === 'upload' ? '<span class="tag" style="opacity:.75">uploaded</span>' : '';
     const usedN = it.used_count || 0;
-    const usedBadge = usedN ? `<span class="tag tag-b" title="${(it.used_by||[]).map(u=>u.title).join(', ')}">used by ${usedN} asset${usedN>1?'s':''}</span>` : '<span class="tag" style="opacity:.6">unused</span>';
+    const usedBadge = usedN ? `<span class="tag tag-b" title="${escHtml((it.used_by||[]).map(u=>u.title).join(', '))}">used by ${usedN} asset${usedN>1?'s':''}</span>` : '<span class="tag" style="opacity:.6">unused</span>';
+    const preview = it.text ? `<details style="margin-top:4px;font-size:12px"><summary style="cursor:pointer;color:var(--text2)">Show text</summary><div style="white-space:pre-wrap;margin-top:4px">${escHtml(it.text)}</div></details>` : '';
     return `<div style="border:1px solid var(--border,#333);border-radius:8px;padding:8px;margin-bottom:6px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-        <div style="font-size:12px">${tag || '(untagged)'} ${badge} ${usedBadge}</div>
+        <div style="font-size:12px"><strong style="font-family:monospace">${escHtml(it.name || '')}</strong> ${badge} ${origin} ${usedBadge}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          ${it.status !== 'approved' ? `<button class="btn btn-s btn-sm" onclick="studioApprove('${it.id}')">✓ Approve</button>` : ''}
-          <button class="btn btn-s btn-sm" onclick="studioAssociate('${it.id}')">🔗 Associate to asset</button>
-          <a class="btn btn-s btn-sm" href="/api/ar/narration-studio/${it.id}/download" target="_blank">⬇ Download</a>
-          <button class="btn btn-r btn-sm" ${usedN ? 'disabled title="In use — detach from assets first"' : ''} onclick="studioDiscard('${it.id}')">✕</button>
+          ${it.status !== 'approved' ? `<button class="btn btn-g btn-sm" onclick="studioApprove('${it.id}')">✓ Approve</button>` : ''}
+          <a class="btn btn-s btn-sm" href="#" onclick="studioDownload('${it.id}','${escHtml(it.name || 'narration')}');return false">⬇ Download</a>
+          <button class="btn btn-r btn-sm" ${usedN ? 'disabled title="In use — remove it from those assets first (✏ Edit)"' : ''} onclick="studioDiscard('${it.id}')">✕</button>
         </div>
       </div>
       <audio controls preload="none" src="${it.url_aac || it.url}" style="width:100%;margin-top:6px;height:34px"></audio>
+      ${preview}
     </div>`;
   }).join('');
+}
+// Authenticated download (a plain link can't send the login token).
+async function studioDownload(id, name) {
+  try {
+    const r = await fetch('/api/ar/narration-studio/' + id + '/download', { headers: authHeaders() });
+    if (!r.ok) { showToast('❌ Download failed'); return; }
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement('a'); a.href = url; a.download = name + '.m4a'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch { showToast('❌ Download failed'); }
 }
 async function studioApprove(id) {
   await safeFetch('/api/ar/narration-studio/' + id + '/approve', { method: 'POST' });
@@ -6525,18 +6648,209 @@ async function studioDiscard(id) {
   await safeFetch('/api/ar/narration-studio/' + id, { method: 'DELETE' });
   studioLoadLibrary();
 }
-async function studioAssociate(id) {
-  // Offer the current AR assets as targets.
-  const assets = _studioAssetsCache.length ? _studioAssetsCache : Object.values(window._arAll || {});
-  if (!assets.length) { alert('Load the AR assets list first.'); return; }
-  const list = assets.map((a, i) => `${i + 1}. ${a.title || a.original_name} (${a.class_name || '-'} / ${a.subject || '-'})`).join('\n');
-  const pick = prompt('Associate to which asset? Enter number:\n\n' + list);
-  const idx = parseInt(pick, 10) - 1;
-  if (isNaN(idx) || !assets[idx]) return;
-  const d = await safeFetch('/api/ar/narration-studio/' + id + '/associate', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asset_id: assets[idx].id }),
+
+// ── Upload form: narration picker ────────────────────────────────────────────
+// Regional language per state (same map as the student app) + Hindi/English.
+const _AR_STATE_LANG = {
+  'andhra pradesh':'te','arunachal pradesh':'en','assam':'as','bihar':'hi','chhattisgarh':'hi','goa':'kok',
+  'gujarat':'gu','haryana':'hi','himachal pradesh':'hi','jharkhand':'hi','karnataka':'kn','kerala':'ml',
+  'madhya pradesh':'hi','maharashtra':'mr','manipur':'mni','meghalaya':'en','mizoram':'en','nagaland':'en',
+  'odisha':'or','punjab':'pa','rajasthan':'hi','sikkim':'ne','tamil nadu':'ta','telangana':'te','tripura':'bn',
+  'uttar pradesh':'hi','uttarakhand':'hi','west bengal':'bn','andaman and nicobar islands':'hi','chandigarh':'hi',
+  'dadra and nagar haveli and daman and diu':'gu','delhi':'hi','jammu and kashmir':'ur','ladakh':'hi',
+  'lakshadweep':'ml','puducherry':'ta',
+};
+let _arNarrItems = {};   // id → library item (approved, for the current filter)
+let _arEditing = null;   // { id, audios } while editing an existing asset
+function _arSelectedStates() {
+  const sel = document.getElementById('ar-up-states');
+  return sel ? [...sel.selectedOptions].map(o => o.value).filter(Boolean) : [];
+}
+function _arStateName(v) {
+  const s = (typeof INDIA_STATES !== 'undefined') && INDIA_STATES.find(x => x.code === v || x.name === v);
+  return s ? s.name : String(v || '');
+}
+// null = no state restriction (national asset → every language allowed).
+function _arAllowedLangs(states) {
+  if (!states.length) return null;
+  const set = new Set(['hi', 'en']);
+  states.forEach(v => { const l = _AR_STATE_LANG[_arStateName(v).toLowerCase()]; if (l) set.add(l); });
+  return set;
+}
+const _arTopicKey = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+async function arNarrRefresh(preselect) {
+  const host = document.getElementById('ar-narr-pickers');
+  if (!host) return;
+  const cls = document.getElementById('ar-up-class')?.value || '';
+  const subj = document.getElementById('ar-up-subject')?.value || '';
+  if (!cls || !subj) { host.innerHTML = '<em>Pick Class and Subject above to see narration files.</em>'; _arNarrItems = {}; return; }
+  const topic = _arTopicKey(document.getElementById('ar-up-topic')?.value);
+  const allowed = _arAllowedLangs(_arSelectedStates());
+  const keep = preselect || Object.fromEntries([...document.querySelectorAll('.ar-narr-pick')].map(s => [s.dataset.lang, s.value]));
+  let rows = [];
+  try {
+    const qs = new URLSearchParams({ status: 'approved', class_name: cls, subject: subj });
+    const r = await fetch('/api/ar/narration-studio/library?' + qs, { headers: authHeaders() });
+    rows = ((await r.json()) || {}).data || [];
+  } catch { host.innerHTML = '<em>Could not load narration files.</em>'; return; }
+  if (allowed) rows = rows.filter(it => allowed.has(String(it.language).toLowerCase()));
+  _arNarrItems = Object.fromEntries(rows.map(it => [it.id, it]));
+  const byLang = {};
+  rows.forEach(it => (byLang[it.language] ||= []).push(it));
+  const langs = Object.keys(byLang).sort();
+  // Current narration of the asset being edited, if it isn't a library file.
+  const current = (_arEditing && _arEditing.audios) || {};
+  Object.keys(current).forEach(l => { if (!byLang[l] && (!allowed || allowed.has(l))) langs.push(l); });
+  if (!langs.length) {
+    host.innerHTML = `<em>No approved narration for ${escHtml(cls)} · ${escHtml(subj)}${allowed ? ' in ' + [...allowed].join(', ').toUpperCase() : ''}. Generate it in the 🗣 Narration tab, or upload a file below.</em>`;
+    return;
+  }
+  host.innerHTML = langs.map(lang => {
+    const items = (byLang[lang] || []).slice().sort((a, b) =>
+      (_arTopicKey(b.topic) === topic) - (_arTopicKey(a.topic) === topic) || String(a.name).localeCompare(String(b.name)));
+    const curUrl = current[lang];
+    const curItem = curUrl ? items.find(it => it.url === curUrl || it.url_aac === curUrl) : null;
+    const label = (items[0] && items[0].language_name) || lang.toUpperCase();
+    const opts = [`<option value="">— none —</option>`]
+      .concat(curUrl && !curItem ? [`<option value="__keep__">(keep current file)</option>`] : [])
+      .concat(items.map(it => `<option value="${it.id}">${_arTopicKey(it.topic) === topic && topic ? '★ ' : ''}${escHtml(it.name)}</option>`));
+    return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:5px">
+      <span style="width:80px;font-weight:600">${escHtml(label)}</span>
+      <select class="sel ar-narr-pick" data-lang="${lang}" style="flex:1;min-width:0">${opts.join('')}</select>
+    </div>`;
+  }).join('') + (topic ? '<div style="font-size:11px;color:var(--text3)">★ = same topic</div>' : '');
+  // Selection: keep what was chosen → else the edited asset's current file →
+  // else (new upload) the single same-topic file, if there is exactly one.
+  document.querySelectorAll('.ar-narr-pick').forEach(s => {
+    const lang = s.dataset.lang;
+    const has = (v) => [...s.options].some(o => o.value === v);
+    if (lang in keep && has(keep[lang])) { s.value = keep[lang]; return; }
+    const cur = current[lang];
+    if (cur) {
+      const it = Object.values(_arNarrItems).find(x => x.language === lang && (x.url === cur || x.url_aac === cur));
+      s.value = it ? it.id : '__keep__';
+      return;
+    }
+    if (!_arEditing && topic) {
+      const same = Object.values(_arNarrItems).filter(x => x.language === lang && _arTopicKey(x.topic) === topic);
+      s.value = same.length === 1 ? same[0].id : '';
+      return;
+    }
+    s.value = '';
   });
-  if (d) { showToast('🔗 Narration associated'); if (typeof refreshArAssetList === 'function') refreshArAssetList(); }
+}
+// [{lang, id}] for languages where a library file is chosen.
+function _arNarrPicks() {
+  return [...document.querySelectorAll('.ar-narr-pick')]
+    .map(s => ({ lang: s.dataset.lang, id: s.value }))
+    .filter(p => p.id && p.id !== '__keep__');
+}
+// Link chosen files; when editing, unlink languages set back to "— none —".
+async function _arLinkNarration(assetId, picks, prevAudios) {
+  let linked = 0, removed = 0;
+  for (const p of picks) {
+    const it = _arNarrItems[p.id];
+    if (it && (prevAudios[p.lang] === it.url)) continue; // unchanged
+    const d = await safeFetch('/api/ar/narration-studio/' + p.id + '/associate', {
+      method: 'POST', body: JSON.stringify({ asset_id: assetId }),
+    });
+    if (d) linked++;
+  }
+  const kept = new Set([...document.querySelectorAll('.ar-narr-pick')].filter(s => s.value).map(s => s.dataset.lang));
+  for (const lang of Object.keys(prevAudios || {})) {
+    if (kept.has(lang)) continue;
+    const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(assetId)}/audio/${encodeURIComponent(lang)}`, { method: 'DELETE' });
+    if (d) removed++;
+  }
+  return { linked, removed };
+}
+// Fallback: upload a narration file from the local drive into the library.
+async function arNarrUpload() {
+  const lang = document.getElementById('ar-narr-up-lang')?.value || '';
+  const file = document.getElementById('ar-narr-up-file')?.files?.[0];
+  const cls = document.getElementById('ar-up-class')?.value || '';
+  const subj = document.getElementById('ar-up-subject')?.value || '';
+  const topic = (document.getElementById('ar-up-topic')?.value || '').trim();
+  if (!cls || !subj || !topic) return showToast('⚠ Fill Class, Subject and AR Topic first — they name the file');
+  if (!lang) return showToast('⚠ Pick the language of this audio');
+  if (!file) return showToast('⚠ Choose an audio file');
+  const states = _arSelectedStates();
+  const fd = new FormData();
+  fd.append('audio', file, file.name);
+  fd.append('language', lang);
+  fd.append('class_name', cls);
+  fd.append('subject', subj);
+  fd.append('topic', topic);
+  fd.append('state', states.length === 1 ? _arStateName(states[0]) : '');
+  showToast('⏳ Uploading narration…');
+  try {
+    const r = await fetch('/api/ar/narration-studio/upload', { method: 'POST', headers: authHeaders(), body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return showToast('❌ ' + (d.error || 'Upload failed'));
+    document.getElementById('ar-narr-up-file').value = '';
+    const keep = Object.fromEntries([...document.querySelectorAll('.ar-narr-pick')].map(s => [s.dataset.lang, s.value]));
+    keep[lang] = d.item.id; // select the file just uploaded
+    await arNarrRefresh(keep);
+    showToast('✅ Added: ' + d.item.name);
+  } catch { showToast('❌ Upload failed'); }
+}
+document.addEventListener('DOMContentLoaded', () => {
+  ['ar-up-class', 'ar-up-subject', 'ar-up-states'].forEach(id =>
+    document.getElementById(id)?.addEventListener('change', () => arNarrRefresh()));
+  let t = null;
+  document.getElementById('ar-up-topic')?.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => arNarrRefresh(), 500); });
+});
+
+// ── Edit an existing asset in the Upload form (tags + narration) ────────────
+function editArAsset(id) {
+  const a = (window._arAll || {})[id];
+  if (!a) return showToast('Asset not found — refresh the list');
+  switchArSubTab('models');
+  const set = (elId, v) => { const el = document.getElementById(elId); if (el) el.value = v || ''; };
+  set('ar-up-class', a.class_name); set('ar-up-subject', a.subject);
+  set('ar-up-topic', a.topic); set('ar-up-language', a.language); set('ar-up-title', a.title);
+  const sel = document.getElementById('ar-up-states');
+  if (sel) [...sel.options].forEach(o => { o.selected = (a.target_states || []).includes(o.value); });
+  _arEditing = { id, audios: { ...(a.audios || {}) } };
+  ['ar-upload-btn', 'ar-save-apply-btn'].forEach(b => { const el = document.getElementById(b); if (el) el.style.display = 'none'; });
+  ['ar-edit-save-btn', 'ar-edit-cancel-btn'].forEach(b => { const el = document.getElementById(b); if (el) el.style.display = 'inline-flex'; });
+  document.getElementById('ar-upload-status').innerHTML =
+    `<span style="color:var(--accent4)">✏ Editing <strong>${escHtml(a.title || a.original_name || id)}</strong> — change tags or narration, then Save. To replace the 3D file use 🔁 Model on its row.</span>`;
+  document.querySelectorAll('.ar-narr-pick').forEach(s => s.remove()); // fresh picker state
+  arNarrRefresh();
+  document.getElementById('ar-upload-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+async function saveArEdit() {
+  if (!_arEditing) return;
+  const id = _arEditing.id;
+  const body = {
+    class_name: document.getElementById('ar-up-class')?.value || '',
+    subject: document.getElementById('ar-up-subject')?.value || '',
+    topic: (document.getElementById('ar-up-topic')?.value || '').trim(),
+    language: document.getElementById('ar-up-language')?.value || '',
+    title: (document.getElementById('ar-up-title')?.value || '').trim(),
+    target_states: _arSelectedStates(),
+  };
+  if (!body.class_name || !body.subject || !body.topic) return showToast('Class, Subject and AR Topic are required');
+  if (!body.title) body.title = body.topic;
+  const ok = await safeFetch('/api/ar/assets/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(body) });
+  if (!ok) return;
+  const { linked, removed } = await _arLinkNarration(id, _arNarrPicks(), _arEditing.audios);
+  showToast(`✅ Saved${linked ? ' · ' + linked + ' narration linked' : ''}${removed ? ' · ' + removed + ' removed' : ''}`);
+  cancelArEdit();
+  refreshArAssetList();
+}
+function cancelArEdit() {
+  _arEditing = null;
+  ['ar-edit-save-btn', 'ar-edit-cancel-btn'].forEach(b => { const el = document.getElementById(b); if (el) el.style.display = 'none'; });
+  if (arUploadFile) {
+    ['ar-upload-btn', 'ar-save-apply-btn'].forEach(b => { const el = document.getElementById(b); if (el) el.style.display = 'inline-flex'; });
+  }
+  ['ar-up-class', 'ar-up-subject', 'ar-up-language', 'ar-up-topic', 'ar-up-title'].forEach(i => { const el = document.getElementById(i); if (el) el.value = ''; });
+  const sel = document.getElementById('ar-up-states'); if (sel) [...sel.options].forEach(o => { o.selected = false; });
+  const st = document.getElementById('ar-upload-status'); if (st) st.innerHTML = '';
+  arNarrRefresh({});
 }
 
 
@@ -6702,6 +7016,7 @@ async function submitArUpload() {
 
   const ext = _arExt(arUploadFile.name);
   const isAr3D = AR3D_FORMATS.includes(ext); // Flutter-AR track vs Unity track
+  const narrPicks = _arNarrPicks(); // chosen library narration, linked after upload
 
   document.getElementById('ar-uprogress').style.display = 'block';
   const statusEl = document.getElementById('ar-upload-status');
@@ -6717,7 +7032,7 @@ async function submitArUpload() {
       const glb = await _arToGlb(arUploadFile);
 
       const imageFile = document.getElementById('ar-up-image').files[0];
-      const audioFile = document.getElementById('ar-up-audio').files[0];
+      const audioFile = document.getElementById('ar-up-audio')?.files?.[0]; // legacy field (removed)
       let mind = null;
       if (imageFile) {
         statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Compiling AR target from the page image…</span>';
@@ -6769,6 +7084,7 @@ async function submitArUpload() {
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
       const asset = data.asset || {};
+      if (asset.id && narrPicks.length) await _arLinkNarration(asset.id, narrPicks, {});
       const modeTag = isAr3D ? (asset.mind_url ? ' · marker AR' : ' · overlay AR') : '';
       statusEl.innerHTML = `<span style="color:var(--accent3)">✅ Uploaded: ${escHtml(asset.title || data.original_name || arUploadFile.name)} · ${escHtml(cls)} › ${escHtml(subj)} › ${escHtml(topic)}${modeTag}</span>`;
       arUploadFile = null;
@@ -6778,6 +7094,7 @@ async function submitArUpload() {
       refreshArAssetList();
       ['ar-up-class', 'ar-up-subject', 'ar-up-language'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
       ['ar-up-topic', 'ar-up-title', 'ar-up-image', 'ar-up-audio', 'ar-up-video'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      arNarrRefresh();
       return asset; // hand the asset back so "Save & Apply" can link it
     } else {
       statusEl.innerHTML = `<span style="color:var(--red)">❌ ${data.error || 'Upload failed'}</span>`;
@@ -6860,6 +7177,7 @@ function renderArAssetsTable(assets) {
           ${a.status === 'archived' ? `<button class="btn btn-g btn-sm" onclick="restoreArAsset('${a.id}')" title="Recover from recycle bin">♻ Restore</button>` : ''}
           ${a.status !== 'scheduled' && a.status !== 'published' && a.status !== 'archived' ? `<button class="btn btn-s btn-sm" onclick="scheduleArAsset('${a.id}')">📅 Coming soon</button>` : ''}
           <button class="btn btn-s btn-sm" onclick="openReleaseModal('ar','${a.id}')" title="When students can see it">📅</button>
+          <button class="btn btn-s btn-sm" onclick="editArAsset('${a.id}')" title="Edit tags & narration in the Upload form">✏ Edit</button>
           <button class="btn btn-s btn-sm" onclick="replaceArMedia('${a.id}','model')" title="Replace 3D model">🔁 Model</button>
           <button class="btn btn-s btn-sm" onclick="regenArAsset('${a.id}','model')" title="Rebuild model from original">♻ Draco</button>
           <button class="btn btn-s btn-sm" onclick="regenArAsset('${a.id}','transcode')" title="Re-compress audio">♻ Audio</button>

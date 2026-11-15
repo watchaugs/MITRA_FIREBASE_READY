@@ -701,7 +701,9 @@ router.delete('/assets/:id/audio/:lang', requirePerm('perm_upload_unity'), async
     const audiosAac = { ...((snap.data() || {}).audios_aac || {}) };
     const lk = (lang || '').toLowerCase();
     const targetUrl = audios[lk];
-    if (targetUrl) {
+    // Library narration (nlib_…) is shared and never deleted here — unlinking
+    // it from THIS asset must not depend on other assets using the same file.
+    if (targetUrl && !String(targetUrl).includes('nlib_')) {
       const others = (await narrationInUse(db, targetUrl)).filter(u => u.id !== id);
       if (others.length) {
         return res.status(409).json({
@@ -1006,22 +1008,128 @@ router.get('/bhashini/languages', requirePerm('perm_upload_unity'), (req, res) =
   res.json({ languages: STUDIO_LANGUAGES, configured: bhashini.isConfigured() });
 });
 
-// Build a friendly, sanitised download filename from the item's tags.
+// ── Narration naming ─────────────────────────────────────────────────────────
+// Readable library name: State_Class9_Biology_HumanHeart_Hindi_F
+// (state → "AllIndia" when untagged; voice F/M, or "Upload" for a manual file).
+const _pascal = (v) => String(v || '').replace(/[^A-Za-z0-9]+/g, ' ').trim()
+  .split(' ').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join('');
+function langEnglishName(code) {
+  const l = STUDIO_LANGUAGES.find(x => x.code === String(code || '').toLowerCase());
+  if (!l) return String(code || '').toUpperCase();
+  const m = /\(([^)]+)\)/.exec(l.name);
+  return m ? m[1] : l.name; // "हिंदी (Hindi)" → "Hindi"; "English" → "English"
+}
+function narrationBaseName(t) {
+  const cls = String(t.class_name || '').replace(/[^0-9]/g, '');
+  const voice = t.voice || (String(t.gender || '').toLowerCase() === 'male' ? 'M' : 'F');
+  return [
+    _pascal(t.state) || 'AllIndia',
+    cls ? 'Class' + cls : '',
+    _pascal(t.subject),
+    _pascal(t.topic),
+    _pascal(langEnglishName(t.language)),
+    voice,
+  ].filter(Boolean).join('_');
+}
+// Unique within the library: adds _v2, _v3 … only when the same name exists.
+async function uniqueNarrationName(db, base) {
+  for (let v = 1; v < 100; v++) {
+    const name = v === 1 ? base : `${base}_v${v}`;
+    const hit = await db.collection('narration_library').where('name', '==', name).limit(1).get();
+    if (hit.empty) return name;
+  }
+  return `${base}_${Date.now()}`;
+}
+// Download filename = the library name (older items: rebuilt from tags).
 function studioFileName(item, ext) {
-  const part = (v) => String(v || '').trim().replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  const bits = [part(item.class_name) && 'Class' + part(item.class_name), part(item.subject), part(item.topic), part(item.language).toUpperCase(), part(item.state)].filter(Boolean);
-  return (bits.join('_') || 'narration') + (ext || '.mp3');
+  return (item.name || narrationBaseName(item) || 'narration') + (ext || '.m4a');
 }
 
-// POST /narration-studio/generate — bulk text→TTS into the library.
-// body: { text, languages:[], gender, class_name, subject, topic, state }
+// ── Long-text handling for Bhashini ──────────────────────────────────────────
+// Split narration into sentence-sized chunks (~450 chars) so long scripts
+// don't hit the engine's request limits; very long sentences are hard-wrapped.
+function splitForBhashini(text, max = 450) {
+  const sentences = String(text || '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?।॥])\s+/);
+  const out = [];
+  let cur = '';
+  for (const sn of sentences) {
+    if (!sn) continue;
+    if (cur && (cur.length + 1 + sn.length) > max) { out.push(cur); cur = sn; }
+    else cur = cur ? cur + ' ' + sn : sn;
+    while (cur.length > max) {
+      let cut = cur.lastIndexOf(' ', max);
+      if (cut < max / 2) cut = max;
+      out.push(cur.slice(0, cut).trim());
+      cur = cur.slice(cut).trim();
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+// Join several WAV buffers (same format, as Bhashini returns) into one WAV.
+function _wavParts(buf) {
+  if (!buf || buf.length < 12 || buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') return null;
+  let off = 12, fmt = null;
+  while (off + 8 <= buf.length) {
+    const id = buf.toString('ascii', off, off + 4);
+    const size = buf.readUInt32LE(off + 4);
+    if (id === 'fmt ') fmt = buf.subarray(off, off + 8 + size);
+    else if (id === 'data') return fmt ? { fmt, data: buf.subarray(off + 8, Math.min(buf.length, off + 8 + size)) } : null;
+    off += 8 + size + (size % 2);
+  }
+  return null;
+}
+function concatWav(buffers) {
+  if (buffers.length === 1) return buffers[0];
+  const parts = buffers.map(_wavParts);
+  if (parts.some(p => !p)) throw new Error('Unexpected audio format from Bhashini (not WAV)');
+  const data = Buffer.concat(parts.map(p => p.data));
+  const fmt = parts[0].fmt;
+  const head = Buffer.alloc(12);
+  head.write('RIFF', 0, 'ascii'); head.writeUInt32LE(4 + fmt.length + 8 + data.length, 4); head.write('WAVE', 8, 'ascii');
+  const dh = Buffer.alloc(8);
+  dh.write('data', 0, 'ascii'); dh.writeUInt32LE(data.length, 4);
+  return Buffer.concat([head, fmt, dh, data]);
+}
+
+// POST /narration-studio/translate — Bhashini NMT for review BEFORE voicing.
+// body: { text, source_lang, languages:[] } → { translations:{lang:text}, failed:[] }
+// The dashboard calls this one language at a time (keeps each request short).
+router.post('/narration-studio/translate', requirePerm('perm_upload_unity'), async (req, res) => {
+  if (!bhashini.isConfigured()) return res.status(503).json({ error: 'Bhashini not configured' });
+  const b = req.body || {};
+  const text = String(b.text || '').trim();
+  const src = String(b.source_lang || 'en').toLowerCase();
+  const languages = Array.isArray(b.languages) ? [...new Set(b.languages.map(l => String(l).toLowerCase()))] : [];
+  if (!text) return res.status(400).json({ error: 'Narration text is required' });
+  if (!languages.length) return res.status(400).json({ error: 'Pick at least one language' });
+  const chunks = splitForBhashini(text);
+  const translations = {}, failed = [];
+  for (const lang of languages) {
+    if (lang === src) { translations[lang] = text; continue; }
+    try {
+      const out = [];
+      for (const c of chunks) out.push(await bhashini.translate(c, src, lang));
+      const joined = out.join(' ').replace(/\s+/g, ' ').trim();
+      if (!joined) throw new Error('Empty translation');
+      translations[lang] = joined;
+    } catch (e) { failed.push({ lang, error: e.message }); }
+  }
+  res.json({ translations, failed });
+});
+
+// POST /narration-studio/generate — text→TTS into the library, one file per language.
+// body: { text, texts:{lang:reviewedText}, source_lang, languages:[], gender,
+//         class_name, subject, topic, state }
+// `texts` carries the reviewed translations; a language without one falls back to `text`.
 router.post('/narration-studio/generate', requirePerm('perm_upload_unity'), async (req, res) => {
   if (!bhashini.isConfigured()) return res.status(503).json({ error: 'Bhashini not configured' });
   const b = req.body || {};
   const text = String(b.text || '').trim();
+  const texts = (b.texts && typeof b.texts === 'object') ? b.texts : {};
   const languages = Array.isArray(b.languages) ? b.languages.map(l => String(l).toLowerCase()) : [];
   const gender = (b.gender || 'female').toLowerCase();
-  if (!text) return res.status(400).json({ error: 'Narration text is required' });
+  if (!text && !Object.keys(texts).length) return res.status(400).json({ error: 'Narration text is required' });
   if (!languages.length) return res.status(400).json({ error: 'Pick at least one language' });
 
   const db = getFirestore();
@@ -1030,7 +1138,11 @@ router.post('/narration-studio/generate', requirePerm('perm_upload_unity'), asyn
 
   for (const lang of languages) {
     try {
-      const { audio } = await bhashini.tts(text, lang, { gender });
+      const spoken = String(texts[lang] || text).trim();
+      if (!spoken) { failed.push({ lang, error: 'No text for this language' }); continue; }
+      const wavs = [];
+      for (const chunk of splitForBhashini(spoken)) wavs.push((await bhashini.tts(chunk, lang, { gender })).audio);
+      const audio = concatWav(wavs);
       let opus, aac;
       try { ({ opus, aac } = await transcodeNarration(audio)); }
       catch (tc) { failed.push({ lang, error: 'transcode: ' + tc.message }); continue; }
@@ -1039,10 +1151,15 @@ router.post('/narration-studio/generate', requirePerm('perm_upload_unity'), asyn
       const baseKey = `ar_assets/nlib_${itemId}_${lang}`;
       await storage.putRaw(opus, `${baseKey}.opus`, { contentType: 'audio/ogg' });
       await storage.putRaw(aac,  `${baseKey}.m4a`,  { contentType: 'audio/aac' });
-      const item = {
-        id: itemId, language: lang, text,
-        gender, class_name: b.class_name || null, subject: b.subject || null,
+      const tags = {
+        language: lang, gender, class_name: b.class_name || null, subject: b.subject || null,
         topic: b.topic || null, state: b.state || null,
+      };
+      const item = {
+        id: itemId, ...tags, text: spoken,
+        source_lang: String(b.source_lang || 'en').toLowerCase(), source_text: text || null,
+        name: await uniqueNarrationName(db, narrationBaseName(tags)),
+        origin: 'bhashini',
         url: pub(`${baseKey}.opus`), url_aac: pub(`${baseKey}.m4a`),
         status: 'pending', created_by: req.user.id, created_at: new Date(),
       };
@@ -1062,7 +1179,8 @@ router.get('/narration-studio/library', requirePerm('perm_upload_unity'), async 
     const db = getFirestore();
     const snap = await db.collection('narration_library').limit(500).get();
     let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const { language, subject, topic, status } = req.query;
+    const { language, subject, topic, status, class_name } = req.query;
+    if (class_name) rows = rows.filter(r => String(r.class_name || '').toLowerCase() === String(class_name).toLowerCase());
     if (language) rows = rows.filter(r => String(r.language) === String(language).toLowerCase());
     if (subject)  rows = rows.filter(r => String(r.subject || '').toLowerCase() === String(subject).toLowerCase());
     if (topic)    rows = rows.filter(r => String(r.topic || '').toLowerCase().includes(String(topic).toLowerCase()));
@@ -1070,10 +1188,46 @@ router.get('/narration-studio/library', requirePerm('perm_upload_unity'), async 
     const assetsSnap = await db.collection('ar_assets').limit(1000).get();
     const urlToAssets = {};
     assetsSnap.forEach(d => { const a = d.data() || {}; [a.audio_url, ...Object.values(a.audios || {}), ...Object.values(a.audios_aac || {})].forEach(u => { if (u) (urlToAssets[u] ||= []).push({ id: d.id, title: a.title || a.original_name || d.id, status: a.status }); }); });
-    rows = rows.map(r => { const used = [...(urlToAssets[r.url] || []), ...(urlToAssets[r.url_aac] || [])].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i); return { ...r, used_by: used, used_count: used.length }; });
+    rows = rows.map(r => { const used = [...(urlToAssets[r.url] || []), ...(urlToAssets[r.url_aac] || [])].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i); return { ...r, name: r.name || narrationBaseName(r), language_name: langEnglishName(r.language), used_by: used, used_count: used.length }; });
     rows.sort((a, b) => (b.created_at?.toMillis?.() || 0) - (a.created_at?.toMillis?.() || 0));
     res.json({ data: rows, total: rows.length });
   } catch (e) { res.status(500).json({ error: 'Failed to load narration library', detail: e.message }); }
+});
+
+// POST /narration-studio/upload — fallback: add a narration file from the local
+// drive (mp3/wav/m4a/ogg) to the library, tagged like a generated one. It is
+// approved on upload (an admin chose this exact file), so it can be linked
+// straight away. multipart: audio + class_name, subject, topic, state, language
+router.post('/narration-studio/upload', requirePerm('perm_upload_unity'), arUpload.single('audio'), async (req, res) => {
+  try {
+    const f = req.file;
+    const b = req.body || {};
+    const lang = String(b.language || '').toLowerCase();
+    if (!f) return res.status(400).json({ error: 'Choose an audio file' });
+    if (!STUDIO_LANGUAGES.some(l => l.code === lang)) return res.status(400).json({ error: 'Pick the language of this audio' });
+    let opus, aac;
+    try { ({ opus, aac } = await transcodeNarration(f.buffer)); }
+    catch (e) { return res.status(400).json({ error: 'Could not read this audio file', detail: e.message }); }
+    const db = getFirestore();
+    const itemId = uuidv4();
+    const baseKey = `ar_assets/nlib_${itemId}_${lang}`;
+    const pub = (k) => process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${k}` : `/api/ar/file/${k.replace('ar_assets/', '')}`;
+    await storage.putRaw(opus, `${baseKey}.opus`, { contentType: 'audio/ogg' });
+    await storage.putRaw(aac,  `${baseKey}.m4a`,  { contentType: 'audio/aac' });
+    const tags = {
+      language: lang, voice: 'Upload', class_name: b.class_name || null, subject: b.subject || null,
+      topic: b.topic || null, state: b.state || null,
+    };
+    const item = {
+      id: itemId, ...tags, text: null, origin: 'upload', original_name: f.originalname,
+      name: await uniqueNarrationName(db, narrationBaseName(tags)),
+      url: pub(`${baseKey}.opus`), url_aac: pub(`${baseKey}.m4a`),
+      status: 'approved', approved_by: req.user.id, approved_at: new Date(),
+      created_by: req.user.id, created_at: new Date(),
+    };
+    await db.collection('narration_library').doc(itemId).set(item);
+    res.json({ message: 'Narration uploaded', item });
+  } catch (e) { res.status(500).json({ error: 'Upload failed', detail: e.message }); }
 });
 
 // POST /narration-studio/:itemId/approve — flag reviewed/approved.
