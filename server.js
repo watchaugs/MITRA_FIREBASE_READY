@@ -263,6 +263,11 @@ async function boot() {
   }
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT',  () => shutdown('SIGINT'));
+  // Express 4 doesn't catch async handler errors; on Node 20 an unhandled
+  // rejection kills the process. Log it and keep serving instead.
+  process.on('unhandledRejection', (err) => {
+    log.error({ err: err && err.message, stack: err && err.stack }, 'Unhandled rejection');
+  });
 
   return app;
 }
