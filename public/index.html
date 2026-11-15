@@ -399,6 +399,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 .state-tree-flag{font-size:20px}
 .state-tree-body{padding:16px;background:var(--bg2)}
 .state-tree-body.collapsed{display:none}
+.tree-collapsed{display:none !important}
+.tree-chev{cursor:pointer;color:var(--text2);font-size:12px;width:14px;display:inline-block;user-select:none}
+.tree-count{font-size:10px;color:var(--text3);font-weight:400;margin-left:4px}
+.ar-auto-chip{opacity:.7;border-style:dashed !important}
 .curr-tabs{display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:10px}
 .curr-tab{padding:8px 16px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;color:var(--text2);transition:.2s;white-space:nowrap}
 .curr-tab:hover{background:var(--glow);color:var(--text)}
@@ -1331,6 +1335,8 @@ document.addEventListener('DOMContentLoaded', () => {
         </select>
         <button class="btn btn-p btn-sm" onclick="currAddClass()">🏫 Add Class to State</button>
         <button class="btn btn-s btn-sm" onclick="currAddStateBlock()">🗺️ Add State Block</button>
+        <button class="btn btn-s btn-sm" onclick="currExpandAll(true)" title="Expand every state, class, subject and topic">⊞ Expand all</button>
+        <button class="btn btn-s btn-sm" onclick="currExpandAll(false)" title="Collapse everything">⊟ Collapse all</button>
         <button class="btn btn-g btn-sm" id="curr-save-btn" onclick="saveCurriculum()">💾 Save curriculum</button>
         <span id="curr-dirty" style="font-size:11px;color:var(--text3)">All changes saved</span>
         <span style="margin-left:16px;font-size:12px;color:var(--text2)">AR watch % to unlock quiz:</span>
@@ -2230,7 +2236,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
       <div>
         <label class="lbl">AR Topic *</label>
-        <input class="inp" id="ar-up-topic" placeholder="e.g. Photosynthesis AR Scene">
+        <select class="sel" id="ar-up-topic"><option value="">Pick Class + Subject first</option></select>
       </div>
       <div>
         <label class="lbl">Language *</label>
@@ -2354,7 +2360,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <option>Physics</option><option>Languages</option><option>Civics</option>
           <option>Economics</option><option>Environmental Science</option>
         </select>
-        <input class="inp" id="studio-topic"   placeholder="Topic"   style="width:150px">
+        <select class="sel" id="studio-topic" style="width:200px"><option value="">Topic (pick Class + Subject)</option></select>
         <select class="sel" id="studio-state" style="width:190px">
           <option value="">All India (optional)</option>
         </select>
@@ -2385,6 +2391,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="margin-bottom:6px;font-size:11px">
           Filter: <select class="sel" id="studio-filter-status" style="width:120px" onchange="studioLoadLibrary()">
             <option value="">All</option><option value="pending">Pending</option><option value="approved">Approved</option>
+            <option value="unused">Unused (not on any asset)</option><option value="stale">Pending &gt; 30 days</option>
           </select>
           <select class="sel" id="studio-filter-class" style="width:110px" onchange="studioLoadLibrary()"><option value="">All classes</option></select>
           <select class="sel" id="studio-filter-subject" style="width:150px" onchange="studioLoadLibrary()"><option value="">All subjects</option></select>
@@ -5597,6 +5604,13 @@ async function openQuizLinkModal(nodeId, topicName, className, subjectName) {
     } else { allQuizzesCache = []; }
   } catch(e) { allQuizzesCache = []; }
 
+  // Same rule as AR linking: only quizzes allowed in this state; same topic first.
+  const ctx = _currTopicCtx(nodeId);
+  const tk = _currTopicKey(topicName);
+  allQuizzesCache = allQuizzesCache
+    .filter(q => q.status !== 'archived' && _currStateAllows(q.target_states, ctx))
+    .sort((a, b) => (_currTopicKey(b.topic) === tk) - (_currTopicKey(a.topic) === tk)
+      || String(a.title || '').localeCompare(String(b.title || '')));
   renderQuizLinkList(allQuizzesCache);
 }
 
@@ -5612,11 +5626,13 @@ function renderQuizLinkList(quizzes) {
     listEl.innerHTML = '<div style="color:var(--text2);text-align:center;padding:16px">No matching quizzes found. Create quizzes in Quiz Manager first.</div>';
     return;
   }
+  const tk = _currTopicKey(_currTopicCtx(currentLinkNodeId).topic);
+  const linked = new Set([...(document.getElementById(currentLinkNodeId)?.querySelectorAll('[data-quiz-id]') || [])].map(c => c.dataset.quizId));
   listEl.innerHTML = quizzes.map(q => `
-    <label class="checklist-item" style="cursor:pointer">
-      <input type="checkbox" value="${q.id}" style="accent-color:var(--accent);width:14px;height:14px">
+    <label class="checklist-item" style="cursor:pointer${linked.has(q.id) ? ';opacity:.55' : ''}">
+      <input type="checkbox" value="${q.id}" ${linked.has(q.id) ? 'checked disabled title="Already linked"' : ''} style="accent-color:var(--accent);width:14px;height:14px">
       <div>
-        <div style="font-weight:500;font-size:13px">${escHtml(q.title)}</div>
+        <div style="font-weight:500;font-size:13px">${tk && _currTopicKey(q.topic) === tk ? '★ ' : ''}${escHtml(q.title)}${linked.has(q.id) ? ' · linked' : ''}</div>
         <div style="font-size:11px;color:var(--text2)">${[q.class_name, q.subject, q.topic, q.language].filter(Boolean).join(' · ')} · ${q.question_count||0} Qs · ${quizStatusBadge(q.status)}</div>
       </div>
     </label>
@@ -5624,7 +5640,7 @@ function renderQuizLinkList(quizzes) {
 }
 
 async function saveQuizLinks() {
-  const selected = [...document.querySelectorAll('#quiz-link-list input:checked')].map(el => el.value);
+  const selected = [...document.querySelectorAll('#quiz-link-list input:checked:not(:disabled)')].map(el => el.value);
   if (!selected.length) return showToast('Select at least one quiz');
 
   // Persist each link to backend
@@ -5650,7 +5666,7 @@ async function saveQuizLinks() {
       chipsRow.style.cssText = 'padding:4px 8px 4px 28px;display:flex;flex-wrap:wrap;gap:4px';
       nodeDiv.appendChild(chipsRow);
     }
-    [...document.querySelectorAll('#quiz-link-list input:checked')].forEach(inp => {
+    [...document.querySelectorAll('#quiz-link-list input:checked:not(:disabled)')].forEach(inp => {
       if (chipsRow.querySelector(`[data-quiz-id="${inp.value}"]`)) return;
       const labelEl = inp.closest('label');
       const title = labelEl?.querySelector('div:first-child')?.textContent?.trim() || 'Quiz';
@@ -5660,9 +5676,10 @@ async function saveQuizLinks() {
       chipsRow.appendChild(chip);
     });
     updateQuizBadge(currentLinkNodeId);
+    currToggle(currentLinkNodeId, true);
   }
 
-  showToast(`✅ ${saved} quiz(zes) linked`);
+  showToast(`✅ ${saved} quiz(zes) linked — 💾 Save curriculum to apply it in the app`);
   closeModal('modal-quiz-link');
   refreshCurriculumSummary();
 }
@@ -5865,6 +5882,103 @@ function toggleStateBlock(blockId) {
   if (chev) chev.textContent = collapsed ? '▸' : '▾';
 }
 
+// ── Collapsible class / subject / topic nodes ────────────────────────────────
+// Everything under a node except its header row is hidden when collapsed.
+function currToggle(nodeId, open) {
+  const node = document.getElementById(nodeId);
+  if (!node) return;
+  const kids = [...node.children].filter(ch => !ch.classList.contains('tree-item'));
+  const show = open === undefined ? kids.some(k => k.classList.contains('tree-collapsed')) : !!open;
+  kids.forEach(k => k.classList.toggle('tree-collapsed', !show));
+  const chev = document.getElementById('chev-' + nodeId);
+  if (chev) chev.textContent = show ? '▾' : '▸';
+}
+function _currExpandState(blockId) {
+  const body = document.getElementById(blockId + '-body');
+  const chev = document.getElementById(blockId + '-chevron');
+  if (body) body.classList.remove('collapsed');
+  if (chev) chev.textContent = '▾';
+}
+function currExpandAll(open) {
+  document.querySelectorAll('.state-tree-block').forEach(b => {
+    const body = document.getElementById(b.id + '-body');
+    const chev = document.getElementById(b.id + '-chevron');
+    if (body) body.classList.toggle('collapsed', !open);
+    if (chev) chev.textContent = open ? '▾' : '▸';
+  });
+  document.querySelectorAll('#state-trees-container .tree-node').forEach(n => currToggle(n.id, open));
+}
+// "3 subjects · 12 topics" / "5 topics" next to collapsed headers.
+function currUpdateCounts() {
+  document.querySelectorAll('#state-trees-container .tree-node[data-class]').forEach(c => {
+    const el = document.getElementById('count-' + c.id); if (!el) return;
+    const ns = c.querySelectorAll('.tree-node[data-subject]').length;
+    const nt = c.querySelectorAll('.tree-node[data-topic-name]').length;
+    el.textContent = ns ? `· ${ns} subject${ns === 1 ? '' : 's'} · ${nt} topic${nt === 1 ? '' : 's'}` : '';
+  });
+  document.querySelectorAll('#state-trees-container .tree-node[data-subject]').forEach(sj => {
+    const el = document.getElementById('count-' + sj.id); if (!el) return;
+    const nt = sj.querySelectorAll('.tree-node[data-topic-name]').length;
+    el.textContent = nt ? `· ${nt} topic${nt === 1 ? '' : 's'}` : '';
+  });
+}
+// Where a topic node sits: state, class, subject, topic.
+function _currTopicCtx(nodeId) {
+  const t = document.getElementById(nodeId);
+  const block = t?.closest('.state-tree-block');
+  return {
+    stateCode: block?.dataset.stateCode || '', stateName: block?.dataset.stateName || '',
+    cls: t?.closest('.tree-node[data-class]')?.dataset.class || '',
+    subject: t?.closest('.tree-node[data-subject]')?.dataset.subject || '',
+    topic: t?.dataset.topicName || '',
+  };
+}
+// Is content with these target_states allowed in this state? (empty = all India)
+function _currStateAllows(targetStates, ctx) {
+  const ts = (targetStates || []).map(x => String(x).trim().toLowerCase());
+  if (!ts.length) return true;
+  return ts.includes(String(ctx.stateCode).toLowerCase()) || ts.includes(String(ctx.stateName).toLowerCase());
+}
+const _currTopicKey = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+// ── AR chips on a topic ──────────────────────────────────────────────────────
+// Linked (saved with the tree; decides what the app shows):
+function _currArChip(nodeId, id, title) {
+  const row = document.getElementById(nodeId)?.querySelector('.linked-chips-row');
+  if (!row || row.querySelector(`[data-ar-id="${id}"]`)) return;
+  row.querySelector(`[data-ar-auto="${id}"]`)?.remove();
+  const chip = document.createElement('span');
+  chip.className = 'quiz-link-chip'; chip.dataset.arId = id;
+  chip.style.cssText = 'background:rgba(99,102,241,.14);border-color:rgba(99,102,241,.3);color:#a5b4fc';
+  chip.innerHTML = `🎮 ${escHtml(title)} <span style="opacity:.5;cursor:pointer;margin-left:4px;font-size:11px" title="Unlink (💾 Save to apply)">✕</span>`;
+  chip.lastElementChild.onclick = (e) => { e.stopPropagation(); chip.remove(); updateArBadge(nodeId); };
+  row.appendChild(chip);
+}
+// Matched only by the asset's tags (not saved). Live in the app while the topic
+// has no linked assets; hidden once it has some. 📌 turns it into a link.
+function _currArAutoChip(nodeId, id, title) {
+  const row = document.getElementById(nodeId)?.querySelector('.linked-chips-row');
+  if (!row || row.querySelector(`[data-ar-id="${id}"],[data-ar-auto="${id}"]`)) return;
+  const chip = document.createElement('span');
+  chip.className = 'quiz-link-chip ar-auto-chip'; chip.dataset.arAuto = id; chip.dataset.title = title;
+  chip.innerHTML = `🏷 ${escHtml(title)} <span class="ar-auto-state" style="font-size:10px"></span> <span style="cursor:pointer;margin-left:2px" title="Link it to this topic">📌</span>`;
+  chip.lastElementChild.onclick = (e) => { e.stopPropagation(); _currArChip(nodeId, id, title); updateArBadge(nodeId); };
+  row.appendChild(chip);
+}
+function _currRefreshAutoChips(nodeId) {
+  const row = document.getElementById(nodeId)?.querySelector('.linked-chips-row');
+  if (!row) return;
+  const hasLinks = !!row.querySelector('[data-ar-id]');
+  row.querySelectorAll('[data-ar-auto]').forEach(c => {
+    const st = c.querySelector('.ar-auto-state');
+    if (st) st.textContent = hasLinks ? '· hidden' : '· auto';
+    c.title = hasLinks
+      ? 'Not shown in the app: this topic has linked assets. 📌 to show it too.'
+      : 'Shown in the app by its tags (this topic has no linked assets). 📌 to link it.';
+    c.style.textDecoration = hasLinks ? 'line-through' : '';
+  });
+}
+
 // ── Add a new State Block ─────────────────────────────────────────────────────
 function currAddStateBlock() {
   const sel   = document.getElementById('hier-add-state');
@@ -5929,6 +6043,7 @@ function currAddClass() {
     return;
   }
   _currMakeClassNode(stateCode, cls);
+  _currExpandState('stblock-' + stateCode);
   clsSel.value = '';
   markCurrDirty();
   showToast(`${cls} added to ${stateName}`);
@@ -5946,8 +6061,10 @@ function _currMakeClassNode(stateCode, cls) {
   div.dataset.class = cls;
   div.innerHTML = `
     <div class="tree-item">
-      <div class="tree-item-title" style="display:flex;align-items:center;gap:8px">
+      <div class="tree-item-title" style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="currToggle('${nodeId}')">
+        <span class="tree-chev" id="chev-${nodeId}">▾</span>
         <span style="font-size:15px">🏫</span> <strong>${escHtml(cls)}</strong>
+        <span class="tree-count" id="count-${nodeId}"></span>
       </div>
       <div class="tree-actions" style="display:flex;gap:6px;align-items:center">
         ${subjectSelectHtml(nodeId)}
@@ -5965,8 +6082,10 @@ function _currMakeSubjectNode(classNodeId, subject) {
   div.className = 'tree-node'; div.id = nodeId; div.dataset.subject = subject;
   div.innerHTML = `
     <div class="tree-item">
-      <div class="tree-item-title" style="display:flex;align-items:center;gap:8px">
+      <div class="tree-item-title" style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="currToggle('${nodeId}')">
+        <span class="tree-chev" id="chev-${nodeId}">▾</span>
         <span style="font-size:13px">📘</span> ${escHtml(subject)}
+        <span class="tree-count" id="count-${nodeId}"></span>
       </div>
       <div class="tree-actions" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <input class="inp" id="topic-inp-${nodeId}" placeholder="Type topic name…"
@@ -5991,7 +6110,8 @@ function _currMakeTopicNode(subjectNodeId, classNodeId, subject, topic) {
   div.dataset.topicName = topic;
   div.innerHTML = `
     <div class="tree-item">
-      <div class="tree-item-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <div class="tree-item-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;cursor:pointer" onclick="currToggle('${nodeId}')">
+        <span class="tree-chev" id="chev-${nodeId}">▾</span>
         <span>📌</span>
         <span data-topic="${escHtml(topic)}">${escHtml(topic)}</span>
         <span class="tree-quiz-badge" id="quiz-badge-${nodeId}" style="display:none">🧩 0</span>
@@ -6012,7 +6132,8 @@ function _currMakeTopicNode(subjectNodeId, classNodeId, subject, topic) {
     </div>
     <div class="linked-chips-row" style="padding:4px 8px 2px 28px;display:flex;flex-wrap:wrap;gap:4px"></div>`;
   topicsContainer.appendChild(div);
-  populateQuizDropdown('quiz-quick-sel-' + nodeId, cls, subject, topic);
+  const stCode = document.getElementById(classNodeId)?.closest('.state-tree-block')?.dataset.stateCode || '';
+  populateQuizDropdown('quiz-quick-sel-' + nodeId, cls, subject, topic, stCode);
   return nodeId;
 }
 
@@ -6040,10 +6161,10 @@ function currAddStateBlockById(code, name, isNew) {
           onclick="openGeoConfig('${escHtml(name)}')">📍 Add Geofence</button>
         <button class="btn btn-r btn-sm" style="font-size:10px;padding:3px 8px"
           onclick="removeStateBlock('${blockId}')">✕ Remove</button>
-        <span style="color:var(--text2);font-size:18px;cursor:pointer" id="${blockId}-chevron">▾</span>
+        <span style="color:var(--text2);font-size:18px;cursor:pointer" id="${blockId}-chevron" onclick="toggleStateBlock('${blockId}')">${isNew ? '▾' : '▸'}</span>
       </div>
     </div>
-    <div class="state-tree-body" id="${blockId}-body">
+    <div class="state-tree-body${isNew ? '' : ' collapsed'}" id="${blockId}-body">
       <div class="card" id="curriculum-tree-${code}">
         <div class="tree-empty-msg" style="color:var(--text2);font-size:12px;padding:8px">No classes yet — select this state in the builder bar and click "Add Class to State".</div>
       </div>
@@ -6067,6 +6188,7 @@ function currSubjectSelected(classNodeId) {
     showToast(`${subject} already added`); sel.value = ''; return;
   }
   _currMakeSubjectNode(classNodeId, subject);
+  currToggle(classNodeId, true);
   sel.value = '';
   markCurrDirty();
 }
@@ -6121,6 +6243,7 @@ function currAddTopicManual(subjectNodeId, classNodeId, subject) {
     showToast(`"${topic}" is already added`); return;
   }
   _currMakeTopicNode(subjectNodeId, classNodeId, subject, topic);
+  currToggle(subjectNodeId, true);
   if (inp) inp.value = '';
   markCurrDirty();
   showToast(`"${topic}" added — link AR assets and quizzes, then 💾 Save curriculum`);
@@ -6128,22 +6251,32 @@ function currAddTopicManual(subjectNodeId, classNodeId, subject) {
 }
 
 // ── Quick-link quiz directly from topic row dropdown ─────────────────────────
-async function populateQuizDropdown(selId, className, subject, topic) {
+// One request per Class + Subject (was one per topic row).
+const _quizDropCache = {};
+async function populateQuizDropdown(selId, className, subject, topic, stateCode) {
   const sel = document.getElementById(selId);
   if (!sel) return;
   try {
-    const params = new URLSearchParams({ limit: 100 });
+    const params = new URLSearchParams({ limit: 200 });
     if (className) params.append('class_name', className);
     if (subject)   params.append('subject', subject);
-    const res = await fetch('/api/quiz?' + params, { headers: authHeaders() });
-    const data = res.ok ? (await res.json()) : {};
-    const quizzes = data.data || [];
+    const key = params.toString();
+    _quizDropCache[key] = _quizDropCache[key] || fetch('/api/quiz?' + params, { headers: authHeaders() })
+      .then(r => r.ok ? r.json() : {}).catch(() => ({}));
+    const data = await _quizDropCache[key];
+    const block = document.getElementById('stblock-' + stateCode);
+    const ctx = { stateCode: stateCode || '', stateName: block?.dataset.stateName || '' };
+    const tk = _currTopicKey(topic);
+    const quizzes = (data.data || [])
+      .filter(q => q.status !== 'archived' && (!stateCode || _currStateAllows(q.target_states, ctx)))
+      .sort((a, b) => (_currTopicKey(b.topic) === tk) - (_currTopicKey(a.topic) === tk)
+        || String(a.title || '').localeCompare(String(b.title || '')));
     if (!quizzes.length) {
       sel.innerHTML = '<option value="">No quizzes for this class yet</option>';
     } else {
       sel.innerHTML = '<option value="">+ Quick-Link Quiz…</option>' +
         quizzes.map(q =>
-          `<option value="${q.id}" data-title="${escHtml(q.title)}">${escHtml(q.title)} (${q.question_count||0} Qs)</option>`
+          `<option value="${q.id}" data-title="${escHtml(q.title)}">${tk && _currTopicKey(q.topic) === tk ? '★ ' : ''}${escHtml(q.title)} (${q.question_count||0} Qs)</option>`
         ).join('');
     }
   } catch(e) {
@@ -6187,6 +6320,7 @@ function quickAddQuizFromDrop(nodeId, topicName, className, subject) {
   }
 
   sel.value = '';
+  currToggle(nodeId, true);
   markCurrDirty();
   showToast(`✅ "${quizTitle}" linked to "${topicName}" — 💾 Save curriculum to keep it`);
   refreshCurriculumSummary();
@@ -6283,6 +6417,7 @@ const _currRemovedStates = new Set();
 let _currLoaded = false;
 function markCurrDirty() {
   _currDirty = true;
+  if (typeof currUpdateCounts === 'function') currUpdateCounts();
   const el = document.getElementById('curr-dirty');
   if (el) { el.textContent = '● Unsaved changes'; el.style.color = 'var(--yellow)'; }
 }
@@ -6322,14 +6457,9 @@ async function loadCurriculumFromServer(force) {
         const subjId = _currMakeSubjectNode(classId, sj.subject);
         (sj.topics || []).forEach(t => {
           const nodeId = _currMakeTopicNode(subjId, classId, sj.subject, t.topic);
-          const row = document.getElementById(nodeId).querySelector('.linked-chips-row');
-          (t.ar_assets || []).forEach(a => {
-            const chip = document.createElement('span');
-            chip.className = 'quiz-link-chip'; chip.dataset.arId = a.id;
-            chip.style.cssText = 'background:rgba(99,102,241,.14);border-color:rgba(99,102,241,.3);color:#a5b4fc';
-            chip.innerHTML = `🎮 ${escHtml(a.title || a.id)} <span style="opacity:.5;cursor:pointer;margin-left:4px;font-size:11px" onclick="this.parentElement.remove();updateArBadge('${nodeId}')" title="Remove">✕</span>`;
-            row.appendChild(chip);
-          });
+          (t.ar_assets || []).forEach(a => _currArChip(nodeId, a.id, a.title || a.id));
+          (t.ar_auto || []).forEach(a => _currArAutoChip(nodeId, a.id, a.title || a.id));
+          _currRefreshAutoChips(nodeId);
           (t.quizzes || []).forEach(q => {
             let qrow = document.getElementById(nodeId).querySelector('.linked-quizzes-row');
             if (!qrow) { qrow = document.createElement('div'); qrow.className = 'linked-quizzes-row'; qrow.style.cssText = 'padding:4px 8px 4px 28px;display:flex;flex-wrap:wrap;gap:4px'; document.getElementById(nodeId).appendChild(qrow); }
@@ -6347,6 +6477,8 @@ async function loadCurriculumFromServer(force) {
     });
   });
   if (!(res.data || []).length) container.innerHTML = '<div class="tree-empty-msg" style="color:var(--text2);font-size:12px;padding:12px">No curriculum saved yet — pick a state above and add classes, then 💾 Save curriculum.</div>';
+  currExpandAll(false); // land on a fully collapsed tree
+  currUpdateCounts();
   _currLoaded = true;
   _markCurrSaved();
   refreshCurriculumSummary();
@@ -6494,6 +6626,7 @@ async function initNarrationStudio() {
     [...from.options].filter(o => o.value).forEach(o => to.add(new Option(o.text, o.value)));
   };
   copyOpts('studio-class', 'studio-filter-class');
+  studioTopicRefresh();
   copyOpts('studio-subject', 'studio-filter-subject');
   const up = document.getElementById('ar-narr-up-lang');
   if (up && !up.options.length) {
@@ -6601,33 +6734,87 @@ async function studioLoadLibrary() {
   if (!host) return;
   const qs = new URLSearchParams();
   const v = (id) => document.getElementById(id)?.value || '';
-  if (v('studio-filter-status'))  qs.set('status', v('studio-filter-status'));
+  const view = v('studio-filter-status'); // pending | approved | unused | stale
+  if (view === 'pending' || view === 'approved' || view === 'stale') qs.set('status', view === 'stale' ? 'pending' : view);
   if (v('studio-filter-class'))   qs.set('class_name', v('studio-filter-class'));
   if (v('studio-filter-subject')) qs.set('subject', v('studio-filter-subject'));
   let d;
   try { const r = await fetch('/api/ar/narration-studio/library' + (qs.toString() ? '?' + qs : ''), { headers: authHeaders() }); d = await r.json(); }
   catch { host.innerHTML = '<em style="color:var(--text3)">Could not load library.</em>'; return; }
-  const rows = (d && d.data) || [];
+  const DAY = 86400000;
+  const ageDays = (it) => { const ms = fsMs(it.created_at); return ms ? Math.floor((Date.now() - ms) / DAY) : 0; };
+  let rows = (d && d.data) || [];
+  if (view === 'unused') rows = rows.filter(it => !(it.used_count > 0));
+  if (view === 'stale')  rows = rows.filter(it => ageDays(it) > 30);
+  _studioLibItems = Object.fromEntries(rows.map(it => [it.id, it]));
   if (!rows.length) { host.innerHTML = '<em style="color:var(--text3)">No narration files match.</em>'; return; }
-  host.innerHTML = rows.map(it => {
-    const badge = it.status === 'approved' ? '<span class="tag tag-g">approved</span>' : '<span class="tag tag-y">pending</span>';
+  const pendingN = rows.filter(it => it.status !== 'approved').length;
+  const toolbar = pendingN ? `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;font-size:12px">
+      <label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" style="width:auto" onchange="document.querySelectorAll('.studio-pick').forEach(c=>c.checked=this.checked)"> Select all pending (${pendingN})</label>
+      <button class="btn btn-g btn-sm" onclick="studioApproveSelected()">✓ Approve selected</button>
+    </div>` : '';
+  host.innerHTML = toolbar + rows.map(it => {
+    const age = ageDays(it);
+    const badge = it.status === 'approved' ? '<span class="tag tag-g">approved</span>'
+      : `<span class="tag tag-y">pending</span>${age > 30 ? ` <span class="tag tag-r" title="Waiting for review for ${age} days — approve or discard">⏰ ${age}d</span>` : ''}`;
+    const pick = it.status !== 'approved' ? `<input type="checkbox" class="studio-pick" value="${it.id}" style="width:auto;margin-right:4px">` : '';
     const origin = it.origin === 'upload' ? '<span class="tag" style="opacity:.75">uploaded</span>' : '';
     const usedN = it.used_count || 0;
     const usedBadge = usedN ? `<span class="tag tag-b" title="${escHtml((it.used_by||[]).map(u=>u.title).join(', '))}">used by ${usedN} asset${usedN>1?'s':''}</span>` : '<span class="tag" style="opacity:.6">unused</span>';
     const preview = it.text ? `<details style="margin-top:4px;font-size:12px"><summary style="cursor:pointer;color:var(--text2)">Show text</summary><div style="white-space:pre-wrap;margin-top:4px">${escHtml(it.text)}</div></details>` : '';
     return `<div style="border:1px solid var(--border,#333);border-radius:8px;padding:8px;margin-bottom:6px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-        <div style="font-size:12px"><strong style="font-family:monospace">${escHtml(it.name || '')}</strong> ${badge} ${origin} ${usedBadge}</div>
+        <div style="font-size:12px">${pick}<strong style="font-family:monospace">${escHtml(it.name || '')}</strong> ${badge} ${origin} ${usedBadge}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           ${it.status !== 'approved' ? `<button class="btn btn-g btn-sm" onclick="studioApprove('${it.id}')">✓ Approve</button>` : ''}
+          ${it.text && it.origin !== 'upload' ? `<button class="btn btn-s btn-sm" onclick="studioRevoiceOpen('${it.id}')" title="Edit this language's text and generate a new version">🔁 Re-voice</button>` : ''}
           <a class="btn btn-s btn-sm" href="#" onclick="studioDownload('${it.id}','${escHtml(it.name || 'narration')}');return false">⬇ Download</a>
           <button class="btn btn-r btn-sm" ${usedN ? 'disabled title="In use — remove it from those assets first (✏ Edit)"' : ''} onclick="studioDiscard('${it.id}')">✕</button>
         </div>
       </div>
       <audio controls preload="none" src="${it.url_aac || it.url}" style="width:100%;margin-top:6px;height:34px"></audio>
       ${preview}
+      <div id="revoice-${it.id}" style="display:none;margin-top:6px"></div>
     </div>`;
   }).join('');
+}
+let _studioLibItems = {};
+async function studioApproveSelected() {
+  const ids = [...document.querySelectorAll('.studio-pick:checked')].map(c => c.value);
+  if (!ids.length) return showToast('Tick the files to approve');
+  let ok = 0;
+  for (const id of ids) { if (await safeFetch('/api/ar/narration-studio/' + id + '/approve', { method: 'POST' })) ok++; }
+  showToast(`✅ Approved ${ok} file(s)`);
+  studioLoadLibrary();
+}
+// Re-voice ONE language: edit its text, generate a new version (_v2…). The old
+// file stays (and stays linked) until you pick the new one on the asset.
+function studioRevoiceOpen(id) {
+  const it = _studioLibItems[id]; const box = document.getElementById('revoice-' + id);
+  if (!it || !box) return;
+  if (box.style.display === 'block') { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.innerHTML = `<textarea class="inp" id="revoice-text-${id}" rows="3" style="width:100%;font-size:13px"></textarea>
+    <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
+      <button class="btn btn-p btn-sm" onclick="studioRevoice('${id}')">⚡ Generate new version</button>
+      <span id="revoice-status-${id}" style="font-size:12px;color:var(--text2)"></span>
+    </div>`;
+  document.getElementById('revoice-text-' + id).value = it.text || '';
+}
+async function studioRevoice(id) {
+  const it = _studioLibItems[id];
+  const text = (document.getElementById('revoice-text-' + id)?.value || '').trim();
+  const st = document.getElementById('revoice-status-' + id);
+  if (!it || !text) return;
+  if (st) st.textContent = '⏳ Generating…';
+  const d = await safeFetch('/api/ar/narration-studio/generate', { method: 'POST', body: JSON.stringify({
+    text: it.source_text || text, texts: { [it.language]: text }, source_lang: it.source_lang || 'en',
+    languages: [it.language], gender: it.gender || 'female',
+    class_name: it.class_name || '', subject: it.subject || '', topic: it.topic || '', state: it.state || '',
+  }) });
+  const made = d && (d.done || [])[0];
+  if (st) st.textContent = made ? '✅ ' + made.name + ' (pending approval)' : '✗ Failed';
+  if (made) setTimeout(studioLoadLibrary, 800);
 }
 // Authenticated download (a plain link can't send the login token).
 async function studioDownload(id, name) {
@@ -6797,21 +6984,90 @@ async function arNarrUpload() {
 }
 document.addEventListener('DOMContentLoaded', () => {
   ['ar-up-class', 'ar-up-subject', 'ar-up-states'].forEach(id =>
-    document.getElementById(id)?.addEventListener('change', () => arNarrRefresh()));
-  let t = null;
-  document.getElementById('ar-up-topic')?.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => arNarrRefresh(), 500); });
+    document.getElementById(id)?.addEventListener('change', async () => { await arTopicRefresh(); arNarrRefresh(); }));
+  document.getElementById('ar-up-topic')?.addEventListener('change', async (e) => {
+    if (e.target.value === '__new__') await _topicAddNew('ar');
+    arNarrRefresh();
+  });
+  ['studio-class', 'studio-subject', 'studio-state'].forEach(id =>
+    document.getElementById(id)?.addEventListener('change', () => studioTopicRefresh()));
+  document.getElementById('studio-topic')?.addEventListener('change', (e) => {
+    if (e.target.value === '__new__') _topicAddNew('studio');
+  });
 });
 
+// ── Topic dropdowns fed by the Curriculum tree ──────────────────────────────
+// Filters: Class + Subject, and the chosen state(s) when any are picked.
+// "+ New topic…" adds it to those states' trees, so tags and tree never drift.
+async function _topicOptions(sel, cls, subj, states, keep) {
+  if (!sel) return;
+  if (!cls || !subj) { sel.innerHTML = '<option value="">Pick Class + Subject first</option>'; return; }
+  let rows = [];
+  try {
+    const qs = new URLSearchParams({ class_name: cls, subject: subj });
+    if (states.length) qs.set('states', states.join(','));
+    const r = await fetch('/api/curriculum/topics?' + qs, { headers: authHeaders() });
+    rows = ((await r.json()) || {}).data || [];
+  } catch { /* offline: only "keep" + new */ }
+  const want = keep !== undefined ? keep : sel.value;
+  const opts = ['<option value="">Select topic…</option>']
+    .concat(rows.map(t => `<option value="${escHtml(t.topic)}">${escHtml(t.topic)}${!states.length || states.length > 1 ? ' · ' + escHtml(t.states.join(', ')) : ''}</option>`));
+  if (want && want !== '__new__' && !rows.some(t => t.topic === want)) opts.push(`<option value="${escHtml(want)}">${escHtml(want)} · not in tree</option>`);
+  opts.push('<option value="__new__">＋ New topic…</option>');
+  sel.innerHTML = opts.join('');
+  sel.value = want && want !== '__new__' ? want : '';
+}
+function arTopicRefresh(keep) {
+  return _topicOptions(document.getElementById('ar-up-topic'),
+    document.getElementById('ar-up-class')?.value || '', document.getElementById('ar-up-subject')?.value || '',
+    _arSelectedStates().map(_arStateName), keep);
+}
+function studioTopicRefresh(keep) {
+  const st = document.getElementById('studio-state')?.value || '';
+  return _topicOptions(document.getElementById('studio-topic'),
+    document.getElementById('studio-class')?.value || '', document.getElementById('studio-subject')?.value || '',
+    st ? [st] : [], keep);
+}
+async function _topicAddNew(where) {
+  const ar = where === 'ar';
+  const cls = document.getElementById(ar ? 'ar-up-class' : 'studio-class')?.value || '';
+  const subj = document.getElementById(ar ? 'ar-up-subject' : 'studio-subject')?.value || '';
+  const states = ar ? _arSelectedStates().map(_arStateName)
+    : [document.getElementById('studio-state')?.value || ''].filter(Boolean);
+  const refresh = ar ? arTopicRefresh : studioTopicRefresh;
+  if (!states.length) { showToast('⚠ Pick the target state(s) first — a new topic is added to those states\' curriculum trees'); return refresh(''); }
+  const name = (prompt(`New topic for ${cls} · ${subj}\nIt will be added to: ${states.join(', ')}`) || '').trim();
+  if (!name) return refresh('');
+  const d = await safeFetch('/api/curriculum/topics', { method: 'POST',
+    body: JSON.stringify({ states, class_name: cls, subject: subj, topic: name }) });
+  if (d) { _currLoaded = false; showToast(`✅ "${name}" added to ${(d.added || []).join(', ')}`); }
+  return refresh(d ? name : '');
+}
+
+// Row badges: narration languages + where the asset is linked in the tree.
+function _arCoverageBadges(a) {
+  const langs = Object.keys(a.audios || {});
+  const nar = langs.length
+    ? `<span class="tag tag-b" title="Narration languages">🔊 ${langs.map(l => escHtml(l.toUpperCase())).join(' ')}</span>`
+    : (a.audio_url ? '<span class="tag tag-b" title="Single narration file">🔊 1</span>' : '<span class="tag" style="opacity:.7" title="No narration linked">🔇 none</span>');
+  const tl = (window._arTreeLinks || {})[a.id];
+  const tree = tl
+    ? `<span class="tag tag-g" title="Linked in: ${escHtml(tl.states.join(', '))}">🌳 ${tl.topics} topic${tl.topics === 1 ? '' : 's'}</span>`
+    : '<span class="tag tag-y" title="Not linked in the Curriculum tree — shown only where its tags match a topic that has no links">🌳 tags only</span>';
+  return `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${nar}${tree}</div>`;
+}
+
 // ── Edit an existing asset in the Upload form (tags + narration) ────────────
-function editArAsset(id) {
+async function editArAsset(id) {
   const a = (window._arAll || {})[id];
   if (!a) return showToast('Asset not found — refresh the list');
   switchArSubTab('models');
   const set = (elId, v) => { const el = document.getElementById(elId); if (el) el.value = v || ''; };
   set('ar-up-class', a.class_name); set('ar-up-subject', a.subject);
-  set('ar-up-topic', a.topic); set('ar-up-language', a.language); set('ar-up-title', a.title);
+  set('ar-up-language', a.language); set('ar-up-title', a.title);
   const sel = document.getElementById('ar-up-states');
   if (sel) [...sel.options].forEach(o => { o.selected = (a.target_states || []).includes(o.value); });
+  await arTopicRefresh(a.topic);
   _arEditing = { id, audios: { ...(a.audios || {}) } };
   ['ar-upload-btn', 'ar-save-apply-btn'].forEach(b => { const el = document.getElementById(b); if (el) el.style.display = 'none'; });
   ['ar-edit-save-btn', 'ar-edit-cancel-btn'].forEach(b => { const el = document.getElementById(b); if (el) el.style.display = 'inline-flex'; });
@@ -6850,6 +7106,7 @@ function cancelArEdit() {
   ['ar-up-class', 'ar-up-subject', 'ar-up-language', 'ar-up-topic', 'ar-up-title'].forEach(i => { const el = document.getElementById(i); if (el) el.value = ''; });
   const sel = document.getElementById('ar-up-states'); if (sel) [...sel.options].forEach(o => { o.selected = false; });
   const st = document.getElementById('ar-upload-status'); if (st) st.innerHTML = '';
+  arTopicRefresh();
   arNarrRefresh({});
 }
 
@@ -7094,6 +7351,7 @@ async function submitArUpload() {
       refreshArAssetList();
       ['ar-up-class', 'ar-up-subject', 'ar-up-language'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
       ['ar-up-topic', 'ar-up-title', 'ar-up-image', 'ar-up-audio', 'ar-up-video'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      arTopicRefresh();
       arNarrRefresh();
       return asset; // hand the asset back so "Save & Apply" can link it
     } else {
@@ -7115,7 +7373,11 @@ async function refreshArAssetList() {
     const params = new URLSearchParams();
     if (cls) params.append('class_name', cls);
     if (subj) params.append('subject', subj);
-    const res = await fetch('/api/ar/assets?' + params, { headers: authHeaders() });
+    const [res, links] = await Promise.all([
+      fetch('/api/ar/assets?' + params, { headers: authHeaders() }),
+      fetch('/api/curriculum/asset-links-summary', { headers: authHeaders() }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+    ]);
+    window._arTreeLinks = links || {};
     if (res.ok) {
       const data = await res.json();
       renderArAssetsTable(data.data || data || []);
@@ -7161,7 +7423,7 @@ function renderArAssetsTable(assets) {
   tbody.innerHTML = rows.map(a => `
     <tr>
       <td><input type="checkbox" class="ar-row-check" value="${a.id}" onchange="_syncBulkButtons()"></td>
-      <td><strong>${escHtml(a.title||a.original_name||'Unnamed')}</strong><div style="font-size:10px;color:var(--text3)">${releaseSummary(a)}</div></td>
+      <td><strong>${escHtml(a.title||a.original_name||'Unnamed')}</strong><div style="font-size:10px;color:var(--text3)">${releaseSummary(a)}</div>${_arCoverageBadges(a)}</td>
       <td>${escHtml(a.class_name||'—')}</td>
       <td>${escHtml(a.subject||'—')}</td>
       <td>${escHtml(a.topic||'—')}</td>
@@ -7527,16 +7789,15 @@ async function saveAndApplyArAsset() {
 
   const asset = await submitArUpload(); // returns the uploaded asset on success
   if (asset && asset.id) {
-    try {
-      const token = localStorage.getItem('mitra_token') || '';
-      await fetch('/api/curriculum/ar-links', {
-        method: 'POST',
-        headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { 'Authorization': 'Bearer ' + token } : {}),
-        body: JSON.stringify({ curriculum_node_id: topic, asset_id: asset.id }),
-      });
-      showToast('✅ Uploaded and applied to curriculum: ' + topic);
-    } catch (_) {
-      showToast('Uploaded — but the curriculum link could not be saved');
+    // Link it to its topic in the Curriculum tree (tree links decide what the
+    // app shows). Target states: added to each state's tree; All India: every
+    // state whose tree already has this topic.
+    const d = await safeFetch('/api/curriculum/apply-asset', { method: 'POST', body: JSON.stringify({ asset_id: asset.id }) });
+    if (d) {
+      _currLoaded = false; // Curriculum page reloads the tree next time
+      showToast(d.linked && d.linked.length
+        ? `✅ Uploaded and linked under "${topic}" in: ${d.linked.join(', ')}`
+        : `✅ Uploaded — "${topic}" isn't in any state's tree yet; pick target state(s) or add the topic in Curriculum Map`);
     }
   }
 }
@@ -7563,8 +7824,17 @@ let _arAssetsModalCache = [];
 function openArLinkModal(nodeId, topicName) {
   _arLinkTargetNode = nodeId;
   _arLinkTargetName = topicName;
+  const ctx = _currTopicCtx(nodeId);
   const sub = document.getElementById('ar-link-modal-subtitle');
-  if (sub) sub.textContent = `Select an AR asset to link to: "${topicName}"`;
+  if (sub) sub.textContent = `Linking to: ${[ctx.stateName, ctx.cls, ctx.subject, topicName].filter(Boolean).join(' › ')}`;
+  // Auto-filter to the topic's class + subject (you can still widen it).
+  const subjSel = document.getElementById('ar-link-filter-subj');
+  if (subjSel && subjSel.options.length <= 9) { // keep in step with SUBJECTS_LIST
+    while (subjSel.options.length > 1) subjSel.remove(1);
+    SUBJECTS_LIST.forEach(x => subjSel.add(new Option(x, x)));
+  }
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  setVal('ar-link-search', ''); setVal('ar-link-filter-class', ctx.cls); setVal('ar-link-filter-subj', ctx.subject);
   openModal('modal-ar-asset-link');
   loadArAssetsForModal();
 }
@@ -7573,89 +7843,75 @@ async function loadArAssetsForModal() {
   const listEl = document.getElementById('ar-link-modal-list');
   if (!listEl) return;
   listEl.innerHTML = '<div style="text-align:center;color:var(--text2);padding:24px;font-size:13px">Loading AR assets…</div>';
-
   let assets = [];
-  const d = await safeFetch('/api/ar/assets?limit=200');
+  const d = await safeFetch('/api/ar/assets?limit=500');
   if (d) assets = (d.data || []).filter(a => a.status !== 'archived');
-
   _arAssetsModalCache = assets;
-  renderArLinkList(assets);
+  filterArLinkModal();
 }
 
-function renderArLinkList(assets) {
+// Same rule as the AR page's narration picker: the topic's Class + Subject,
+// same-topic assets starred and listed first, only assets allowed in this state.
+function filterArLinkModal() {
+  const ctx = _currTopicCtx(_arLinkTargetNode);
+  const search = (document.getElementById('ar-link-search')?.value || '').toLowerCase();
+  const cls    = document.getElementById('ar-link-filter-class')?.value || '';
+  const subj   = document.getElementById('ar-link-filter-subj')?.value || '';
+  let hiddenByState = 0;
+  const list = _arAssetsModalCache.filter(a => {
+    const text = ((a.title||'') + ' ' + (a.topic||'') + ' ' + (a.subject||'')).toLowerCase();
+    if (search && !text.includes(search)) return false;
+    if (cls && a.class_name !== cls) return false;
+    if (subj && a.subject !== subj) return false;
+    if (!_currStateAllows(a.target_states, ctx)) { hiddenByState++; return false; }
+    return true;
+  });
+  const topicKey = _currTopicKey(ctx.topic);
+  list.sort((a, b) => (_currTopicKey(b.topic) === topicKey) - (_currTopicKey(a.topic) === topicKey)
+    || String(a.title || '').localeCompare(String(b.title || '')));
+  renderArLinkList(list, hiddenByState);
+}
+
+function renderArLinkList(assets, hiddenByState) {
   const listEl = document.getElementById('ar-link-modal-list');
   if (!listEl) return;
+  const ctx = _currTopicCtx(_arLinkTargetNode);
+  const topicKey = _currTopicKey(ctx.topic);
+  const linked = new Set([...(document.getElementById(_arLinkTargetNode)?.querySelectorAll('[data-ar-id]') || [])].map(c => c.dataset.arId));
+  const note = hiddenByState ? `<div style="font-size:11px;color:var(--text3);padding:0 4px">${hiddenByState} asset(s) hidden — not targeted at ${escHtml(ctx.stateName)}.</div>` : '';
   if (!assets.length) {
-    listEl.innerHTML = '<div style="text-align:center;color:var(--text2);padding:24px;font-size:13px">No AR assets uploaded yet.<br>Go to the AR Assets page to upload Unity packages.</div>';
+    listEl.innerHTML = '<div style="text-align:center;color:var(--text2);padding:24px;font-size:13px">No AR assets match this Class + Subject.<br>Clear a filter above, or upload one on the AR Assets page.</div>' + note;
     return;
   }
   const iconMap = { unitypackage:'🎮', unity:'🎮', svg:'🔷', png:'🖼️', mp4:'🎬', glb:'🧊', fbx:'🧱', zip:'📦' };
   listEl.innerHTML = assets.map(a => {
     const ext = (a.file_format || a.filename?.split('.').pop() || 'pkg').toLowerCase();
     const icon = iconMap[ext] || '📦';
-    return `<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:.15s"
-      onmouseenter="this.style.borderColor='var(--accent)'"
-      onmouseleave="this.style.borderColor='var(--border)'"
-      onclick="linkArAssetToTopic('${a.id}','${escHtml(a.title||a.original_name||'Unnamed')}','${ext}')">
+    const same = topicKey && _currTopicKey(a.topic) === topicKey;
+    const isLinked = linked.has(a.id);
+    return `<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;${isLinked ? 'opacity:.55' : 'cursor:pointer'};transition:.15s"
+      ${isLinked ? '' : `onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'" onclick="linkArAssetToTopic('${a.id}')"`}>
       <span style="font-size:28px;flex-shrink:0">${icon}</span>
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(a.title||a.original_name||'Unnamed')}</div>
-        <div style="font-size:11px;color:var(--text2)">${escHtml(a.class_name||'—')} · ${escHtml(a.subject||'—')} · ${escHtml(a.topic||'—')} · .${ext}</div>
+        <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${same ? '★ ' : ''}${escHtml(a.title||a.original_name||'Unnamed')}</div>
+        <div style="font-size:11px;color:var(--text2)">${escHtml(a.class_name||'—')} · ${escHtml(a.subject||'—')} · ${escHtml(a.topic||'—')} · .${ext}${(a.target_states||[]).length ? ' · ' + escHtml(a.target_states.join(', ')) : ' · All India'}</div>
       </div>
-      <div style="flex-shrink:0">
-        <span class="tag tag-${a.status==='live'?'g':'b'}">${a.status||'uploaded'}</span>
-      </div>
-      <button class="btn btn-p btn-sm" style="flex-shrink:0">Link →</button>
+      <div style="flex-shrink:0"><span class="tag tag-${a.status==='published'?'g':'b'}">${escHtml(a.status||'uploaded')}</span></div>
+      ${isLinked ? '<span class="tag" style="flex-shrink:0">Linked ✓</span>' : '<button class="btn btn-p btn-sm" style="flex-shrink:0">Link →</button>'}
     </div>`;
-  }).join('');
+  }).join('') + note + (topicKey ? '<div style="font-size:11px;color:var(--text3);padding:0 4px">★ = same topic</div>' : '');
 }
 
-function filterArLinkModal() {
-  const search = (document.getElementById('ar-link-search')?.value || '').toLowerCase();
-  const cls    = document.getElementById('ar-link-filter-class')?.value || '';
-  const subj   = document.getElementById('ar-link-filter-subj')?.value || '';
-  const filtered = _arAssetsModalCache.filter(a => {
-    const text = ((a.title||'') + ' ' + (a.topic||'') + ' ' + (a.subject||'')).toLowerCase();
-    return (!search || text.includes(search))
-        && (!cls  || a.class_name === cls)
-        && (!subj || a.subject    === subj);
-  });
-  renderArLinkList(filtered);
-}
-
-function linkArAssetToTopic(assetId, assetTitle, ext) {
+function linkArAssetToTopic(assetId) {
   if (!_arLinkTargetNode) return;
-  const nodeDiv = document.getElementById(_arLinkTargetNode);
-  if (!nodeDiv) return;
-
-  // Add AR chip to the linked-chips-row
-  let chipsRow = nodeDiv.querySelector('.linked-chips-row');
-  if (!chipsRow) {
-    chipsRow = document.createElement('div');
-    chipsRow.className = 'linked-chips-row';
-    chipsRow.style.cssText = 'padding:4px 8px 2px 28px;display:flex;flex-wrap:wrap;gap:4px';
-    nodeDiv.appendChild(chipsRow);
-  }
-
-  // Prevent duplicate
-  if (chipsRow.querySelector(`[data-ar-id="${assetId}"]`)) {
-    showToast('AR asset already linked'); return;
-  }
-
-  const chip = document.createElement('span');
-  chip.className = 'quiz-link-chip';
-  chip.dataset.arId = assetId;
-  chip.style.cssText = 'background:rgba(99,102,241,.14);border-color:rgba(99,102,241,.3);color:#a5b4fc';
-  chip.innerHTML = `🎮 ${escHtml(assetTitle)}
-    <span style="opacity:.5;cursor:pointer;margin-left:4px;font-size:11px" 
-      onclick="this.parentElement.remove();updateArBadge('${_arLinkTargetNode}')" title="Remove">✕</span>`;
-  chipsRow.appendChild(chip);
+  const a = _arAssetsModalCache.find(x => x.id === assetId);
+  if (!a) return;
+  const title = a.title || a.original_name || 'Unnamed';
+  _currArChip(_arLinkTargetNode, assetId, title);
   updateArBadge(_arLinkTargetNode);
-
-  // Also record the link on the server (used by AR Assets "Apply to curriculum" and reports)
-  safeFetch('/api/curriculum/ar-links', { method: 'POST', body: JSON.stringify({ curriculum_node_id: _arLinkTargetName, asset_id: assetId }) });
+  currToggle(_arLinkTargetNode, true);
   closeModal('modal-ar-asset-link');
-  showToast(`🎮 "${assetTitle}" linked to "${_arLinkTargetName}" — 💾 Save curriculum to keep it on the map`);
+  showToast(`🎮 "${title}" linked to "${_arLinkTargetName}" — 💾 Save curriculum to apply it in the app`);
   refreshCurriculumSummary();
 }
 
@@ -7666,6 +7922,7 @@ function updateArBadge(nodeId) {
   const arCount = chipsRow ? [...chipsRow.querySelectorAll('[data-ar-id]')].length : 0;
   badge.style.display = arCount ? '' : 'none';
   badge.textContent   = `🎮 ${arCount}`;
+  _currRefreshAutoChips(nodeId);
   markCurrDirty();
   refreshCurriculumSummary();
 }

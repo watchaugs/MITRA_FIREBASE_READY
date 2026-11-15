@@ -154,7 +154,7 @@ async function _territorySupported(db, state) {
 // at the CDN/proxy. (Later: push the same JSON to R2 — format stays identical.)
 // Bump when the manifest shape changes: cached copies with an older version
 // are rebuilt on the next read instead of being served stale.
-const MANIFEST_VERSION = 2;
+const MANIFEST_VERSION = 3; // v3: tree links decide a topic's AR lessons; lessons carry quiz_ids
 async function buildStateManifest(db, stateCode, stateName) {
   const hDoc = await db.collection('curriculum_hierarchy').doc(stateCode).get();
   const structure = hDoc.exists ? (hDoc.data().structure || []) : [];
@@ -173,9 +173,24 @@ async function buildStateManifest(db, stateCode, stateName) {
       });
   } catch (_) {}
   const nrm = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  const lessonsFor = (cls, subj, topic) => assets
-    .filter(a => nrm(a.class_name) === nrm(cls) && nrm(a.subject) === nrm(subj) && nrm(a.topic) === nrm(topic))
-    .map(a => ({ id: a.id, title: a.title || a.topic || a.id,
+  const byId = new Map(assets.map(a => [a.id, a]));
+  // Assets the admin placed on a topic in the Curriculum tree. Tree links win:
+  // a placed asset shows only where it was linked, never again via its tags.
+  const placed = new Set();
+  structure.forEach(c => (c.subjects || []).forEach(sj => (sj.topics || []).forEach(t =>
+    (t.ar_assets || []).forEach(x => { if (x && x.id) placed.add(x.id); }))));
+  const tagMatched = (cls, subj, topic) => assets.filter(a => !placed.has(a.id) &&
+    nrm(a.class_name) === nrm(cls) && nrm(a.subject) === nrm(subj) && nrm(a.topic) === nrm(topic));
+  // A topic's lessons: its tree-linked assets (published + visible here) when it
+  // has any; otherwise the tag match. quiz_ids = quizzes linked to that topic.
+  const lessonsForTopic = (cls, subj, t) => {
+    const explicit = (t.ar_assets || []).map(x => x && x.id).filter(Boolean);
+    const list = explicit.length ? explicit.map(id => byId.get(id)).filter(Boolean) : tagMatched(cls, subj, t.topic);
+    const quizIds = (t.quizzes || []).map(q => q && q.id).filter(Boolean);
+    return list.map(a => toLesson(a, quizIds));
+  };
+  const lessonsFor = (cls, subj, topic) => tagMatched(cls, subj, topic).map(a => toLesson(a, []));
+  const toLesson = (a, quizIds) => ({ id: a.id, title: a.title || a.topic || a.id, quiz_ids: quizIds,
                  flutter_url: a.flutter_url || null, native_url: a.native_url || null,
                  audio_url: a.audio_url || null,
                  // Multi-language narration { lang: url } + AAC fallback — the
@@ -184,7 +199,7 @@ async function buildStateManifest(db, stateCode, stateName) {
                  audios: a.audios || {}, audios_aac: a.audios_aac || {},
                  mind_url: a.mind_url || null, video_url: a.video_url || null,
                  chroma_enabled: a.chroma_enabled === true, chroma_color: a.chroma_color || null,
-                 ar_mode: a.ar_mode || null }));
+                 ar_mode: a.ar_mode || null });
   // Build the class/subject/topic tree from the saved hierarchy when one exists.
   let classes = structure.map(c => ({
     class_name: c.class_name,
@@ -192,7 +207,7 @@ async function buildStateManifest(db, stateCode, stateName) {
       subject: sj.subject,
       topics: (sj.topics || []).map(t => ({
         topic: t.topic,
-        ar_lessons: lessonsFor(c.class_name, sj.subject, t.topic),
+        ar_lessons: lessonsForTopic(c.class_name, sj.subject, t),
       })),
     })),
   }));
@@ -209,6 +224,7 @@ async function buildStateManifest(db, stateCode, stateName) {
 
   const tree = {};
   for (const a of assets) {
+    if (placed.has(a.id)) continue; // already placed by a tree link
     const cls = (a.class_name || '').trim();
     const subj = (a.subject || '').trim();
     const top = (a.topic || '').trim();
@@ -439,11 +455,13 @@ router.get('/hierarchy', async (req, res) => {
                 _norm(a.subject)    === _norm(sj.subject) &&
                 _norm(a.topic)      === _norm(t.topic)
               ).map(a => ({ id: a.id, title: a.title || a.original_name || a.topic || a.id, status: a.status || 'uploaded' }));
-              // Keep any assets the saved structure already had; add matched ones without duplicates.
-              const existing = Array.isArray(t.ar_assets) ? t.ar_assets : [];
-              const seen = new Set(existing.map(x => x.id));
-              const ar_assets = existing.concat(matched.filter(m => !seen.has(m.id)));
-              return { ...t, ar_assets };
+              // ar_assets = what the admin linked (saved). ar_auto = tag matches
+              // NOT linked: shown in the app only while the topic has no links.
+              // (They used to be merged into ar_assets, so ✕ never stuck.)
+              const ar_assets = Array.isArray(t.ar_assets) ? t.ar_assets : [];
+              const seen = new Set(ar_assets.map(x => x && x.id));
+              const ar_auto = matched.filter(m => !seen.has(m.id));
+              return { ...t, ar_assets, ar_auto, auto_live: ar_assets.length === 0 };
             }),
           })),
         }));
@@ -463,6 +481,150 @@ router.get('/hierarchy/:stateCode', async (req, res) => {
     const doc = await db.collection('curriculum_hierarchy').doc(req.params.stateCode).get();
     res.json(doc.exists ? doc.data().structure : []);
   } catch { res.json([]); }
+});
+
+// ── Topic picker + tree helpers (AR upload form, Narration Studio) ──────────
+// Find (or create) class → subject → topic in a saved structure.
+function _ensureTopic(structure, cls, subj, topic, create) {
+  let c = structure.find(x => _norm(x.class_name) === _norm(cls));
+  if (!c) { if (!create) return null; c = { class_name: cls, subjects: [] }; structure.push(c); }
+  c.subjects = c.subjects || [];
+  let sj = c.subjects.find(x => _norm(x.subject) === _norm(subj));
+  if (!sj) { if (!create) return null; sj = { subject: subj, topics: [] }; c.subjects.push(sj); }
+  sj.topics = sj.topics || [];
+  let t = sj.topics.find(x => _norm(x.topic) === _norm(topic));
+  if (!t) { if (!create) return null; t = { topic: String(topic).trim(), ar_assets: [], quizzes: [] }; sj.topics.push(t); }
+  return t;
+}
+const _stateMatch = (h, wanted) => {
+  const mine = new Set([...stateAliases(h.state_name || ''), ...stateAliases(h.state_code || '')]);
+  return wanted.some(w => [...stateAliases(w)].some(a => mine.has(a)));
+};
+async function _saveHierarchyAndManifest(db, h, structure, userId) {
+  await db.collection('curriculum_hierarchy').doc(h.state_code).set(
+    { structure, updated_by: userId || null, updated_at: new Date() }, { merge: true });
+  try {
+    const manifest = await buildStateManifest(db, h.state_code, h.state_name || h.state_code);
+    await db.collection('curriculum_manifests').doc(h.state_code).set(manifest);
+  } catch (e) { log.error({ err: e.message }, 'manifest regen failed (non-fatal)'); }
+}
+const _canTouchCurriculum = (req, res, next) =>
+  (req.user && (req.user.perm_edit_curriculum || req.user.perm_upload_unity || req.user.role === 'master_admin'))
+    ? next() : res.status(403).json({ error: 'Forbidden' });
+
+// GET /topics?class_name=&subject=&states=GJ,Maharashtra
+// Topics of that class + subject from the saved Curriculum tree (only the given
+// states when passed). → { data: [{ topic, states: [names] }] }
+router.get('/topics', async (req, res) => {
+  try {
+    const cls = String(req.query.class_name || ''), subj = String(req.query.subject || '');
+    if (!cls || !subj) return res.json({ data: [] });
+    const wanted = String(req.query.states || '').split(',').map(s => s.trim()).filter(Boolean);
+    const db = getFirestore();
+    const snap = await db.collection('curriculum_hierarchy').get();
+    const byTopic = new Map();
+    snap.docs.forEach(d => {
+      const h = d.data() || {};
+      if (wanted.length && !_stateMatch(h, wanted)) return;
+      const stateName = h.state_name || h.state_code;
+      (h.structure || []).forEach(c => {
+        if (_norm(c.class_name) !== _norm(cls)) return;
+        (c.subjects || []).forEach(sj => {
+          if (_norm(sj.subject) !== _norm(subj)) return;
+          (sj.topics || []).forEach(t => {
+            const k = _norm(t.topic);
+            if (!k) return;
+            const e = byTopic.get(k) || { topic: String(t.topic).trim(), states: [] };
+            if (!e.states.includes(stateName)) e.states.push(stateName);
+            byTopic.set(k, e);
+          });
+        });
+      });
+    });
+    res.json({ data: [...byTopic.values()].sort((a, b) => a.topic.localeCompare(b.topic)) });
+  } catch (e) { res.status(500).json({ error: 'Failed to load topics', detail: e.message }); }
+});
+
+// POST /topics { states:[codes|names], class_name, subject, topic }
+// "+ New topic" from the upload form / Studio: adds it to each state's tree.
+router.post('/topics', _canTouchCurriculum, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const topic = String(b.topic || '').trim();
+    const states = Array.isArray(b.states) ? b.states.filter(Boolean) : [];
+    if (!b.class_name || !b.subject || !topic) return res.status(400).json({ error: 'class_name, subject and topic are required' });
+    if (!states.length) return res.status(400).json({ error: 'Pick at least one state — topics live in a state\'s curriculum tree' });
+    const db = getFirestore();
+    const snap = await db.collection('curriculum_hierarchy').get();
+    const added = [], skipped = [];
+    for (const want of states) {
+      let doc = snap.docs.find(d => _stateMatch(d.data() || {}, [want]));
+      let h = doc ? doc.data() : null;
+      if (!h) { // state has no tree yet → start one keyed by its code
+        const code = [...stateAliases(want)].find(a => a.length === 2) || String(want);
+        h = { state_code: code.toUpperCase(), state_name: want.length > 2 ? want : code.toUpperCase(), structure: [] };
+      }
+      if (!canAccessState(req, h.state_name || h.state_code) && !canAccessState(req, h.state_code)) { skipped.push(want); continue; }
+      const structure = Array.isArray(h.structure) ? h.structure : [];
+      _ensureTopic(structure, b.class_name, b.subject, topic, true);
+      if (!doc) await db.collection('curriculum_hierarchy').doc(h.state_code).set({ state_code: h.state_code, state_name: h.state_name }, { merge: true });
+      await _saveHierarchyAndManifest(db, h, structure, req.user && req.user.id);
+      added.push(h.state_name || h.state_code);
+    }
+    res.json({ message: 'Topic added', topic, added, skipped });
+  } catch (e) { res.status(500).json({ error: 'Failed to add topic', detail: e.message }); }
+});
+
+// POST /apply-asset { asset_id } — "Save & Apply to Curriculum": link the asset
+// to its tagged topic in the tree. State-targeted assets: each target state
+// (topic created if missing). National assets: every state whose tree already
+// has that class → subject → topic (nothing is created).
+router.post('/apply-asset', _canTouchCurriculum, async (req, res) => {
+  try {
+    const db = getFirestore();
+    const aDoc = await db.collection('ar_assets').doc(String((req.body || {}).asset_id || '')).get();
+    if (!aDoc.exists) return res.status(404).json({ error: 'AR asset not found' });
+    const a = { id: aDoc.id, ...aDoc.data() };
+    if (!a.class_name || !a.subject || !a.topic) return res.status(400).json({ error: 'Asset needs Class, Subject and Topic tags' });
+    const targets = Array.isArray(a.target_states) ? a.target_states.filter(Boolean) : [];
+    const snap = await db.collection('curriculum_hierarchy').get();
+    const linked = [];
+    for (const d of snap.docs) {
+      const h = d.data() || {};
+      if (targets.length && !_stateMatch(h, targets)) continue;
+      if (!canAccessState(req, h.state_name || h.state_code) && !canAccessState(req, h.state_code)) continue;
+      const structure = Array.isArray(h.structure) ? h.structure : [];
+      const t = _ensureTopic(structure, a.class_name, a.subject, a.topic, targets.length > 0);
+      if (!t) continue;
+      t.ar_assets = Array.isArray(t.ar_assets) ? t.ar_assets : [];
+      if (!t.ar_assets.some(x => x && x.id === a.id)) t.ar_assets.push({ id: a.id, title: a.title || a.topic || a.id });
+      await _saveHierarchyAndManifest(db, h, structure, req.user && req.user.id);
+      linked.push(h.state_name || h.state_code);
+    }
+    res.json({ message: linked.length ? 'Linked in the curriculum tree' : 'No matching topic in any state tree', linked });
+  } catch (e) { res.status(500).json({ error: 'Apply failed', detail: e.message }); }
+});
+
+// GET /asset-links-summary → { asset_id: { topics: n, states: [names] } }
+// (tree links per asset — the AR list's "🌳 linked" badge)
+router.get('/asset-links-summary', async (req, res) => {
+  try {
+    const db = getFirestore();
+    const snap = await db.collection('curriculum_hierarchy').get();
+    const out = {};
+    snap.docs.forEach(d => {
+      const h = d.data() || {};
+      (h.structure || []).forEach(c => (c.subjects || []).forEach(sj => (sj.topics || []).forEach(t =>
+        (t.ar_assets || []).forEach(x => {
+          if (!x || !x.id) return;
+          const e = out[x.id] || (out[x.id] = { topics: 0, states: [] });
+          e.topics++;
+          const sn = h.state_name || h.state_code;
+          if (!e.states.includes(sn)) e.states.push(sn);
+        }))));
+    });
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: 'Failed', detail: e.message }); }
 });
 
 // ── Export ──────────────────────────────────────────────────────────────────────
