@@ -496,6 +496,11 @@ async function loadComplianceSettings() {
   set('toggle-global-mfa', _isOn(s.mfa_required));
   const se = document.getElementById('summary-erasure'); if (se) se.textContent = _isOn(s.erasure) ? 'Enabled' : 'Disabled';
   const sw = document.getElementById('summary-withdrawal'); if (sw) sw.textContent = _isOn(s.withdrawal) ? 'Enabled' : 'Disabled';
+  // Legal page text fields (skip a stored boolean left by the old bug).
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null && typeof v !== 'boolean') el.value = v; };
+  setVal('set-privacy-url', s.privacy_policy_url);
+  setVal('set-retention-days', s.retention_days);
+  setVal('set-breach-contact', s.breach_contact);
 }
 
 // Toggles on the Compliance page (erasure, withdrawal, global MFA, CERT-In ticks)
@@ -503,13 +508,19 @@ async function updateComplianceSetting(settingKey, isEnabled, toggleEl) {
   const el = toggleEl || document.getElementById('toggle-' + settingKey);
   try {
     // Server route is PUT and merges the body (this used POST {key, value} and never saved)
-    await _api('/api/compliance/settings', { method: 'PUT', body: JSON.stringify({ [settingKey]: !!isEnabled }) });
-    _complianceSettings[settingKey] = !!isEnabled;
+    // Toggles pass booleans; the Legal page's privacy URL / retention days /
+    // breach contact fields pass text or numbers. Send the value as-is — the
+    // old `!!isEnabled` saved every one of those fields as `true`.
+    const value = isEnabled;
+    await _api('/api/compliance/settings', { method: 'PUT', body: JSON.stringify({ [settingKey]: value }) });
+    _complianceSettings[settingKey] = value;
     const names = { erasure: 'Right to Erasure', withdrawal: 'Consent Withdrawal', mfa_required: 'Sign-in code for all accounts' };
-    showToast(`✅ ${names[settingKey] || 'Setting'} ${isEnabled ? 'on' : 'off'}`);
+    showToast(typeof value === 'boolean'
+      ? `✅ ${names[settingKey] || 'Setting'} ${value ? 'on' : 'off'}`
+      : '✅ Saved');
     if (typeof refreshComplianceStatus === 'function') refreshComplianceStatus(true);
   } catch (e) {
-    if (el) el.checked = !isEnabled;
+    if (el && el.type === 'checkbox') el.checked = !isEnabled;
     showToast('❌ Could not save: ' + e.message);
   }
 }
