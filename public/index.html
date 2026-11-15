@@ -1340,7 +1340,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <button class="btn btn-g btn-sm" id="curr-save-btn" onclick="saveCurriculum()">💾 Save curriculum</button>
         <span id="curr-dirty" style="font-size:11px;color:var(--text3)">All changes saved</span>
         <span style="margin-left:16px;font-size:12px;color:var(--text2)">AR watch % to unlock quiz:</span>
-        <input class="inp" id="ar-watch-threshold" type="number" min="1" max="100" placeholder="80" style="width:70px" onblur="saveArWatchThreshold(this.value)">
+        <input class="inp" id="ar-watch-threshold" type="number" min="1" max="100" placeholder="85" style="width:70px" onblur="saveArWatchThreshold(this.value)">
       </div>
     </div>
 
@@ -7472,11 +7472,6 @@ async function publishArAsset(id) {
   const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}/publish`, { method: 'POST', body: '{}' });
   if (d) { showToast('✅ Published — students see it according to its 📅 Release setting'); refreshArAssetList(); }
 }
-async function arAlert({ title, message, steps }) {
-  const body = message + ((steps && steps.length) ? ('\n\n' + steps.map((x, i) => (i + 1) + '. ' + x).join('\n')) : '');
-  if (typeof arConfirm === 'function') { const m = document.getElementById('ar-confirm-msg'); if (m) m.style.whiteSpace = 'pre-line'; return arConfirm({ title, message: body, okLabel: 'Got it' }); }
-  alert(title + '\n\n' + body);
-}
 async function unpublishArAsset(id) {
   const a = (window._arAll || {})[id] || {};
   const ok = await arConfirm({ title: 'Unpublish (take down)', message: `Take "${a.title || a.original_name || id}" down from students? It becomes a draft you can then edit or delete.`, okLabel: 'Unpublish' });
@@ -7534,7 +7529,7 @@ async function saveArWatchThreshold(v) {
 async function loadArWatchThreshold() {
   const d = await safeFetch('/api/curriculum/learning-settings', { silent: true });
   const el = document.getElementById('ar-watch-threshold');
-  if (d && el) el.value = d.ar_watch_threshold || 80;
+  if (d && el) el.value = d.ar_watch_threshold || 85;
 }
 
 // Type-to-confirm delete (no undo window, immediate backend delete).

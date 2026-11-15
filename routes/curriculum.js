@@ -370,9 +370,9 @@ router.get('/learning-settings', async (req, res) => {
     const doc = await db.collection('curriculum_settings').doc('rules').get();
     const d = doc.exists ? doc.data() : {};
     const n = Number(d.ar_watch_threshold);
-    res.json({ ar_watch_threshold: (n >= 1 && n <= 100) ? n : 80 });
+    res.json({ ar_watch_threshold: (n >= 1 && n <= 100) ? n : 85 });
   } catch (_) {
-    res.json({ ar_watch_threshold: 80 });
+    res.json({ ar_watch_threshold: 85 });
   }
 });
 

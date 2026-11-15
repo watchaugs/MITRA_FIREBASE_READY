@@ -161,6 +161,12 @@ router.post('/refresh', requirePerm('perm_view_analytics'), async (req, res) => 
         GROUP BY state ORDER BY users DESC`),
     ]);
 
+    // Funnel + data freshness also come from BigQuery (they used to read
+    // Firestore live, which needs an index that isn't deployed). Each runs on
+    // its own, so a failure here never blocks the main refresh.
+    const funnel = await buildFunnelFromBQ().catch(e => ({ ...EMPTY_FUNNEL, error: String(e.message || e) }));
+    const freshness = await buildFreshnessFromBQ().catch(() => null);
+
     const ov  = overviewRows[0]  || {};
     const rk  = replayKpiRows[0] || {};
     const totalReplays = rk.total_replays || 0;
@@ -189,6 +195,8 @@ router.post('/refresh', requirePerm('perm_view_analytics'), async (req, res) => 
       classroom,
       predictive,
       telemetry_summary: { success: true, data: summary },
+      funnel,
+      freshness,
       refreshed_at: new Date().toISOString(),
     };
 
@@ -327,7 +335,16 @@ router.post('/sync-telemetry', requirePerm('perm_view_analytics'), async (req, r
 // (collectionGroup over telemetry_sync/*/{collection}/*, each doc holding a
 // batched_events[] array). No BigQuery, no manual Sync/Refresh — charts show
 // data as soon as the app has flushed any. Bounded reads keep it cheap.
+// Analytics charts read the snapshot saved by 🔄 Refresh / ⬇️ Sync (BigQuery
+// aggregates): one Firestore read per view, no extra index needed.
 router.get('/snapshot', requirePerm('perm_view_analytics'), async (req, res) => {
+  const snap = await readSnapshot();
+  res.json(snap || { ...EMPTY, empty: true });
+});
+
+// Old live-Firestore version. It needs a batch_flushed_at collection-group
+// index that isn't deployed, so it always came back empty. Nothing calls it.
+router.get('/snapshot-live', requirePerm('perm_view_analytics'), async (req, res) => {
   try {
     const db = require('../lib/firebase').getFirestore();
 
@@ -518,7 +535,49 @@ async function latestFlushFor(db, collection) {
   }
 }
 
+// Newest event per collection in the warehouse, saved by 🔄 Refresh / ⬇️ Sync.
+async function buildFreshnessFromBQ() {
+  const rows = await runQuery(`
+    SELECT event_collection,
+           FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', MAX(SAFE_CAST(timestamp AS TIMESTAMP))) AS last_event
+    FROM ${FQ_TABLE}
+    GROUP BY event_collection`);
+  const out = {};
+  rows.forEach(r => { if (r.event_collection) out[r.event_collection] = r.last_event || null; });
+  return out;
+}
+
 router.get('/data-freshness', requirePerm('perm_view_analytics'), async (req, res) => {
+  const snap = await readSnapshot();
+  const byCollection = (snap && snap.freshness) || {};
+  const pick = (cols) => cols.reduce((o, c) => (o[c] = byCollection[c] || null, o), {});
+  const maxOf = (cols) => {
+    const times = cols.map((c) => Date.parse(byCollection[c] || '')).filter((n) => !Number.isNaN(n));
+    return times.length ? new Date(Math.max(...times)).toISOString() : null;
+  };
+  res.json({
+    ok: true,
+    source: 'warehouse',
+    refreshed_at: (snap && snap.refreshed_at) || null,
+    tiers: {
+      critical: {
+        label: 'Compliance & sessions',
+        expected_max_lag_hours: 12,
+        last_synced: maxOf(_CRITICAL_COLLECTIONS),
+        collections: pick(_CRITICAL_COLLECTIONS),
+      },
+      engagement: {
+        label: 'Engagement (AR, screens, quizzes)',
+        expected_max_lag_days: 10,
+        last_synced: maxOf(_BULK_COLLECTIONS),
+        collections: pick(_BULK_COLLECTIONS),
+      },
+    },
+  });
+});
+
+// Old live-Firestore version (same missing index). Nothing calls it.
+router.get('/data-freshness-live', requirePerm('perm_view_analytics'), async (req, res) => {
   try {
     const db = require('../lib/firebase').getFirestore();
     const all = [..._CRITICAL_COLLECTIONS, ..._BULK_COLLECTIONS];
@@ -728,7 +787,71 @@ router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
 });
 
 // ── Learning funnel + content-health (live, bounded reads) ───────────────────
+// ── Learning funnel, built in BigQuery during 🔄 Refresh / ⬇️ Sync ─────────
+// Same rules as the old live version: module = ar_id (or topic_id); a student
+// "watched" when an ar_end has completed=true; a quiz attempt is matched by
+// ar_id / topic_id / quiz_id; "mastered" = 100% or passed.
+const EMPTY_FUNNEL = { totals: { started: 0, watched: 0, attempted: 0, mastered: 0 }, modules: [], generated_at: null };
+
+async function buildFunnelFromBQ() {
+  const [arRows, quizRows] = await Promise.all([
+    runQuery(`
+      SELECT COALESCE(ar_module_id, topic_id) AS ar_id,
+             MAX(module_title) AS title,
+             COUNT(DISTINCT IF(event_type IN ('ar_start', 'ar_end'), COALESCE(student_id, 'anon'), NULL)) AS started,
+             COUNT(DISTINCT IF(event_type = 'ar_end' AND completed = TRUE, COALESCE(student_id, 'anon'), NULL)) AS watched,
+             CAST(ROUND(AVG(IF(event_type = 'ar_end', duration_seconds, NULL))) AS INT64) AS avg_watch_seconds
+      FROM ${FQ_TABLE}
+      WHERE event_collection = 'ar_views' AND COALESCE(ar_module_id, topic_id) IS NOT NULL
+      GROUP BY ar_id`),
+    runQuery(`
+      SELECT id AS ar_id,
+             COUNT(DISTINCT sid) AS attempted,
+             COUNT(DISTINCT IF(pct IS NOT NULL AND (pct >= 100 OR passed = TRUE), sid, NULL)) AS mastered,
+             CAST(ROUND(AVG(pct)) AS INT64) AS avg_score
+      FROM (
+        SELECT COALESCE(ar_module_id, topic_id, quiz_id) AS id,
+               COALESCE(student_id, 'anon') AS sid, passed,
+               COALESCE(score_pct * 100, SAFE_DIVIDE(correct_answers, total_questions) * 100) AS pct
+        FROM ${FQ_TABLE}
+        WHERE event_collection = 'quiz_attempts')
+      WHERE id IS NOT NULL
+      GROUP BY id`),
+  ]);
+  const n = (v) => Number(v) || 0;
+  const quiz = {};
+  quizRows.forEach(q => { quiz[q.ar_id] = q; });
+  const modules = arRows.map(m => {
+    const q = quiz[m.ar_id] || {};
+    const started = n(m.started), watched = n(m.watched);
+    const attempted = n(q.attempted), mastered = n(q.mastered);
+    const watchRate = started ? Math.round((watched / started) * 100) : 0;
+    const masteryRate = attempted ? Math.round((mastered / attempted) * 100) : 0;
+    let health = 'ok';
+    if (started >= 5 && watchRate < 50) health = 'low_engagement';
+    else if (attempted >= 5 && masteryRate < 30) health = 'too_hard';
+    else if (attempted >= 5 && masteryRate > 95) health = 'too_easy';
+    return {
+      ar_id: m.ar_id, title: m.title || m.ar_id,
+      started, watched, attempted, mastered,
+      watch_rate: watchRate, mastery_rate: masteryRate,
+      avg_watch_seconds: n(m.avg_watch_seconds), avg_score: n(q.avg_score), health,
+    };
+  }).sort((a, b) => b.started - a.started);
+  const totals = modules.reduce((t, m) => {
+    t.started += m.started; t.watched += m.watched;
+    t.attempted += m.attempted; t.mastered += m.mastered; return t;
+  }, { started: 0, watched: 0, attempted: 0, mastered: 0 });
+  return { totals, modules, generated_at: new Date().toISOString() };
+}
+
 router.get('/funnel', requirePerm('perm_view_analytics'), async (req, res) => {
+  const snap = await readSnapshot();
+  res.json((snap && snap.funnel) || EMPTY_FUNNEL);
+});
+
+// Old live-Firestore version (same missing index). Nothing calls it.
+router.get('/funnel-live', requirePerm('perm_view_analytics'), async (req, res) => {
   try {
     const db = require('../lib/firebase').getFirestore();
 

@@ -766,8 +766,7 @@ router.post('/assets/:id/narration', requirePerm('perm_upload_unity'), async (re
     const text = (texts[lang] || singleText || '').trim();
     if (!text) { failed.push({ lang, error: 'no text' }); continue; }
     try {
-      const voices = await bhashini.ttsVoices(lang);
-      // If the config lists voices and none exist for this lang → manual fallback.
+      // No usable voice makes tts() throw → caught below as needs_manual.
       const { audio } = await bhashini.tts(text, lang, { gender });
       let opus, aac;
       try { ({ opus, aac } = await transcodeNarration(audio)); }
