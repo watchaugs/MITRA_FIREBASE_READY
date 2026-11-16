@@ -154,7 +154,8 @@ async function _territorySupported(db, state) {
 // at the CDN/proxy. (Later: push the same JSON to R2 — format stays identical.)
 // Bump when the manifest shape changes: cached copies with an older version
 // are rebuilt on the next read instead of being served stale.
-const MANIFEST_VERSION = 4; // v4: lessons carry target_image_url (native ARCore page scan)
+const MANIFEST_VERSION = 5; // v5: lessons carry the page-video settings (region, sound, view)
+                            // v4: lessons carry target_image_url (native ARCore page scan)
                             // v3: tree links decide a topic's AR lessons; lessons carry quiz_ids
 async function buildStateManifest(db, stateCode, stateName) {
   const hDoc = await db.collection('curriculum_hierarchy').doc(stateCode).get();
@@ -201,6 +202,10 @@ async function buildStateManifest(db, stateCode, stateName) {
                  mind_url: a.mind_url || null, video_url: a.video_url || null,
                  // The page image itself: phones with ARCore track it natively.
                  target_image_url: a.target_image_url || null,
+                 // Page video: box on the page (0–1, from top-left), whose sound
+                 // plays ('video' | 'narration'), and which view opens first.
+                 video_region: a.video_region || null, video_sound: a.video_sound || null,
+                 video_default_view: a.video_default_view || null,
                  chroma_enabled: a.chroma_enabled === true, chroma_color: a.chroma_color || null,
                  ar_mode: a.ar_mode || null });
   // Build the class/subject/topic tree from the saved hierarchy when one exists.
@@ -308,12 +313,16 @@ router.get('/ar-topics', async (req, res) => {
       status:     r.status     || 'live',
       unity_url:  r.unity_url  || null,
       flutter_url:r.flutter_url|| null,
+      native_url:       r.native_url       || null,
       mind_url:         r.mind_url         || null,
       audio_url:        r.audio_url        || null,
       audios:           r.audios           || {},
       audios_aac:       r.audios_aac       || {},
       target_image_url: r.target_image_url || null,
       video_url:        r.video_url        || null,
+      video_region:     r.video_region     || null,
+      video_sound:      r.video_sound      || null,
+      video_default_view: r.video_default_view || null,
       chroma_enabled:   r.chroma_enabled   === true,
       chroma_color:     r.chroma_color     || null,
       ar_mode:          r.ar_mode          || null,

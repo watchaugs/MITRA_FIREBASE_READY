@@ -2264,7 +2264,7 @@ document.addEventListener('DOMContentLoaded', () => {
         onchange="handleArFileSelect(event)">
       <div class="uz-icon">🧊</div>
       <div class="uz-title">Click or Drag a 3D Model Here</div>
-      <div class="uz-sub">Keep models lean — ideally under ~5 MB. FBX/OBJ are auto-converted to GLB in your browser.</div>
+      <div class="uz-sub">Keep models lean — ideally under ~5 MB. FBX/OBJ are auto-converted to GLB in your browser. Optional when you add a page video below.</div>
       <div class="uz-formats" style="flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px">
         <span class="tag tag-g">.glb / .gltf</span>
         <span class="tag tag-b">.fbx</span>
@@ -2303,14 +2303,61 @@ document.addEventListener('DOMContentLoaded', () => {
           <button class="btn btn-s btn-sm" onclick="arNarrUpload()">⬆ Add to library</button>
         </div>
       </div>
-      <div>
-        <label class="lbl">AR Video <span style="color:var(--text2);font-weight:400">(optional — plays on a plane in AR, .mp4/.webm)</span></label>
-        <input class="inp" type="file" id="ar-up-video" accept="video/*">
-        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:var(--text2)">
-          <input type="checkbox" id="ar-up-chroma" style="width:auto">
-          Green-screen video (remove background)
-          <input class="inp" type="color" id="ar-up-chroma-color" value="#00ff00" style="width:44px;height:28px;padding:2px;margin-left:4px" title="Key colour to remove">
-        </label>
+    </div>
+
+    <!-- 🎬 Page video — plays ON the scanned textbook page, inside the box drawn here -->
+    <div id="ar-video-block" style="margin-bottom:12px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg2)">
+      <label class="lbl">🎬 Page video <span style="color:var(--text2);font-weight:400">(optional — when the student scans the page, this video plays over the diagram and moves with the book · MP4 / MOV / WebM · up to 5 min · needs the Textbook Page Image)</span></label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input class="inp" type="file" id="ar-up-video" accept=".mp4,.m4v,.mov,.webm,video/mp4,video/quicktime,video/webm" onchange="handleArVideoSelect(event)" style="max-width:340px">
+        <span id="ar-video-current" style="font-size:12px;color:var(--text2)"></span>
+        <button class="btn btn-r btn-sm" id="ar-video-remove-btn" style="display:none" onclick="removeArVideo()">🗑 Remove video</button>
+      </div>
+      <div id="ar-video-opts" style="display:none;margin-top:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px">
+          <label style="display:flex;align-items:center;gap:8px;color:var(--text2)">
+            <input type="checkbox" id="ar-up-video-720" style="width:auto">
+            <span>Sharper (720p) — only for videos with small text. Default 480p uses less of students' data. <em id="ar-video-720-note" style="display:none">(applies to a newly chosen video)</em></span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;color:var(--text2)">
+            <input type="checkbox" id="ar-up-chroma" style="width:auto">
+            Green-screen video (remove background)
+            <input class="inp" type="color" id="ar-up-chroma-color" value="#00ff00" style="width:44px;height:28px;padding:2px;margin-left:4px" title="Key colour to remove">
+          </label>
+          <div>
+            <label class="lbl">Sound</label>
+            <select class="sel" id="ar-up-video-sound">
+              <option value="video">Video's own sound (watching it unlocks the quiz)</option>
+              <option value="narration">Mute the video — play the narration instead</option>
+            </select>
+          </div>
+          <div id="ar-video-view-wrap">
+            <label class="lbl">Opens with</label>
+            <select class="sel" id="ar-up-video-view">
+              <option value="3d">3D model first (student can switch to video)</option>
+              <option value="video">Video first (student can switch to 3D)</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <label class="lbl">Where the video plays on the page</label>
+          <div id="ar-vregion-empty" style="font-size:12px;color:var(--text2)"><em>Choose the Textbook Page Image above to place the video.</em></div>
+          <div id="ar-vregion-wrap" style="display:none">
+            <div id="ar-vregion-stage" style="position:relative;display:inline-block;max-width:100%;user-select:none;touch-action:none;cursor:crosshair;line-height:0;border:1px solid var(--border)">
+              <img id="ar-vregion-img" alt="Textbook page" draggable="false" style="max-width:100%;max-height:420px;display:block">
+              <div id="ar-vregion-box" style="position:absolute;border:2px solid #ff9933;background:rgba(0,0,0,.45);box-sizing:border-box;cursor:move">
+                <span style="position:absolute;left:4px;top:4px;font-size:11px;line-height:1.2;color:#fff;pointer-events:none">🎬 video</span>
+                <span id="ar-vregion-handle" style="position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;background:#ff9933;border-radius:3px;cursor:nwse-resize"></span>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:12px;color:var(--text2)">
+              <span>Drag on the page to draw the box over the diagram. Drag the box to move it; drag its corner to resize.</span>
+              <button class="btn btn-s btn-sm" type="button" onclick="_vrSet({x:0,y:0,w:1,h:1})">Whole page</button>
+              <span id="ar-vregion-readout"></span>
+            </div>
+          </div>
+          <input type="hidden" id="ar-up-vregion">
+        </div>
       </div>
     </div>
 
@@ -7139,11 +7186,16 @@ function _arCoverageBadges(a) {
   const tree = tl
     ? `<span class="tag tag-g" title="Linked in: ${escHtml(tl.states.join(', '))}">🌳 ${tl.topics} topic${tl.topics === 1 ? '' : 's'}</span>`
     : '<span class="tag tag-y" title="Not linked in the Curriculum tree — shown only where its tags match a topic that has no links">🌳 tags only</span>';
-  return `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${nar}${tree}</div>`;
+  const kinds = [
+    (a.flutter_url || a.native_url) ? '<span class="tag tag-b" title="Has a 3D model">🎮 3D</span>' : '',
+    a.video_url ? `<span class="tag tag-b" title="Plays on the scanned page${a.video_sound === 'narration' ? ' (muted — narration plays)' : ''}">🎬 Video ${escHtml(a.video_quality || '')}${a.video_quality ? 'p' : ''}${a.video_mb ? ' · ' + escHtml(String(a.video_mb)) + ' MB' : ''}</span>` : '',
+    a.mind_url ? '<span class="tag tag-b" title="Textbook page can be scanned">📄 Page scan</span>' : '',
+  ].join('');
+  return `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${kinds}${nar}${tree}</div>`;
 }
 
 // ── Edit an existing asset in the Upload form (tags + narration) ────────────
-async function editArAsset(id) {
+async function editArAsset(id, focus) {
   const a = (window._arAll || {})[id];
   if (!a) return showToast('Asset not found — refresh the list');
   switchArSubTab('models');
@@ -7153,14 +7205,28 @@ async function editArAsset(id) {
   const sel = document.getElementById('ar-up-states');
   if (sel) [...sel.options].forEach(o => { o.selected = (a.target_states || []).includes(o.value); });
   await arTopicRefresh(a.topic);
-  _arEditing = { id, audios: { ...(a.audios || {}) } };
+  _arEditing = { id, audios: { ...(a.audios || {}) }, hasVideo: !!a.video_url, hasPage: !!a.mind_url,
+    hasModel: !!(a.flutter_url || a.native_url), pageUrl: a.target_image_url || '' };
+  // Page video settings (and a new video can be chosen here to add/replace it).
+  _arVideoReset();
+  document.getElementById('ar-up-video-sound').value = a.video_sound || 'video';
+  document.getElementById('ar-up-video-view').value = a.video_default_view || '3d';
+  document.getElementById('ar-video-view-wrap').style.display = _arEditing.hasModel ? '' : 'none';
+  if (a.video_region) document.getElementById('ar-up-vregion').value = JSON.stringify(a.video_region);
+  _vrSetImage(a.target_image_url || '');
+  document.getElementById('ar-video-current').textContent = a.video_url
+    ? `Current: ${a.video_quality || '480'}p · ${a.video_mb ? a.video_mb + ' MB' : ''}${a.video_duration ? ' · ' + Math.round(a.video_duration) + ' s' : ''} — choose a file to replace it`
+    : (a.mind_url ? 'No video yet — choose a file to add one' : 'Add a page video by uploading this lesson again with its Textbook Page Image');
+  document.getElementById('ar-video-remove-btn').style.display = (a.video_url && _arEditing.hasModel) ? 'inline-flex' : 'none';
+  document.getElementById('ar-video-720-note').style.display = a.video_url ? '' : 'none';
+  _arVideoOptsVisible(!!a.video_url);
   ['ar-upload-btn', 'ar-save-apply-btn'].forEach(b => { const el = document.getElementById(b); if (el) el.style.display = 'none'; });
   ['ar-edit-save-btn', 'ar-edit-cancel-btn'].forEach(b => { const el = document.getElementById(b); if (el) el.style.display = 'inline-flex'; });
   document.getElementById('ar-upload-status').innerHTML =
-    `<span style="color:var(--accent4)">✏ Editing <strong>${escHtml(a.title || a.original_name || id)}</strong> — change tags or narration, then Save. To replace the 3D file use 🔁 Model on its row.</span>`;
+    `<span style="color:var(--accent4)">✏ Editing <strong>${escHtml(a.title || a.original_name || id)}</strong> — change tags, narration or the page video, then Save. To replace the 3D file use 🔁 Model on its row.</span>`;
   document.querySelectorAll('.ar-narr-pick').forEach(s => s.remove()); // fresh picker state
   arNarrRefresh();
-  document.getElementById('ar-upload-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById(focus === 'video' ? 'ar-video-block' : 'ar-upload-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 async function saveArEdit() {
   if (!_arEditing) return;
@@ -7175,16 +7241,44 @@ async function saveArEdit() {
   };
   if (!body.class_name || !body.subject || !body.topic) return showToast('Class, Subject and AR Topic are required');
   if (!body.title) body.title = body.topic;
+  const newVideo = _arVideoFile();
+  if (newVideo && !_arEditing.hasPage) return showToast('⚠ This asset has no Textbook Page Image, so a page video has nowhere to play');
+  const vs = _arVideoSettings();
+  if (_arEditing.hasVideo && !newVideo) {
+    if (vs.video_region) body.video_region = vs.video_region;
+    body.video_sound = vs.video_sound;
+    if (_arEditing.hasModel) body.video_default_view = vs.video_default_view;
+  }
   const ok = await safeFetch('/api/ar/assets/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(body) });
   if (!ok) return;
+  let vidMsg = '';
+  if (newVideo) {
+    const btn = document.getElementById('ar-edit-save-btn'); if (btn) btn.disabled = true;
+    try {
+      const quality = document.getElementById('ar-up-video-720')?.checked ? '720' : '480';
+      const job = await _arVideoUpload(newVideo, quality, _arProgress);
+      const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}/video`, { method: 'POST',
+        body: JSON.stringify({ video_job: job, ...(vs.video_region ? { video_region: vs.video_region } : {}),
+          video_sound: vs.video_sound, ...(_arEditing.hasModel ? { video_default_view: vs.video_default_view } : {}) }) });
+      if (!d) return;
+      vidMsg = ` · 🎬 video saved (${d.video_mb} MB)`;
+    } catch (e) {
+      showToastError('Video: ' + (e.message || e));
+      return;
+    } finally {
+      if (btn) btn.disabled = false;
+      setTimeout(() => { document.getElementById('ar-uprogress').style.display = 'none'; }, 1500);
+    }
+  }
   const { linked, removed } = await _arLinkNarration(id, _arNarrPicks(), _arEditing.audios);
-  showToast(`✅ Saved${linked ? ' · ' + linked + ' narration linked' : ''}${removed ? ' · ' + removed + ' removed' : ''}`);
+  showToast(`✅ Saved${vidMsg}${linked ? ' · ' + linked + ' narration linked' : ''}${removed ? ' · ' + removed + ' removed' : ''}`);
   cancelArEdit();
   refreshArAssetList();
 }
 function cancelArEdit() {
   _arEditing = null;
   ['ar-edit-save-btn', 'ar-edit-cancel-btn'].forEach(b => { const el = document.getElementById(b); if (el) el.style.display = 'none'; });
+  _arVideoReset();
   if (arUploadFile) {
     ['ar-upload-btn', 'ar-save-apply-btn'].forEach(b => { const el = document.getElementById(b); if (el) el.style.display = 'inline-flex'; });
   }
@@ -7257,6 +7351,177 @@ async function checkBhashiniHealth() {
 
 function handleArExtraSelect(kind, ev) {
   if (kind === 'image' && ev.target.files[0]) ensureArEngines().catch(() => {});
+  if (kind === 'image') _vrSetImage(ev.target.files[0] ? URL.createObjectURL(ev.target.files[0]) : (_arEditing && _arEditing.pageUrl) || '');
+}
+
+// ── 🎬 Page video ────────────────────────────────────────────────────────────
+// A video chosen here plays on the scanned page, inside the box drawn on the
+// page image. One video per asset; the 3D model becomes optional.
+function _arVideoFile() { return document.getElementById('ar-up-video')?.files?.[0] || null; }
+function _arVideoSettings() {
+  return {
+    video_region: (() => { try { return JSON.parse(document.getElementById('ar-up-vregion').value || 'null'); } catch { return null; } })(),
+    video_sound: document.getElementById('ar-up-video-sound')?.value || 'video',
+    video_default_view: document.getElementById('ar-up-video-view')?.value || '3d',
+  };
+}
+function _arVideoOptsVisible(on) {
+  const o = document.getElementById('ar-video-opts'); if (o) o.style.display = on ? 'block' : 'none';
+}
+function handleArVideoSelect(ev) {
+  const f = ev.target.files[0];
+  _arVideoOptsVisible(!!f || !!(_arEditing && _arEditing.hasVideo));
+  if (!f) return;
+  const mb = f.size / 1048576;
+  document.getElementById('ar-video-current').textContent = `✓ ${f.name} · ${mb.toFixed(1)} MB → converted on upload`;
+  const n = document.getElementById('ar-video-720-note'); if (n) n.style.display = 'none';
+  if (!_arEditing) {
+    // A video alone is enough to upload (the 3D model is optional).
+    document.getElementById('ar-upload-btn').style.display = 'inline-flex';
+    const sab = document.getElementById('ar-save-apply-btn'); if (sab) sab.style.display = 'inline-flex';
+  }
+  if (!document.getElementById('ar-up-vregion').value) _vrSet({ x: 0, y: 0, w: 1, h: 1 });
+}
+function _arVideoReset() {
+  const v = document.getElementById('ar-up-video'); if (v) v.value = '';
+  document.getElementById('ar-video-current').textContent = '';
+  document.getElementById('ar-video-remove-btn').style.display = 'none';
+  document.getElementById('ar-up-video-720').checked = false;
+  document.getElementById('ar-up-video-sound').value = 'video';
+  document.getElementById('ar-up-video-view').value = '3d';
+  document.getElementById('ar-video-view-wrap').style.display = '';
+  document.getElementById('ar-video-720-note').style.display = 'none';
+  document.getElementById('ar-up-vregion').value = '';
+  _vrSetImage('');
+  _arVideoOptsVisible(false);
+}
+
+// Region editor: box in 0–1 page units from the top-left (x, y, w, h).
+let _vrDrag = null;
+function _vrSetImage(src) {
+  const img = document.getElementById('ar-vregion-img');
+  const wrap = document.getElementById('ar-vregion-wrap');
+  const empty = document.getElementById('ar-vregion-empty');
+  if (!img) return;
+  if (!src) { img.removeAttribute('src'); wrap.style.display = 'none'; empty.style.display = ''; return; }
+  img.onload = () => { _vrDraw(); };
+  img.src = src;
+  wrap.style.display = ''; empty.style.display = 'none';
+}
+function _vrGet() {
+  try { const r = JSON.parse(document.getElementById('ar-up-vregion').value || 'null'); if (r) return r; } catch {}
+  return { x: 0, y: 0, w: 1, h: 1 };
+}
+function _vrSet(r) {
+  const c = (n) => Math.min(1, Math.max(0, Number(n) || 0));
+  let x = c(r.x), y = c(r.y), w = c(r.w), h = c(r.h);
+  w = Math.max(0.05, Math.min(w, 1 - x)); h = Math.max(0.05, Math.min(h, 1 - y));
+  if (x + w > 1) x = 1 - w; if (y + h > 1) y = 1 - h;
+  const r4 = (n) => Math.round(n * 10000) / 10000;
+  const out = { x: r4(x), y: r4(y), w: r4(w), h: r4(h) };
+  const img = document.getElementById('ar-vregion-img');
+  if (img && img.naturalWidth) out.page_aspect = r4(img.naturalHeight / img.naturalWidth);
+  document.getElementById('ar-up-vregion').value = JSON.stringify(out);
+  _vrDraw();
+}
+function _vrDraw() {
+  const box = document.getElementById('ar-vregion-box');
+  if (!box) return;
+  const r = _vrGet();
+  box.style.left = (r.x * 100) + '%'; box.style.top = (r.y * 100) + '%';
+  box.style.width = (r.w * 100) + '%'; box.style.height = (r.h * 100) + '%';
+  const ro = document.getElementById('ar-vregion-readout');
+  if (ro) ro.textContent = `Box: ${Math.round(r.w * 100)}% × ${Math.round(r.h * 100)}% of the page`;
+}
+function _vrPoint(ev) {
+  const st = document.getElementById('ar-vregion-stage').getBoundingClientRect();
+  return { x: Math.min(1, Math.max(0, (ev.clientX - st.left) / (st.width || 1))),
+           y: Math.min(1, Math.max(0, (ev.clientY - st.top) / (st.height || 1))) };
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const stage = document.getElementById('ar-vregion-stage');
+  if (!stage) return;
+  stage.addEventListener('pointerdown', (ev) => {
+    const p = _vrPoint(ev), r = _vrGet();
+    const mode = ev.target.id === 'ar-vregion-handle' ? 'resize'
+      : (ev.target.closest && ev.target.closest('#ar-vregion-box')) ? 'move' : 'draw';
+    _vrDrag = { mode, p0: p, r0: r };
+    try { stage.setPointerCapture(ev.pointerId); } catch {}
+    ev.preventDefault();
+  });
+  stage.addEventListener('pointermove', (ev) => {
+    if (!_vrDrag) return;
+    const p = _vrPoint(ev), { mode, p0, r0 } = _vrDrag;
+    const dx = p.x - p0.x, dy = p.y - p0.y;
+    if (mode === 'move') _vrSet({ x: Math.min(1 - r0.w, Math.max(0, r0.x + dx)), y: Math.min(1 - r0.h, Math.max(0, r0.y + dy)), w: r0.w, h: r0.h });
+    else if (mode === 'resize') _vrSet({ x: r0.x, y: r0.y, w: r0.w + dx, h: r0.h + dy });
+    else if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) _vrSet({ x: Math.min(p.x, p0.x), y: Math.min(p.y, p0.y), w: Math.abs(dx), h: Math.abs(dy) });
+  });
+  const end = () => { _vrDrag = null; };
+  stage.addEventListener('pointerup', end);
+  stage.addEventListener('pointercancel', end);
+});
+
+// Upload + convert a video. The file goes straight to storage (signed link),
+// then the API converts it in 20-second pieces — each request stays far below
+// Firebase Hosting's 60 s limit. onProgress(pct 0–100, label). Returns job_id.
+async function _arVideoUpload(file, quality, onProgress) {
+  const prog = onProgress || (() => {});
+  const api = async (url, body) => {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) { showSessionExpired(); throw new Error('Session expired'); }
+    if (!r.ok) throw new Error(j.error || ('Video step failed (' + r.status + ')'));
+    return j;
+  };
+  prog(0, 'Starting video upload…');
+  const st = await api('/api/ar/video/start', { filename: file.name, size: file.size, quality });
+  const job = st.job_id;
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    if (st.upload_url) {
+      xhr.open('PUT', st.upload_url);
+      Object.entries(st.headers || {}).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+    } else {
+      xhr.open('POST', `/api/ar/video/${job}/source`);
+      Object.entries(authHeaders()).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+    }
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) prog(Math.round(e.loaded / e.total * 45), `Uploading video… ${(e.loaded / 1048576).toFixed(0)} / ${(e.total / 1048576).toFixed(0)} MB`); };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve()
+      : reject(new Error(st.upload_url && xhr.status === 403 ? 'Storage refused the upload (check the bucket CORS rule)' : 'Video upload failed (' + xhr.status + ')'));
+    xhr.onerror = () => reject(new Error(st.upload_url ? 'Video upload blocked — the storage bucket needs the CORS rule for this site' : 'Video upload failed'));
+    if (st.upload_url) xhr.send(file);
+    else { const fd = new FormData(); fd.append('file', file, file.name); xhr.send(fd); }
+  });
+  prog(46, 'Reading the video…');
+  const pr = await api(`/api/ar/video/${job}/probe`);
+  const steps = pr.segments + (pr.has_audio ? 1 : 0) + 1;
+  let done = 0;
+  const tick = (label) => { done++; prog(46 + Math.round(done / steps * 54), label); };
+  for (let n = 0; n < pr.segments; n++) {
+    prog(46 + Math.round(done / steps * 54), `Converting video ${n + 1} / ${pr.segments} (${quality}p)…`);
+    await api(`/api/ar/video/${job}/segment/${n}`);
+    tick();
+  }
+  if (pr.has_audio) { prog(46 + Math.round(done / steps * 54), 'Converting sound…'); await api(`/api/ar/video/${job}/audio`); tick(); }
+  prog(46 + Math.round(done / steps * 54), 'Finishing video…');
+  const fin = await api(`/api/ar/video/${job}/finish`);
+  tick();
+  prog(100, `Video ready · ${fin.size_mb} MB`);
+  return job;
+}
+function _arProgress(pct, label) {
+  document.getElementById('ar-uprogress').style.display = 'block';
+  document.getElementById('ar-upfill').style.width = pct + '%';
+  document.getElementById('ar-upct').textContent = Math.round(pct) + '%';
+  if (label) document.getElementById('ar-ufname').textContent = label;
+}
+
+async function removeArVideo() {
+  if (!_arEditing) return;
+  if (!(await arConfirm({ title: 'Remove page video', message: 'Remove the video from this asset? Students will see only the 3D model on the page.', okLabel: 'Remove' }))) return;
+  const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(_arEditing.id)}/video`, { method: 'DELETE' });
+  if (d) { showToast('✅ Video removed'); _arEditing.hasVideo = false; _arVideoReset(); refreshArAssetList(); }
 }
 
 // ── Model quality preview ("fast estimate, exact on confirm") ───────────────
@@ -7344,7 +7609,8 @@ async function _arToMind(file) {
 }
 
 async function submitArUpload() {
-  if (!arUploadFile) return showToast('No file selected');
+  const videoFile = _arVideoFile();
+  if (!arUploadFile && !videoFile) return showToast('Choose a 3D model, a page video, or both');
 
   const cls   = document.getElementById('ar-up-class').value;
   const subj  = document.getElementById('ar-up-subject').value;
@@ -7356,9 +7622,12 @@ async function submitArUpload() {
   const statesSel = document.getElementById('ar-up-states');
   const targetStates = [...statesSel.selectedOptions].map(o => o.value).filter(Boolean);
 
-  const ext = _arExt(arUploadFile.name);
-  const isAr3D = AR3D_FORMATS.includes(ext); // Flutter-AR track vs Unity track
+  const ext = arUploadFile ? _arExt(arUploadFile.name) : '';
+  // Flutter-AR track vs Unity track. A video-only asset uses the AR track.
+  const isAr3D = !arUploadFile || AR3D_FORMATS.includes(ext);
   const narrPicks = _arNarrPicks(); // chosen library narration, linked after upload
+  if (videoFile && !isAr3D) return showToast('A page video goes with a GLB/FBX/OBJ model, or on its own — not with a Unity bundle');
+  if (videoFile && !document.getElementById('ar-up-image').files[0]) return showToast('⚠ Add the Textbook Page Image — the video plays on that page');
 
   document.getElementById('ar-uprogress').style.display = 'block';
   const statusEl = document.getElementById('ar-upload-status');
@@ -7370,8 +7639,11 @@ async function submitArUpload() {
 
     if (isAr3D) {
       // ── Flutter AR pipeline: convert + compile in the browser, then upload ──
-      statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Preparing model in your browser…</span>';
-      const glb = await _arToGlb(arUploadFile);
+      let glb = null;
+      if (arUploadFile) {
+        statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Preparing model in your browser…</span>';
+        glb = await _arToGlb(arUploadFile);
+      }
 
       const imageFile = document.getElementById('ar-up-image').files[0];
       const audioFile = document.getElementById('ar-up-audio')?.files?.[0]; // legacy field (removed)
@@ -7381,12 +7653,21 @@ async function submitArUpload() {
         mind = await _arToMind(imageFile);
       }
 
-      formData.append('model', new Blob([glb], { type: 'model/gltf-binary' }), 'model.glb');
+      if (glb) formData.append('model', new Blob([glb], { type: 'model/gltf-binary' }), 'model.glb');
       if (imageFile) formData.append('image', imageFile, imageFile.name);
       if (audioFile) formData.append('audio', audioFile, audioFile.name);
       if (mind) formData.append('mind', new Blob([mind], { type: 'application/octet-stream' }), 'targets.mind');
-      const videoFile = document.getElementById('ar-up-video')?.files[0];
-      if (videoFile) formData.append('video', videoFile, videoFile.name);
+      if (videoFile) {
+        // Straight to storage, converted in steps, then linked by job id.
+        statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Uploading and converting the page video…</span>';
+        const quality = document.getElementById('ar-up-video-720')?.checked ? '720' : '480';
+        const job = await _arVideoUpload(videoFile, quality, _arProgress);
+        formData.append('video_job', job);
+        const vs = _arVideoSettings();
+        if (vs.video_region) formData.append('video_region', JSON.stringify(vs.video_region));
+        formData.append('video_sound', vs.video_sound);
+        formData.append('video_default_view', glb ? vs.video_default_view : 'video');
+      }
       formData.append('chroma_enabled', document.getElementById('ar-up-chroma')?.checked ? 'true' : 'false');
       formData.append('chroma_color', document.getElementById('ar-up-chroma-color')?.value || '#00ff00');
       formData.append('quality', document.getElementById('ar-up-quality')?.value || 'medium');
@@ -7405,6 +7686,7 @@ async function submitArUpload() {
     if (targetStates.length) formData.append('target_states', JSON.stringify(targetStates));
 
     statusEl.innerHTML = '<span style="color:var(--accent4)">⏳ Uploading…</span>';
+    document.getElementById('ar-ufname').textContent = 'Uploading...';
     let pct = 0;
     ticker = setInterval(() => {
       pct = Math.min(pct + Math.random() * 8, 92);
@@ -7427,8 +7709,8 @@ async function submitArUpload() {
     if (res.ok) {
       const asset = data.asset || {};
       if (asset.id && narrPicks.length) await _arLinkNarration(asset.id, narrPicks, {});
-      const modeTag = isAr3D ? (asset.mind_url ? ' · marker AR' : ' · overlay AR') : '';
-      statusEl.innerHTML = `<span style="color:var(--accent3)">✅ Uploaded: ${escHtml(asset.title || data.original_name || arUploadFile.name)} · ${escHtml(cls)} › ${escHtml(subj)} › ${escHtml(topic)}${modeTag}</span>`;
+      const modeTag = isAr3D ? (asset.mind_url ? ' · marker AR' : ' · overlay AR') + (asset.video_url ? ' · 🎬 page video' : '') : '';
+      statusEl.innerHTML = `<span style="color:var(--accent3)">✅ Uploaded: ${escHtml(asset.title || data.original_name || (arUploadFile ? arUploadFile.name : 'page video'))} · ${escHtml(cls)} › ${escHtml(subj)} › ${escHtml(topic)}${modeTag}</span>`;
       arUploadFile = null;
       document.getElementById('ar-upload-btn').style.display = 'none';
       const sab = document.getElementById('ar-save-apply-btn'); if (sab) sab.style.display = 'none';
@@ -7436,6 +7718,7 @@ async function submitArUpload() {
       refreshArAssetList();
       ['ar-up-class', 'ar-up-subject', 'ar-up-language'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
       ['ar-up-topic', 'ar-up-title', 'ar-up-image', 'ar-up-audio', 'ar-up-video'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      _arVideoReset();
       arTopicRefresh();
       arNarrRefresh();
       return asset; // hand the asset back so "Save & Apply" can link it
@@ -7525,7 +7808,8 @@ function renderArAssetsTable(assets) {
           ${a.status !== 'scheduled' && a.status !== 'published' && a.status !== 'archived' ? `<button class="btn btn-s btn-sm" onclick="scheduleArAsset('${a.id}')">📅 Coming soon</button>` : ''}
           <button class="btn btn-s btn-sm" onclick="openReleaseModal('ar','${a.id}')" title="When students can see it">📅</button>
           <button class="btn btn-s btn-sm" onclick="editArAsset('${a.id}')" title="Edit tags & narration in the Upload form">✏ Edit</button>
-          <button class="btn btn-s btn-sm" onclick="replaceArMedia('${a.id}','model')" title="Replace 3D model">🔁 Model</button>
+          <button class="btn btn-s btn-sm" onclick="replaceArMedia('${a.id}','model')" title="${(a.flutter_url || a.native_url) ? 'Replace 3D model' : 'Add a 3D model to this video lesson'}">${(a.flutter_url || a.native_url) ? '🔁 Model' : '➕ 3D model'}</button>
+          ${a.mind_url ? `<button class="btn btn-s btn-sm" onclick="editArAsset('${a.id}','video')" title="Add, replace or place the video that plays on the scanned page">🎬 Video</button>` : ''}
           <button class="btn btn-s btn-sm" onclick="regenArAsset('${a.id}','model')" title="Rebuild model from original">♻ Draco</button>
           <button class="btn btn-s btn-sm" onclick="regenArAsset('${a.id}','transcode')" title="Re-compress audio">♻ Audio</button>
           <button class="btn btn-s btn-sm" onclick="downloadArOriginal('${a.id}')" title="Download original GLB">⬇ GLB</button>
@@ -7681,8 +7965,12 @@ function replaceArMedia(id, field) {
     fd.append('file', inp.files[0]);
     fd.append('field', field);
     showToast('⏳ Replacing ' + field + '…');
-    const d = await safeFetch(`/api/ar/assets/${encodeURIComponent(id)}/replace`, { method: 'POST', body: fd });
-    if (d) { showToast('✅ ' + field + ' replaced'); refreshArAssetList(); }
+    // Plain fetch: safeFetch sets Content-Type JSON, which breaks a multipart body.
+    const r = await fetch(`/api/ar/assets/${encodeURIComponent(id)}/replace`, { method: 'POST', headers: authHeaders(), body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 401) return showSessionExpired();
+    if (!r.ok) return showToastError('Error: ' + (d.error || 'Replace failed'));
+    showToast('✅ ' + field + ' replaced'); refreshArAssetList();
   };
   inp.click();
 }

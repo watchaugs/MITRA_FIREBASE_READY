@@ -14,6 +14,7 @@ const { stripFields } = require('../lib/writeGuard');
 const log = require('../lib/logger');
 const { transcodeNarration } = require('../lib/audioTranscode');
 const bhashini = require('../lib/bhashini');
+const vt = require('../lib/videoTranscode');
 // NOTE: fs and UPLOAD_DIR removed — all file I/O now goes through lib/storage.js
 // In dev (no STORAGE_BUCKET set): files save to ./uploads/ on local disk
 // In prod (STORAGE_BUCKET set):   files save to GCS bucket → later swapped to R2
@@ -221,6 +222,192 @@ router.post('/upload', requirePerm('perm_upload_unity'),
 // plus an optional textbook-page image, narration audio, and a compiled MindAR
 // .mind target (also produced in the browser). Heavy processing stays client-
 // side, so Cloud Run only stores the finished files + records the asset.
+// ═══════════════════════════════════════════════════════════════════════════
+// Page-scan video — the browser uploads straight to the bucket, then the API
+// converts it in short steps (each well under Firebase Hosting's 60 s cut-off):
+//   POST /video/start            → job_id + signed PUT link
+//   (browser PUTs the file to the link; dev/local: POST /video/:job/source)
+//   POST /video/:job/probe       → length, size, sound?  (rejects > 5 min)
+//   POST /video/:job/segment/:n  → converts 20 s of picture
+//   POST /video/:job/audio       → converts the sound
+//   POST /video/:job/finish      → joins the pieces (no re-encode)
+// Then upload-rich (video_job) or POST /assets/:id/video attaches the result.
+// Temp files live under ar_uploads_tmp/<job>/ (bucket lifecycle clears leftovers).
+// ═══════════════════════════════════════════════════════════════════════════
+const VIDEO_TMP = 'ar_uploads_tmp';
+const VIDEO_TYPES = {
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime',
+  '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.3gp': 'video/3gpp',
+};
+const MAX_VIDEO_UPLOAD_MB = 1024;
+const JOB_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const jobKey = (job, name) => `${VIDEO_TMP}/${job}/${name}`;
+const segName = (n) => `v${String(n).padStart(3, '0')}.mp4`;
+const arPub = (key) => process.env.R2_PUBLIC_URL
+  ? `${process.env.R2_PUBLIC_URL}/${key}`
+  : `/api/ar/file/${key.replace('ar_assets/', '')}`;
+
+async function loadVideoJob(jobId, userId) {
+  if (!JOB_RE.test(String(jobId || ''))) { const e = new Error('Bad video job id'); e.status = 400; throw e; }
+  let job;
+  try { job = JSON.parse((await storage.getBuffer(jobKey(jobId, 'job.json'))).toString('utf8')); }
+  catch (_) { const e = new Error('Video job not found or expired. Choose the video again.'); e.status = 404; throw e; }
+  if (job.created_by !== userId) { const e = new Error('This video job belongs to another user'); e.status = 403; throw e; }
+  return job;
+}
+const saveVideoJob = (job) => storage.putRaw(Buffer.from(JSON.stringify(job)), jobKey(job.job_id, 'job.json'), { contentType: 'application/json' });
+async function purgeVideoJob(job) {
+  const names = ['job.json', 'final.mp4', 'a.m4a', path.basename(job.src_key || '')];
+  for (let n = 0; n < (job.segments || 0); n++) names.push(segName(n));
+  for (const n of names) { if (n) { try { await storage.delete(jobKey(job.job_id, n)); } catch (_) { /* ignore */ } } }
+}
+function videoErr(res, e, fallback) {
+  const status = e.status || (e instanceof vt.VideoError ? (e.status || 422) : 500);
+  if (status >= 500) log.error({ err: e.message }, fallback);
+  return res.status(status).json({ error: status >= 500 ? fallback : e.message, detail: status >= 500 ? e.message : undefined });
+}
+// Wrap a job step: loads + checks the job, maps errors to clean responses.
+const videoStep = (fallback, fn) => async (req, res) => {
+  try {
+    const job = await loadVideoJob(req.params.job, req.user.id);
+    return await fn(req, res, job);
+  } catch (e) { return videoErr(res, e, fallback); }
+};
+
+router.post('/video/start', requirePerm('perm_upload_unity'), async (req, res) => {
+  try {
+    const name = String(req.body?.filename || '').slice(0, 200);
+    const ext = path.extname(name).toLowerCase();
+    const contentType = VIDEO_TYPES[ext];
+    if (!contentType) return res.status(400).json({ error: `Unsupported video type "${ext || '?'}". Use MP4, MOV or WebM.` });
+    const sizeMb = Number(req.body?.size || 0) / 1048576;
+    if (!(sizeMb > 0)) return res.status(400).json({ error: 'Missing file size' });
+    if (sizeMb > MAX_VIDEO_UPLOAD_MB) return res.status(413).json({ error: `Video is larger than ${MAX_VIDEO_UPLOAD_MB} MB` });
+    const quality = String(req.body?.quality) === '720' ? '720' : '480';
+    const job = {
+      job_id: uuidv4(), created_by: req.user.id, created_at: new Date().toISOString(),
+      original_name: path.basename(name), content_type: contentType, size_mb: +sizeMb.toFixed(2), quality,
+    };
+    job.src_key = jobKey(job.job_id, `source${ext}`);
+    const uploadUrl = await storage.signedUploadUrl(job.src_key, { contentType });
+    await saveVideoJob(job);
+    res.json({
+      job_id: job.job_id, upload_url: uploadUrl, method: 'PUT', headers: { 'Content-Type': contentType },
+      max_seconds: vt.MAX_SECONDS, segment_seconds: vt.SEGMENT_SECONDS,
+    });
+  } catch (e) { return videoErr(res, e, 'Could not start the video upload'); }
+});
+
+// Fallback when the storage has no direct-upload link (local disk in dev).
+// Through Cloud Run this is limited to ~32 MB.
+router.post('/video/:job/source', requirePerm('perm_upload_unity'),
+  (req, res, next) => arUpload.single('file')(req, res, err => err ? res.status(400).json({ error: err.message }) : next()),
+  videoStep('Could not store the video', async (req, res, job) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    await storage.putRaw(req.file.buffer, job.src_key, { contentType: job.content_type });
+    res.json({ ok: true });
+  }));
+
+router.post('/video/:job/probe', requirePerm('perm_upload_unity'), videoStep('Could not read the video', async (req, res, job) => {
+  if (!(await storage.exists(job.src_key))) return res.status(409).json({ error: 'The upload has not finished yet' });
+  const info = await vt.probeVideo(await storage.inputUrl(job.src_key));
+  if (info.duration > vt.MAX_SECONDS) {
+    await purgeVideoJob(job);
+    return res.status(422).json({ error: `Video is ${Math.round(info.duration)} s long. The limit is ${vt.MAX_SECONDS / 60} minutes — trim it and upload again.` });
+  }
+  Object.assign(job, info, { segments: vt.segmentCount(info.duration) });
+  await saveVideoJob(job);
+  res.json({ duration: job.duration, width: job.width, height: job.height, has_audio: job.has_audio, segments: job.segments });
+}));
+
+router.post('/video/:job/segment/:n', requirePerm('perm_upload_unity'), videoStep('Video conversion failed', async (req, res, job) => {
+  const n = Number(req.params.n);
+  if (!job.segments) return res.status(409).json({ error: 'Probe the video first' });
+  if (!Number.isInteger(n) || n < 0 || n >= job.segments) return res.status(400).json({ error: 'Bad segment number' });
+  const buf = await vt.transcodeSegment(await storage.inputUrl(job.src_key), n, { quality: job.quality });
+  await storage.putRaw(buf, jobKey(job.job_id, segName(n)), { contentType: 'video/mp4' });
+  res.json({ n, segments: job.segments });
+}));
+
+router.post('/video/:job/audio', requirePerm('perm_upload_unity'), videoStep('Video sound conversion failed', async (req, res, job) => {
+  if (!job.segments) return res.status(409).json({ error: 'Probe the video first' });
+  if (!job.has_audio) return res.json({ skipped: true });
+  const buf = await vt.transcodeAudio(await storage.inputUrl(job.src_key), { duration: job.duration });
+  await storage.putRaw(buf, jobKey(job.job_id, 'a.m4a'), { contentType: 'audio/mp4' });
+  res.json({ ok: true });
+}));
+
+router.post('/video/:job/finish', requirePerm('perm_upload_unity'), videoStep('Could not join the video', async (req, res, job) => {
+  if (!job.segments) return res.status(409).json({ error: 'Probe the video first' });
+  const parts = [];
+  for (let n = 0; n < job.segments; n++) {
+    const k = jobKey(job.job_id, segName(n));
+    if (!(await storage.exists(k))) return res.status(409).json({ error: `Piece ${n + 1} of ${job.segments} is missing — convert it first` });
+    parts.push(await storage.getBuffer(k));
+  }
+  let audio = null;
+  if (job.has_audio) {
+    const ak = jobKey(job.job_id, 'a.m4a');
+    if (!(await storage.exists(ak))) return res.status(409).json({ error: 'The sound has not been converted yet' });
+    audio = await storage.getBuffer(ak);
+  }
+  const out = await vt.joinParts(parts, audio);
+  await storage.putRaw(out, jobKey(job.job_id, 'final.mp4'), { contentType: 'video/mp4' });
+  job.status = 'ready';
+  job.final_mb = +(out.length / 1048576).toFixed(2);
+  await saveVideoJob(job);
+  // Pieces are no longer needed; the source stays until the video is attached.
+  for (let n = 0; n < job.segments; n++) { try { await storage.delete(jobKey(job.job_id, segName(n))); } catch (_) { /* ignore */ } }
+  try { await storage.delete(jobKey(job.job_id, 'a.m4a')); } catch (_) { /* ignore */ }
+  res.json({ ready: true, size_mb: job.final_mb, duration: job.duration, quality: job.quality });
+}));
+
+// Copies a finished job's MP4 onto the asset, removes the temp files, and
+// returns the fields to store. ?v= busts the year-long cache on replace.
+async function attachVideoJob(jobId, userId, assetId) {
+  const job = await loadVideoJob(jobId, userId);
+  if (job.status !== 'ready') { const e = new Error('The video has not finished converting'); e.status = 409; throw e; }
+  const buf = await storage.getBuffer(jobKey(job.job_id, 'final.mp4'));
+  const key = `ar_assets/${assetId}_video.mp4`;
+  await storage.putRaw(buf, key, { contentType: 'video/mp4' });
+  for (const old of ['webm', 'mov']) { try { await storage.delete(`ar_assets/${assetId}_video.${old}`); } catch (_) { /* ignore */ } }
+  await purgeVideoJob(job);
+  return {
+    video_url: `${arPub(key)}?v=${Date.now()}`,
+    video_mb: job.final_mb, video_duration: job.duration, video_quality: job.quality,
+    video_name: job.original_name,
+  };
+}
+
+// Video placement + sound settings (dashboard form). Only keys present in
+// `src` are returned. Throws a 400-style Error on bad input.
+function cleanVideoSettings(src = {}) {
+  const out = {};
+  const bad = (m) => { const e = new Error(m); e.status = 400; throw e; };
+  if (src.video_region !== undefined && src.video_region !== null && src.video_region !== '') {
+    let r = src.video_region;
+    if (typeof r === 'string') { try { r = JSON.parse(r); } catch (_) { bad('video_region must be JSON {x,y,w,h}'); } }
+    const nums = ['x', 'y', 'w', 'h'].map(k => Number(r && r[k]));
+    if (nums.some(n => !Number.isFinite(n))) bad('video_region needs numbers x, y, w, h (0–1)');
+    let [x, y, w, h] = nums.map(n => Math.min(1, Math.max(0, n)));
+    w = Math.min(w, 1 - x); h = Math.min(h, 1 - y);
+    if (w < 0.05 || h < 0.05) bad('The video box is too small — make it at least 5% of the page');
+    const r4 = (n) => Math.round(n * 10000) / 10000;
+    out.video_region = { x: r4(x), y: r4(y), w: r4(w), h: r4(h) };
+    const pa = Number(r && r.page_aspect);
+    if (Number.isFinite(pa) && pa > 0.1 && pa < 10) out.video_region.page_aspect = r4(pa);
+  }
+  if (src.video_sound !== undefined) {
+    if (!['video', 'narration'].includes(src.video_sound)) bad('video_sound must be "video" or "narration"');
+    out.video_sound = src.video_sound;
+  }
+  if (src.video_default_view !== undefined) {
+    if (!['3d', 'video'].includes(src.video_default_view)) bad('video_default_view must be "3d" or "video"');
+    out.video_default_view = src.video_default_view;
+  }
+  return out;
+}
+
 router.post('/upload-rich', requirePerm('perm_upload_unity'),
   (req, res, next) => arUpload.fields([
     { name: 'model', maxCount: 1 },
@@ -232,19 +419,31 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
   async (req, res) => {
     const files = req.files || {};
     const model = files.model && files.model[0];
-    if (!model) return res.status(400).json({ error: 'No model file uploaded' });
+    const videoJob = String(req.body.video_job || '').trim();
+    // Raw videos no longer pass through here (32 MB request cap) — the
+    // dashboard uploads them via /video/start and sends video_job.
+    if (files.video && files.video[0]) {
+      return res.status(400).json({ error: 'Send the video through /api/ar/video/start (direct upload), then pass video_job' });
+    }
+    if (!model && !videoJob) return res.status(400).json({ error: 'Add a 3D model, a page video, or both' });
+    // The video plays ON the textbook page, so it needs the page target.
+    if (videoJob && !(files.mind && files.mind[0])) {
+      return res.status(400).json({ error: 'A page video needs the textbook page image (it plays on that page)' });
+    }
+    let videoSettings;
+    try { videoSettings = cleanVideoSettings(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
 
     const { class_name, subject, topic, language, title } = req.body;
     const id  = uuidv4();
-    const ext = path.extname(model.originalname).toLowerCase();
+    const ext = model ? path.extname(model.originalname).toLowerCase() : '';
 
     // The browser converts FBX/OBJ → GLB before upload, so the model is GLB here.
-    if (ext !== '.glb' && ext !== '.gltf') {
+    if (model && ext !== '.glb' && ext !== '.gltf') {
       return res.status(400).json({ error: 'Model must be .glb/.gltf (convert FBX/OBJ in the browser first)' });
     }
 
     let compression = null, unity_url = null, flutter_url = null, native_url = null;
-    try {
+    if (model) try {
       compression = await compressGlb(model.buffer, { quality: req.body.quality });
       // Only the lite GLB is served to the app (unity_url retired).
       const flutterKey = `ar_assets/${id}_lite.glb`;
@@ -273,30 +472,34 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
       return process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${key}` : `/api/ar/file/${id}_${keySuffix}`;
     };
 
-    let target_image_url = null, audio_url = null, mind_url = null, video_url = null;
+    let target_image_url = null, audio_url = null, mind_url = null;
     try {
       const img = files.image && files.image[0];
       const aud = files.audio && files.audio[0];
       const mnd = files.mind  && files.mind[0];
-      const vid = files.video && files.video[0];
       const imgExt = img ? path.extname(img.originalname).toLowerCase() : '.png';
       const audExt = aud ? path.extname(aud.originalname).toLowerCase() : '.mp3';
-      const vidExt = vid ? path.extname(vid.originalname).toLowerCase() : '.mp4';
       target_image_url = await storeSide(img, `target${imgExt}`, imgExt === '.jpg' || imgExt === '.jpeg' ? 'image/jpeg' : (imgExt === '.webp' ? 'image/webp' : 'image/png'));
       audio_url        = await storeSide(aud, `audio${audExt}`,  audExt === '.aac' || audExt === '.m4a' ? 'audio/aac' : (audExt === '.wav' ? 'audio/wav' : (audExt === '.ogg' ? 'audio/ogg' : 'audio/mpeg')));
       mind_url         = await storeSide(mnd, 'targets.mind', 'application/octet-stream');
-      video_url        = await storeSide(vid, `video${vidExt}`, vidExt === '.webm' ? 'video/webm' : (vidExt === '.mov' ? 'video/quicktime' : 'video/mp4'));
     } catch (sideErr) {
       return res.status(500).json({ error: 'Failed to store AR side files', detail: sideErr.message });
     }
 
+    // Page video: copy the converted MP4 from its finished job.
+    let video = null;
+    if (videoJob) {
+      try { video = await attachVideoJob(videoJob, req.user.id, id); }
+      catch (e) { return res.status(e.status || 500).json({ error: e.status ? e.message : 'Failed to attach the video', detail: e.message }); }
+    }
+
     const doc = {
       id,
-      title:         title || model.originalname,
+      title:         title || (model ? model.originalname : (video && video.video_name) || 'Page video'),
       class_name, subject, topic, language,
-      original_name: model.originalname,
-      file_format:   ext.replace('.', ''),
-      file_size_mb:  (model.size / 1024 / 1024).toFixed(2),
+      original_name: model ? model.originalname : (video && video.video_name) || null,
+      file_format:   model ? ext.replace('.', '') : 'mp4',
+      file_size_mb:  model ? (model.size / 1024 / 1024).toFixed(2) : String(video ? video.video_mb : 0),
       status:        'uploaded',
       target_states: parseTargetStates(req.body.target_states),
       uploaded_by:   req.user.id,
@@ -314,7 +517,15 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
       target_image_url,
       audio_url,
       mind_url,
-      video_url,
+      video_url:     video ? video.video_url : null,
+      // Page video: where it sits on the page (0–1 of the page, from the top-
+      // left; whole page if not drawn), whose sound plays, which view opens.
+      ...(video ? {
+        video_mb: video.video_mb, video_duration: video.video_duration, video_quality: video.video_quality,
+        video_region: videoSettings.video_region || { x: 0, y: 0, w: 1, h: 1 },
+        video_sound: videoSettings.video_sound || 'video',
+        video_default_view: model ? (videoSettings.video_default_view || '3d') : 'video',
+      } : {}),
       // Green-screen (ChromaKey) settings for the AR video plane, from the form.
       chroma_enabled: req.body.chroma_enabled === 'true' || req.body.chroma_enabled === true,
       chroma_color:   req.body.chroma_color || '#00ff00',
@@ -371,6 +582,9 @@ router.get('/topics', async (req, res) => {
       mind_url:         r.mind_url         || null,
       target_image_url: r.target_image_url || null,
       video_url:        r.video_url        || null,
+      video_region:     r.video_region     || null,
+      video_sound:      r.video_sound      || null,
+      video_default_view: r.video_default_view || null,
       chroma_enabled:   r.chroma_enabled   === true,
       chroma_color:     r.chroma_color     || null,
       ar_mode:          r.ar_mode          || null,
@@ -403,7 +617,12 @@ router.put('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => 
       'flutter_url', 'native_url', 'unity_url', 'file_size_mb', 'compression',
       'published_at', 'published_by', 'submitted_by', 'submitted_at',
       'release_updated_by', 'release_updated_at',
+      // Video file fields change only through POST/DELETE /assets/:id/video.
+      'video_url', 'video_mb', 'video_duration', 'video_quality',
     ]);
+    try { Object.assign(safe, cleanVideoSettings(safe)); }
+    catch (e) { return res.status(400).json({ error: e.message }); }
+    if (safe.video_region === '' || safe.video_region === null) delete safe.video_region;
     await db.collection('ar_assets').doc(req.params.id).update({ ...safe, updated_at: new Date() });
     await invalidateManifests(db);
     res.json({ id: req.params.id, ...safe });
@@ -816,7 +1035,11 @@ router.post('/assets/:id/replace', requirePerm('perm_upload_unity'),
         await storage.putRaw(compression.flutter, `ar_assets/${id}_lite.glb`, { contentType: 'model/gltf-binary' });
         await storage.putRaw(compression.native,  `ar_assets/${id}_native.glb`, { contentType: 'model/gltf-binary' });
         await storage.putRaw(req.file.buffer,      `ar_assets/${id}_original.glb`, { contentType: 'model/gltf-binary' });
-        await ref.set({ updated_at: new Date() }, { merge: true });
+        // Set the URLs too, so a video-only asset gains its 3D model here.
+        // ?v= makes phones fetch the new file (the old one is cached for a year).
+        const v = `?v=${Date.now()}`;
+        await ref.set({ flutter_url: pub(`ar_assets/${id}_lite.glb`) + v, native_url: pub(`ar_assets/${id}_native.glb`) + v,
+          file_format: 'glb', updated_at: new Date() }, { merge: true });
         await invalidateManifests(db);
         return res.json({ message: 'Model replaced', id });
       }
@@ -829,12 +1052,7 @@ router.post('/assets/:id/replace', requirePerm('perm_upload_unity'),
         return res.json({ message: 'Image replaced', id, url: pub(key) });
       }
       if (field === 'video') {
-        const ct = ext === '.webm' ? 'video/webm' : ext === '.mov' ? 'video/quicktime' : 'video/mp4';
-        const key = `ar_assets/${id}_video${ext}`;
-        await storage.putRaw(req.file.buffer, key, { contentType: ct });
-        await ref.set({ video_url: pub(key), updated_at: new Date() }, { merge: true });
-        await invalidateManifests(db);
-        return res.json({ message: 'Video replaced', id, url: pub(key) });
+        return res.status(400).json({ error: 'Videos are converted first — use the 🎬 Video button (POST /assets/:id/video)' });
       }
       if (field === 'audio') {
         const lang = (req.body.language || '').trim().toLowerCase();
@@ -854,6 +1072,56 @@ router.post('/assets/:id/replace', requirePerm('perm_upload_unity'),
     } catch (e) { return res.status(500).json({ error: 'Replace failed', detail: e.message }); }
   }
 );
+
+// ── Add/replace (POST {video_job, ...settings}) or remove (DELETE) the page
+// video of an existing asset. Needs the page target (.mind) to exist.
+router.post('/assets/:id/video', requirePerm('perm_upload_unity'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const ref = db.collection('ar_assets').doc(req.params.id);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'Asset not found' });
+    const a = snap.data() || {};
+    if (!a.mind_url) return res.status(409).json({ error: 'This asset has no textbook page image yet. A page video plays on the page — upload the asset with its page image first.' });
+    let settings;
+    try { settings = cleanVideoSettings(req.body || {}); } catch (e) { return res.status(400).json({ error: e.message }); }
+    const video = await attachVideoJob(req.body?.video_job, req.user.id, req.params.id);
+    delete video.video_name;
+    const hasModel = !!(a.flutter_url || a.native_url);
+    const update = {
+      ...video,
+      video_region: settings.video_region || a.video_region || { x: 0, y: 0, w: 1, h: 1 },
+      video_sound: settings.video_sound || a.video_sound || 'video',
+      video_default_view: hasModel ? (settings.video_default_view || a.video_default_view || '3d') : 'video',
+      updated_at: new Date(),
+    };
+    await ref.set(update, { merge: true });
+    await invalidateManifests(db);
+    await db.collection('audit_log').add({ action: 'ar_video_set', actor: req.user.id, detail: { asset_id: req.params.id, mb: video.video_mb }, created_at: new Date() }).catch(() => {});
+    res.json({ message: 'Video saved', id: req.params.id, ...update });
+  } catch (e) { return videoErr(res, e, 'Failed to save the video'); }
+});
+
+router.delete('/assets/:id/video', requirePerm('perm_upload_unity'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const ref = db.collection('ar_assets').doc(req.params.id);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'Asset not found' });
+    const a = snap.data() || {};
+    if (!a.flutter_url && !a.native_url) {
+      return res.status(409).json({ error: 'This asset has only the video (no 3D model). Delete the whole asset instead.' });
+    }
+    const { FieldValue } = require('firebase-admin/firestore');
+    const del = FieldValue.delete();
+    await ref.update({ video_url: null, video_mb: del, video_duration: del, video_quality: del,
+      video_region: del, video_sound: del, video_default_view: del, updated_at: new Date() });
+    for (const e of ['mp4', 'webm', 'mov']) { try { await storage.delete(`ar_assets/${req.params.id}_video.${e}`); } catch (_) { /* ignore */ } }
+    await invalidateManifests(db);
+    await db.collection('audit_log').add({ action: 'ar_video_removed', actor: req.user.id, detail: { asset_id: req.params.id }, created_at: new Date() }).catch(() => {});
+    res.json({ message: 'Video removed', id: req.params.id });
+  } catch (e) { return videoErr(res, e, 'Failed to remove the video'); }
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Phase 3e — Regenerate derivatives from stored sources

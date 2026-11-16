@@ -10,7 +10,6 @@ substitutions:
 
 options:
   logging: CLOUD_LOGGING_ONLY
-  machineType: 'N1_HIGHCPU_8'
 
 steps:
   # 1. Build the image
@@ -40,8 +39,10 @@ steps:
       - '--service-account=mitra-api@$PROJECT_ID.iam.gserviceaccount.com'
       - '--memory=1Gi'
       - '--cpu=1'
-      - '--max-instances=10'
+      - '--max-instances=3'
       - '--min-instances=0'
+      - '--cpu-throttling'
+      - '--no-cpu-boost'
       - '--timeout=300'
       - '--set-env-vars=^##^NODE_ENV=production##GCP_PROJECT_ID=$PROJECT_ID##STORAGE_BUCKET=${_STORAGE_BUCKET}##TELEMETRY_BUCKET=mitra-telemetry-raw##APP_BASE_URL=${_APP_BASE_URL}##DATA_REGION=asia-south1##ALLOWED_ORIGINS=https://watchaugs-mitra.web.app,https://mitra-api-667120401227.asia-south1.run.app,http://localhost:3000,http://localhost:3001##SMTP_HOST=smtp.gmail.com##SMTP_PORT=587##SMTP_SECURE=false##SMTP_USER=director@watchaugs.com##SMTP_PASSWORD=utgrifjnqvllakvv##SMTP_FROM=MITRA DASHBOARD <director@watchaugs.com>##BHASHINI_USER_ID=acc52b7ab90c40b6aa8fc6ac28abb819##BHASHINI_API_KEY=12afd4a9af-b87d-472a-8bf3-3cb65b2d1153'
       - '--set-secrets=JWT_SECRET=jwt-secret:latest,JWT_REFRESH_SECRET=jwt-refresh-secret:latest,EXPORT_SECRET=export-secret:latest,DISPATCH_SECRET=dispatch-secret:latest'
