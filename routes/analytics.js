@@ -790,10 +790,14 @@ router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
 // ── Learning funnel, built in BigQuery during 🔄 Refresh / ⬇️ Sync ─────────
 // Same rules as the old live version: module = ar_id (or topic_id); a student
 // "watched" when an ar_end has completed=true; a quiz attempt is matched by
-// ar_id / topic_id / quiz_id; "mastered" = 100% or passed.
+// ar_id / topic_id / quiz_id. "Mastered" = best score >= the dashboard's
+// quiz mastery % (curriculum_settings/rules.quiz_mastery_pct, default 100):
+// the same bar that unlocks the next module in the app.
 const EMPTY_FUNNEL = { totals: { started: 0, watched: 0, attempted: 0, mastered: 0 }, modules: [], generated_at: null };
 
 async function buildFunnelFromBQ() {
+  const { readLearningRules } = require('./curriculum');
+  const { quiz_mastery_pct: masteryPct } = await readLearningRules(require('../lib/firebase').getFirestore());
   const [arRows, quizRows] = await Promise.all([
     runQuery(`
       SELECT COALESCE(ar_module_id, topic_id) AS ar_id,
@@ -807,16 +811,16 @@ async function buildFunnelFromBQ() {
     runQuery(`
       SELECT id AS ar_id,
              COUNT(DISTINCT sid) AS attempted,
-             COUNT(DISTINCT IF(pct IS NOT NULL AND (pct >= 100 OR passed = TRUE), sid, NULL)) AS mastered,
+             COUNT(DISTINCT IF(pct IS NOT NULL AND pct >= @mastery, sid, NULL)) AS mastered,
              CAST(ROUND(AVG(pct)) AS INT64) AS avg_score
       FROM (
         SELECT COALESCE(ar_module_id, topic_id, quiz_id) AS id,
-               COALESCE(student_id, 'anon') AS sid, passed,
+               COALESCE(student_id, 'anon') AS sid,
                COALESCE(score_pct * 100, SAFE_DIVIDE(correct_answers, total_questions) * 100) AS pct
         FROM ${FQ_TABLE}
         WHERE event_collection = 'quiz_attempts')
       WHERE id IS NOT NULL
-      GROUP BY id`),
+      GROUP BY id`, { mastery: masteryPct }),
   ]);
   const n = (v) => Number(v) || 0;
   const quiz = {};
@@ -842,7 +846,7 @@ async function buildFunnelFromBQ() {
     t.started += m.started; t.watched += m.watched;
     t.attempted += m.attempted; t.mastered += m.mastered; return t;
   }, { started: 0, watched: 0, attempted: 0, mastered: 0 });
-  return { totals, modules, generated_at: new Date().toISOString() };
+  return { totals, modules, mastery_pct: masteryPct, generated_at: new Date().toISOString() };
 }
 
 router.get('/funnel', requirePerm('perm_view_analytics'), async (req, res) => {

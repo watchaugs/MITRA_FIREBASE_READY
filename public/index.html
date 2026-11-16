@@ -1342,6 +1342,8 @@ document.addEventListener('DOMContentLoaded', () => {
         <span id="curr-dirty" style="font-size:11px;color:var(--text3)">All changes saved</span>
         <span style="margin-left:16px;font-size:12px;color:var(--text2)">AR watch % to unlock quiz:</span>
         <input class="inp" id="ar-watch-threshold" type="number" min="1" max="100" placeholder="85" style="width:70px" onblur="saveArWatchThreshold(this.value)">
+        <span style="margin-left:12px;font-size:12px;color:var(--text2)" title="Quiz score that counts as mastered: unlocks the next module in the app, and is the Learning Funnel's Mastered column">Quiz % to master a module:</span>
+        <input class="inp" id="quiz-mastery-pct" type="number" min="1" max="100" placeholder="100" style="width:70px" onblur="saveQuizMasteryPct(this.value)">
       </div>
     </div>
 
@@ -1699,7 +1701,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="an-panel" id="an-panel-funnel" style="display:none">
         <div class="card">
           <div class="card-title">🫗 Learning funnel — per module</div>
-          <div class="card-sub">Started → watched AR → attempted quiz → mastered (100%). Health flags weak or mis-levelled content.</div>
+          <div class="card-sub" id="funnel-sub">Started → watched AR → attempted quiz → mastered. Health flags weak or mis-levelled content.</div>
           <div id="funnel-totals" style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0"></div>
           <div style="overflow-x:auto">
             <table class="tbl"><thead><tr>
@@ -6565,6 +6567,7 @@ async function loadCurriculumFromServer(force) {
   _markCurrSaved();
   refreshCurriculumSummary();
   loadAllGeofenceStatuses();
+  loadArWatchThreshold();
 }
 window.addEventListener('beforeunload', e => { if (_currDirty) { e.preventDefault(); e.returnValue = ''; } });
 
@@ -7583,6 +7586,8 @@ async function loadFunnel() {
   const d = await safeFetch('/api/analytics/funnel');
   if (!d || !Array.isArray(d.modules)) { body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--red);padding:16px">Could not load funnel.</td></tr>'; return; }
   const t = d.totals || {};
+  const sub = document.getElementById('funnel-sub');
+  if (sub) sub.textContent = `Started → watched AR → attempted quiz → mastered (${d.mastery_pct || 100}%+, set on the Curriculum page). Health flags weak or mis-levelled content.`;
   if (totalsEl) totalsEl.innerHTML = [
     ['Started', t.started], ['Watched', t.watched], ['Attempted', t.attempted], ['Mastered', t.mastered]
   ].map(([k, v]) => `<div style="background:var(--bg3);border-radius:10px;padding:10px 14px"><div style="font-size:11px;color:var(--text2)">${k}</div><div style="font-size:20px;font-weight:600">${v || 0}</div></div>`).join('');
@@ -7608,10 +7613,23 @@ async function saveArWatchThreshold(v) {
   if (d) showToast('✅ Saved');
 }
 
+// Quiz mastery % (score that unlocks the next module + the funnel's Mastered).
+async function saveQuizMasteryPct(v) {
+  if (String(v).trim() === '') return;
+  const n = Number(v);
+  if (!(n >= 1 && n <= 100)) return showToast('Enter 1–100');
+  const d = await safeFetch('/api/curriculum/learning-settings', { method: 'PUT', body: JSON.stringify({ quiz_mastery_pct: n }) });
+  if (d) showToast('✅ Saved. The Learning Funnel uses it from the next ⬇️ Sync / 🔄 Refresh');
+}
+
+// Fill both learning-rule fields with what's saved (was never called, so the
+// AR-watch field always showed its placeholder).
 async function loadArWatchThreshold() {
   const d = await safeFetch('/api/curriculum/learning-settings', { silent: true });
   const el = document.getElementById('ar-watch-threshold');
   if (d && el) el.value = d.ar_watch_threshold || 85;
+  const mp = document.getElementById('quiz-mastery-pct');
+  if (d && mp) mp.value = d.quiz_mastery_pct || 100;
 }
 
 // Type-to-confirm delete (no undo window, immediate backend delete).

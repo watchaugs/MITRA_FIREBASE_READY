@@ -154,7 +154,8 @@ async function _territorySupported(db, state) {
 // at the CDN/proxy. (Later: push the same JSON to R2 — format stays identical.)
 // Bump when the manifest shape changes: cached copies with an older version
 // are rebuilt on the next read instead of being served stale.
-const MANIFEST_VERSION = 3; // v3: tree links decide a topic's AR lessons; lessons carry quiz_ids
+const MANIFEST_VERSION = 4; // v4: lessons carry target_image_url (native ARCore page scan)
+                            // v3: tree links decide a topic's AR lessons; lessons carry quiz_ids
 async function buildStateManifest(db, stateCode, stateName) {
   const hDoc = await db.collection('curriculum_hierarchy').doc(stateCode).get();
   const structure = hDoc.exists ? (hDoc.data().structure || []) : [];
@@ -198,6 +199,8 @@ async function buildStateManifest(db, stateCode, stateName) {
                  // audio_url ever played.
                  audios: a.audios || {}, audios_aac: a.audios_aac || {},
                  mind_url: a.mind_url || null, video_url: a.video_url || null,
+                 // The page image itself: phones with ARCore track it natively.
+                 target_image_url: a.target_image_url || null,
                  chroma_enabled: a.chroma_enabled === true, chroma_color: a.chroma_color || null,
                  ar_mode: a.ar_mode || null });
   // Build the class/subject/topic tree from the saved hierarchy when one exists.
@@ -362,28 +365,41 @@ router.get('/ar-topics', async (req, res) => {
 });
 
 // ── Learning rules (dashboard-configurable) ─────────────────────────────────
-// Serves the app's learning gates: ar_watch_threshold (% of AR narration a
-// student must hear before the quiz unlocks). Stored in curriculum_settings.
-router.get('/learning-settings', async (req, res) => {
+// Serves the app's learning gates, stored in curriculum_settings/rules:
+//   ar_watch_threshold — % of AR narration heard before the quiz unlocks
+//   quiz_mastery_pct   — quiz score that counts as "mastered": unlocks the next
+//                        module in the app, and is the funnel's Mastered column
+const _pct = (v, dflt) => { const n = Number(v); return (n >= 1 && n <= 100) ? Math.round(n) : dflt; };
+async function readLearningRules(db) {
   try {
-    const db = getFirestore();
     const doc = await db.collection('curriculum_settings').doc('rules').get();
     const d = doc.exists ? doc.data() : {};
-    const n = Number(d.ar_watch_threshold);
-    res.json({ ar_watch_threshold: (n >= 1 && n <= 100) ? n : 85 });
+    return { ar_watch_threshold: _pct(d.ar_watch_threshold, 85), quiz_mastery_pct: _pct(d.quiz_mastery_pct, 100) };
   } catch (_) {
-    res.json({ ar_watch_threshold: 85 });
+    return { ar_watch_threshold: 85, quiz_mastery_pct: 100 };
   }
+}
+
+router.get('/learning-settings', async (req, res) => {
+  res.json(await readLearningRules(getFirestore()));
 });
 
+// Body: either or both of { ar_watch_threshold, quiz_mastery_pct } (1–100).
 router.put('/learning-settings', requirePerm('perm_edit_curriculum'), async (req, res) => {
   try {
     const db = getFirestore();
-    const n = Number(req.body?.ar_watch_threshold);
-    if (!(n >= 1 && n <= 100)) return res.status(400).json({ error: 'ar_watch_threshold must be 1–100' });
+    const b = req.body || {};
+    const upd = {};
+    for (const k of ['ar_watch_threshold', 'quiz_mastery_pct']) {
+      if (b[k] === undefined) continue;
+      const n = Number(b[k]);
+      if (!(n >= 1 && n <= 100)) return res.status(400).json({ error: k + ' must be 1–100' });
+      upd[k] = Math.round(n);
+    }
+    if (!Object.keys(upd).length) return res.status(400).json({ error: 'Send ar_watch_threshold and/or quiz_mastery_pct' });
     await db.collection('curriculum_settings').doc('rules')
-      .set({ ar_watch_threshold: n, updated_by: req.user.id, updated_at: new Date() }, { merge: true });
-    res.json({ success: true, ar_watch_threshold: n });
+      .set({ ...upd, updated_by: req.user.id, updated_at: new Date() }, { merge: true });
+    res.json({ success: true, ...(await readLearningRules(db)) });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to save learning settings');
     res.status(500).json({ error: 'Failed to save learning settings' });
@@ -747,3 +763,4 @@ router.get('/schedule/:stateCode/:term', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.readLearningRules = readLearningRules;
