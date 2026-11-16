@@ -779,12 +779,13 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
   <div class="modal-bg" id="modal-geo-config">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-geo-config')">✕</button>
-    <div class="modal-title">Configure Geofence</div>
+    <div class="modal-title" id="geo-config-title">Configure Geofence</div>
     <div class="modal-sub" id="geo-config-state-name">State / Region Settings</div>
     <input type="hidden" id="gf-state">
+    <input type="hidden" id="gf-edit-id">
 
     <!-- ✨ Whole-state geofence: pick a state, auto-apply its real boundary -->
-    <div class="form-row" style="background:rgba(99,102,241,.08);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px">
+    <div class="form-row" id="gf-whole-state-box" style="background:rgba(99,102,241,.08);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px">
       <label class="lbl" style="font-weight:600">⚡ Geofence an entire state (recommended)</label>
       <div style="font-size:11px;color:var(--text3);margin:4px 0 8px">Covers the whole state using its real boundary — no coordinates needed. Students anywhere inside the state count as inside.</div>
       <div style="display:flex;gap:8px">
@@ -792,7 +793,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
         <button class="btn btn-p btn-sm" style="white-space:nowrap" onclick="geofenceWholeState()">Apply boundary</button>
       </div>
     </div>
-    <div style="text-align:center;font-size:11px;color:var(--text3);margin-bottom:10px">— or set a manual circle below —</div>
+    <div id="gf-or-line" style="text-align:center;font-size:11px;color:var(--text3);margin-bottom:10px">— or set a manual circle below —</div>
     <div class="form-row"><label class="lbl">Geofence Name</label><input class="inp" id="gf-name" placeholder="e.g. Maharashtra Cluster A"></div>
     <div class="form-row"><label class="lbl">District (optional)</label><input class="inp" id="gf-district" placeholder="e.g. Pune"></div>
     <div class="form-row"><label class="lbl">Radius (km)</label><input class="inp" type="number" id="gf-radius" placeholder="50" value="50"></div>
@@ -809,7 +810,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
     </div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Students inside this circle count as inside the state. Click the map to set the centre.</div>
     <div style="display:flex;gap:10px;margin-top:16px">
-      <button class="btn btn-p" style="flex:1" onclick="saveGeoConfig()">Save Geofence</button>
+      <button class="btn btn-p" style="flex:1" id="gf-save-btn" onclick="saveGeoConfig()">Save Geofence</button>
       <button class="btn btn-r btn-sm" onclick="closeModal('modal-geo-config')">Cancel</button>
     </div>
   </div>
@@ -4484,6 +4485,11 @@ function openGeoConfig(state) {
   document.getElementById('gf-state').value = state;
   document.getElementById('gf-name').value = `${state} Primary Cluster`;
   ['gf-lat', 'gf-lng', 'gf-district'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  // Add mode (editGeofence switches these for an existing circle).
+  document.getElementById('gf-edit-id').value = '';
+  document.getElementById('geo-config-title').innerText = 'Configure Geofence';
+  document.getElementById('gf-save-btn').innerText = 'Save Geofence';
+  ['gf-whole-state-box', 'gf-or-line'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
   openModal('modal-geo-config');
 }
 async function saveGeoConfig() {
@@ -4496,13 +4502,14 @@ async function saveGeoConfig() {
   if (!name || !state) { showToast('⚠️ Name and State are required'); return; }
   if (!(lat >= 6 && lat <= 38 && lng >= 68 && lng <= 98)) { showToast('⚠️ Set the centre: click the map, or type a latitude/longitude inside India'); return; }
   if (!(radius > 0 && radius <= 1000)) { showToast('⚠️ Radius must be between 1 and 1000 km'); return; }
-  const data = await safeFetch('/api/geofence', {
-    method: 'POST',
+  const editId = document.getElementById('gf-edit-id')?.value || '';
+  const data = await safeFetch(editId ? '/api/geofence/' + encodeURIComponent(editId) : '/api/geofence', {
+    method: editId ? 'PUT' : 'POST',
     body: JSON.stringify({ name, state, district, lat, lng, radius_km: radius }),
   });
   if (data?.id) {
     closeModal('modal-geo-config');
-    showToast(`✅ Geofence saved: ${radius} km around ${lat.toFixed(3)}, ${lng.toFixed(3)}`);
+    showToast(`✅ Geofence ${editId ? 'updated' : 'saved'}: ${radius} km around ${lat.toFixed(3)}, ${lng.toFixed(3)}`);
     loadAllGeofenceStatuses();
   }
 }
@@ -6011,17 +6018,92 @@ function removeStateBlock(blockId) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function loadAllGeofenceStatuses() {
-  // Real counts from /api/geofence (centre + radius geofences)
+  // Every geofence of the state (active + disabled), each with its own
+  // ⏸/▶ · ✎ · 🗑 controls, right under the state name next to "📍 Add Geofence".
   const list = await safeFetch('/api/geofence');
   if (!Array.isArray(list)) return;
+  window._geoList = list;
+  const btn = 'background:none;border:1px solid var(--border);border-radius:6px;color:var(--text2);font-size:10px;padding:0 5px;cursor:pointer;line-height:16px';
   document.querySelectorAll('.state-tree-block').forEach(block => {
     const name = (block.dataset.stateName || '').toLowerCase();
-    const mine = list.filter(g => g.is_active !== false && String(g.state || '').toLowerCase() === name);
+    const all = list.filter(g => String(g.state || '').toLowerCase() === name);
     const el = document.getElementById(block.id + '-geo-status');
-    if (el) el.innerHTML = mine.length
-      ? `Geofences: <span style="color:var(--accent3)">${mine.length} active</span> · ${mine.map(g => escHtml(g.name)).slice(0, 3).join(', ')}`
-      : 'Geofences: <span style="color:var(--accent4)">none yet</span>';
+    if (!el) return;
+    if (!all.length) { el.innerHTML = 'Geofences: <span style="color:var(--accent4)">none yet</span>'; return; }
+    const anyOn = all.some(g => g.is_active !== false);
+    // The header row toggles the state open/closed; stop chip clicks there.
+    el.innerHTML = 'Geofences: <span onclick="event.stopPropagation()">' + all.map(g => {
+      const on = g.is_active !== false, id = escHtml(g.id);
+      const isState = g.scope === 'state' || !!g.geojson_str;
+      const label = escHtml(g.name || g.state) + (isState ? ' 🗺️' : ` ⭕${escHtml(String(g.radius_km || '?'))}km`);
+      return `<span style="display:inline-flex;align-items:center;gap:3px;margin:2px 6px 2px 0;${on ? '' : 'opacity:.55'}">` +
+        `<span style="color:${on ? 'var(--accent3)' : 'var(--text3)'}">${on ? '●' : '○'} ${label}</span>` +
+        `<button style="${btn}" title="${on ? 'Disable' : 'Enable'}" onclick="toggleGeofence('${id}', ${on ? 'false' : 'true'})">${on ? '⏸' : '▶'}</button>` +
+        (isState ? '' : `<button style="${btn}" title="Edit circle" onclick="editGeofence('${id}')">✎</button>`) +
+        `<button style="${btn}" title="Remove" onclick="deleteGeofence('${id}')">🗑</button></span>`;
+    }).join('') + '</span>' + (anyOn ? '' : '<span style="color:var(--red)">· none active: students here have no access</span>');
   });
+}
+
+function _geoById(id) { return (window._geoList || []).find(g => g.id === id) || {}; }
+// Warn when this change leaves the state with no active geofence.
+function _geoLastActiveWarning(id) {
+  const g = _geoById(id);
+  const st = String(g.state || '').toLowerCase();
+  const othersOn = (window._geoList || []).filter(x => x.id !== id && x.is_active !== false && String(x.state || '').toLowerCase() === st).length;
+  return (g.is_active !== false && !othersOn)
+    ? `\n\nThis is the only active geofence for ${g.state}. Students there will lose access to all lessons and quizzes (they see "not yet available in your location") the next time the app checks their location.`
+    : '';
+}
+async function toggleGeofence(id, makeActive) {
+  const g = _geoById(id);
+  if (!makeActive) {
+    const ok = await arConfirm({
+      title: 'Disable geofence?',
+      message: `"${g.name || g.state}" stays saved but stops counting as MITRA territory. You can enable it again any time.` + _geoLastActiveWarning(id),
+      okLabel: 'Disable',
+    });
+    if (!ok) return;
+  }
+  const r = await safeFetch('/api/geofence/' + encodeURIComponent(id) + '/active', {
+    method: 'POST', body: JSON.stringify({ is_active: !!makeActive }),
+  });
+  if (r && r.id) {
+    showToast(makeActive ? `✅ ${g.name || 'Geofence'} enabled` : `⏸ ${g.name || 'Geofence'} disabled`);
+    await loadAllGeofenceStatuses();
+  }
+}
+// ✎ on a circle: the same Configure Geofence window, pre-filled, saving in place.
+function editGeofence(id) {
+  const g = _geoById(id);
+  if (!g.id) return;
+  openGeoConfig(g.state || '');
+  document.getElementById('gf-edit-id').value = g.id;
+  document.getElementById('geo-config-title').innerText = 'Edit Geofence';
+  document.getElementById('geo-config-state-name').innerText = `Editing: ${g.name || g.state}`;
+  document.getElementById('gf-save-btn').innerText = 'Save changes';
+  ['gf-whole-state-box', 'gf-or-line'].forEach(x => { const el = document.getElementById(x); if (el) el.style.display = 'none'; });
+  const set = (x, v) => { const el = document.getElementById(x); if (el) el.value = (v ?? ''); };
+  set('gf-name', g.name); set('gf-district', g.district); set('gf-radius', g.radius_km);
+  set('gf-lat', g.lat); set('gf-lng', g.lng);
+}
+async function deleteGeofence(id) {
+  const g = _geoById(id);
+  const isState = g.scope === 'state' || !!g.geojson_str;
+  const ok = await arConfirm({
+    title: 'Remove geofence permanently?',
+    message: `"${g.name || g.state}" will be deleted. ` +
+      (isState ? 'You can re-apply the state boundary later from "📍 Add Geofence".' : 'This circle cannot be restored; you would have to draw it again.') +
+      _geoLastActiveWarning(id),
+    typeToConfirm: 'REMOVE',
+    okLabel: 'Remove',
+  });
+  if (!ok) return;
+  const r = await safeFetch('/api/geofence/' + encodeURIComponent(id), { method: 'DELETE' });
+  if (r && r.id) {
+    showToast(`🗑 ${g.name || 'Geofence'} removed`);
+    await loadAllGeofenceStatuses();
+  }
 }
 
 // ── Add Class to currently selected state ────────────────────────────────────
@@ -10659,7 +10741,7 @@ const ACTION_PERMS = {
   publishAdCampaign:'perm_manage_ads', scheduleAdCampaign:'perm_manage_ads', handleAdUpload:'perm_manage_ads',
   submitAdConsent:'perm_manage_ads', saveFrequencyConfig:'perm_manage_ads',
   // ── Geofence ──
-  saveGeoConfig:'perm_manage_geo',
+  saveGeoConfig:'perm_manage_geo', toggleGeofence:'perm_manage_geo', editGeofence:'perm_manage_geo', deleteGeofence:'perm_manage_geo',
   // ── Legal & Compliance ──
   saveDPO:'perm_manage_compliance', saveGrievanceOfficer:'perm_manage_compliance',
   editGrievanceOfficer:'perm_manage_compliance', toggleDPOEdit:'perm_manage_compliance',

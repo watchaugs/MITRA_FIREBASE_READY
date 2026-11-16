@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { stripFields } = require('../lib/writeGuard');
 const { authenticate, requirePerm } = require('../middleware/auth');
+const { canAccessState } = require('../lib/stateScope');
 const log = require('../lib/logger');
 router.use(authenticate);
 
@@ -113,21 +114,88 @@ router.post('/', requirePerm('perm_manage_geo'), async (req, res) => {
   } catch { res.status(500).json({ error: 'Failed to create geofence' }); }
 });
 
+
+// Load a geofence the caller may manage (exists + inside their state scope).
+async function _ownGeofence(req, res) {
+  const db = getFirestore();
+  const ref = db.collection('geofences').doc(String(req.params.id || ''));
+  const doc = await ref.get();
+  if (!doc.exists) { res.status(404).json({ error: 'Geofence not found' }); return null; }
+  const g = doc.data() || {};
+  if (!canAccessState(req, g.state)) {
+    res.status(403).json({ error: 'Your account cannot change this state\'s geofence.' });
+    return null;
+  }
+  return { db, ref, g };
+}
+
+// PUT /:id — edit a geofence (✎ on a circle in the Curriculum tree).
+// is_active has its own route below; state/boundary of a whole-state fence
+// can't be changed here (re-apply the state instead).
 router.put('/:id', requirePerm('perm_manage_geo'), async (req, res) => {
   try {
-    const db = getFirestore();
-    const safe = stripFields(req.body, ['id', 'created_by', 'created_at']);
-    await db.collection('geofences').doc(req.params.id).update({ ...safe, updated_at: new Date() });
+    const own = await _ownGeofence(req, res);
+    if (!own) return;
+    const safe = stripFields(req.body, ['id', 'created_by', 'created_at', 'is_active', 'state', 'state_code',
+      'scope', 'geojson', 'geojson_str', 'has_geojson']);
+    for (const k of ['lat', 'lng', 'radius_km']) {
+      if (safe[k] !== undefined && !Number.isFinite(Number(safe[k]))) return res.status(400).json({ error: k + ' must be a number' });
+      if (safe[k] !== undefined) safe[k] = Number(safe[k]);
+    }
+    if (safe.radius_km !== undefined && !(safe.radius_km > 0 && safe.radius_km <= 1000)) {
+      return res.status(400).json({ error: 'radius_km must be between 1 and 1000' });
+    }
+    await own.ref.update({ ...safe, updated_by: req.user.id, updated_at: new Date() });
+    await own.db.collection('audit_log').add({
+      action: 'geofence_updated', actor: req.user.id,
+      detail: { geofence_id: req.params.id, name: safe.name || own.g.name || null, state: own.g.state || null },
+      created_at: new Date(),
+    }).catch(() => {});
     res.json({ id: req.params.id, ...safe });
-  } catch { res.status(500).json({ error: 'Failed to update geofence' }); }
+  } catch (err) {
+    log.error({ err: err.message }, 'geofence update failed');
+    res.status(500).json({ error: 'Failed to update geofence' });
+  }
 });
 
+// POST /:id/active { is_active: true|false } — disable (keeps the boundary,
+// students in that area lose access) or re-enable it.
+router.post('/:id/active', requirePerm('perm_manage_geo'), async (req, res) => {
+  try {
+    const want = req.body && req.body.is_active;
+    if (typeof want !== 'boolean') return res.status(400).json({ error: 'is_active must be true or false' });
+    const own = await _ownGeofence(req, res);
+    if (!own) return;
+    await own.ref.update({ is_active: want, updated_by: req.user.id, updated_at: new Date() });
+    await own.db.collection('audit_log').add({
+      action: want ? 'geofence_enabled' : 'geofence_disabled', actor: req.user.id,
+      detail: { geofence_id: req.params.id, name: own.g.name || null, state: own.g.state || null },
+      created_at: new Date(),
+    }).catch(() => {});
+    res.json({ id: req.params.id, is_active: want });
+  } catch (err) {
+    log.error({ err: err.message }, 'geofence toggle failed');
+    res.status(500).json({ error: 'Failed to update geofence' });
+  }
+});
+
+// DELETE /:id — remove for good. A whole-state boundary can be re-applied any
+// time from "Geofence an entire state"; a circle has to be redrawn.
 router.delete('/:id', requirePerm('perm_manage_geo'), async (req, res) => {
   try {
-    const db = getFirestore();
-    await db.collection('geofences').doc(req.params.id).delete();
-    res.json({ message: 'Geofence deleted' });
-  } catch { res.status(500).json({ error: 'Failed to delete geofence' }); }
+    const own = await _ownGeofence(req, res);
+    if (!own) return;
+    await own.ref.delete();
+    await own.db.collection('audit_log').add({
+      action: 'geofence_deleted', actor: req.user.id,
+      detail: { geofence_id: req.params.id, name: own.g.name || null, state: own.g.state || null, scope: own.g.scope || 'radius' },
+      created_at: new Date(),
+    }).catch(() => {});
+    res.json({ message: 'Geofence deleted', id: req.params.id });
+  } catch (err) {
+    log.error({ err: err.message }, 'geofence delete failed');
+    res.status(500).json({ error: 'Failed to delete geofence' });
+  }
 });
 
 router.post('/:id/sync-boundary', requirePerm('perm_manage_geo'), async (req, res) => {
