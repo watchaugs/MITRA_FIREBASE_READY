@@ -3755,10 +3755,11 @@ document.addEventListener('DOMContentLoaded', () => {
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
       <div>
         <div class="card-title" style="font-size:14px;margin-bottom:2px">📜 Audit Log</div>
-        <div style="font-size:11px;color:var(--text2)">Collected and retained for 180 days. Download for review, or view inline if needed.</div>
+        <div style="font-size:11px;color:var(--text2)">Kept for at least 180 days (CERT-In). Download for review, or view inline if needed.</div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-p btn-sm" onclick="exportData('audit','csv')">⬇️ Download CSV</button>
+        <button class="btn btn-s btn-sm" onclick="runAuditRetentionSweep()" title="Delete audit entries older than the retention period (400 days unless AUDIT_RETENTION_DAYS is set; never under 180)">🧹 Clear old entries</button>
         <button class="btn btn-s btn-sm" onclick="toggleAuditTable()" id="audit-toggle-btn">👁️ View logs</button>
       </div>
     </div>
@@ -9556,6 +9557,22 @@ function toggleAuditTable() {
   wrap.style.display = show ? 'block' : 'none';
   if (btn) btn.textContent = show ? '🙈 Hide logs' : '👁️ View logs';
   if (show) { auditLogCurrentPage = 1; loadAuditLogs(); }
+}
+
+// Removes audit entries older than the retention period (server decides the
+// period: AUDIT_RETENTION_DAYS, default 400, never below 180).
+async function runAuditRetentionSweep() {
+  const ok = await arConfirm({
+    title: 'Clear old audit entries',
+    message: 'Entries older than the retention period (400 days unless changed; never under 180) are deleted for good. Download a CSV first if you need a copy.',
+    okLabel: 'Clear old entries',
+  });
+  if (!ok) return;
+  const d = await safeFetch('/api/compliance/audit-retention-sweep', { method: 'POST', body: '{}' });
+  if (d && d.success) {
+    showToast(`🧹 ${d.purged} old entr${d.purged === 1 ? 'y' : 'ies'} removed (older than ${d.retention_days} days)` + (d.more ? ' — press again for more' : ''));
+    if (typeof loadAuditLogs === 'function') loadAuditLogs();
+  }
 }
 
 async function loadAuditLogs() {

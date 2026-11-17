@@ -285,18 +285,25 @@ router.post('/attempts/batch', async (req, res) => {
   try {
     const { attempts } = req.body;
     if (!Array.isArray(attempts)) return res.status(400).json({ error: 'attempts array required' });
+    // Only the signed-in student's OWN attempts are stored: nobody can post
+    // results under another student's id. (The app sends only its own; on a
+    // shared phone the others wait until those students sign in.)
+    const me = String((req.user && req.user.id) || '');
+    const mine = attempts.filter(a => a && typeof a === 'object' && String(a.student_id || '') === me);
+    const rejected = attempts.length - mine.length;
+    if (rejected) log.warn({ user: me, rejected }, 'quiz attempts for another student rejected');
     const db = getFirestore();
     // A Firestore batch holds at most 500 writes; a phone that was offline a
     // long time could send more, fail every time and retry forever.
-    for (let i = 0; i < attempts.length; i += 400) {
+    for (let i = 0; i < mine.length; i += 400) {
       const batch = db.batch();
-      attempts.slice(i, i + 400).forEach(a => {
+      mine.slice(i, i + 400).forEach(a => {
         const ref = db.collection('quiz_attempts').doc(uuidv4());
         batch.set(ref, { ...a, synced_at: new Date() });
       });
       await batch.commit();
     }
-    res.json({ received: true, count: attempts.length });
+    res.json({ received: true, count: mine.length, rejected });
   } catch (err) {
     res.status(500).json({ error: 'Batch submit failed' });
   }
@@ -377,6 +384,10 @@ router.get('/analytics/deep', staffOnly, async (req, res) => {
 
 router.post('/attempts', async (req, res) => {
   try {
+    // Same rule as /attempts/batch: only your own attempt is stored.
+    if (String((req.body && req.body.student_id) || '') !== String((req.user && req.user.id) || '')) {
+      return res.status(202).json({ received: false, rejected: 1 });
+    }
     const db  = getFirestore();
     const doc = { ...req.body, synced_at: new Date() };
     await db.collection('quiz_attempts').add(doc);

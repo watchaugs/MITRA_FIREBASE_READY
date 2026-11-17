@@ -54,6 +54,24 @@ router.get('/audit-log', requirePerm('perm_manage_compliance'), async (req, res)
     res.json({ data: [], total: 0 });
   }
 });
+// POST /audit-retention-sweep — remove audit entries older than the retention
+// period (AUDIT_RETENTION_DAYS, default 400, never below CERT-In's 180).
+// Pressed by hand from the Audit Log card; no scheduler needed.
+router.post('/audit-retention-sweep', requirePerm('perm_manage_compliance'), async (req, res) => {
+  try {
+    const db = getFirestore();
+    const result = await require('../lib/auditRetention').purgeOldAuditLogs(db);
+    await db.collection('audit_log').add({
+      action: 'audit_retention_sweep', actor: req.user.id,
+      detail: { purged: result.purged, cutoff: result.cutoff }, created_at: new Date(),
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    log.error({ err: err.message }, 'Audit retention sweep failed');
+    res.status(500).json({ error: 'Audit clean-up failed' });
+  }
+});
+
 router.get('/audit-logs', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
     // Latest 500 entries, filtered and paged in memory (no extra indexes needed).
@@ -150,8 +168,10 @@ router.get('/dpdpa-report', requirePerm('perm_view_legal'), async (req, res) => 
 //   Firebase sign-in account (phone number). Kept, as proof of erasure: the
 //   anonymised consent record, the purge_log entry and the data request (with
 //   the name removed). Ad impressions hold no student id, so they stay.
-// NOTE: telemetry already copied to BigQuery (analytics "Sync") is not
-// touched here — remove it there too if a sync ran after the student joined.
+// Telemetry copied to BigQuery by the analytics "Sync" is erased too
+// (DELETE … WHERE student_id). If Sync never ran there is nothing to delete
+// and nothing is created. The Sync's staging files in the telemetry bucket
+// are deleted by the exporter right after each load, so no copy stays there.
 async function deleteWhere(db, collection, uid) {
   let n = 0;
   for (;;) {
@@ -176,6 +196,13 @@ async function eraseStudent(db, uid) {
   }
   const dr = await db.collection('data_requests').where('student_id', '==', uid).get();
   for (const d of dr.docs) await d.ref.set({ student_name: null, class: null }, { merge: true });
+  try {
+    const { runDml, FQ_TABLE } = require('../lib/bq');
+    out.bigquery_rows = await runDml(`DELETE FROM ${FQ_TABLE} WHERE student_id = @uid`, { uid });
+  } catch (e) {
+    out.bigquery = 'failed';
+    log.error({ err: e.message, student_id: uid }, 'BigQuery erasure failed — rerun the purge');
+  }
   try {
     await require('../lib/firebase').getAuth().deleteUser(uid);
     out.sign_in = 'deleted';
@@ -418,6 +445,15 @@ router.post('/enforce-mfa', requirePerm('perm_manage_compliance'), async (req, r
     res.status(500).json({ error: 'Could not update MFA', detail: err.message });
   }
 });
+// Consent PII (guardian name etc.) is encrypted at rest once
+// FIELD_ENCRYPTION_KEY is set; the family's data copy must be readable.
+function readableConsent(rec) {
+  try {
+    const { decryptFields } = require('../lib/fieldCrypto');
+    return decryptFields(rec, ['guardian_name', 'guardian_email', 'guardian_phone', 'student_name']);
+  } catch (_) { return rec; } // no key / old plaintext record
+}
+
 router.get('/data-export/:userId', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
     const db  = getFirestore();
@@ -459,7 +495,7 @@ router.get('/data-export/:userId', requirePerm('perm_manage_compliance'), async 
         profile:          userDoc.exists ? userDoc.data() : null,
         student:          studentDoc.exists ? studentDoc.data() : null,
         progress:         progressDoc.exists ? progressDoc.data() : null,
-        consent:          consentDoc.exists ? consentDoc.data() : null,
+        consent:          consentDoc.exists ? readableConsent(consentDoc.data()) : null,
         telemetry_count:  sessSnap.size,
         quiz_count:       quizSnap.size,
         sessions:         sessSnap.docs.map(d => d.data()),

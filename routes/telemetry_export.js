@@ -32,9 +32,8 @@ router.post('/telemetry-export', checkSecret, async (req, res) => {
 router.post('/audit-retention-sweep', checkSecret, async (req, res) => {
   try {
     const { purgeOldAuditLogs } = require('../lib/auditRetention');
-    const { query } = require('../lib/db');
-    const purged = await purgeOldAuditLogs(query);
-    res.json({ ok: true, purged });
+    const result = await purgeOldAuditLogs(require('../lib/firebase').getFirestore());
+    res.json({ ok: true, ...result });
   } catch (err) {
     console.error('Audit retention sweep failed:', err);
     res.status(500).json({ ok: false, error: String(err.message || err) });
