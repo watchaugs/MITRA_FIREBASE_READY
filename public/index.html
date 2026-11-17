@@ -10404,13 +10404,31 @@ async function loadDataRequests() {
           <td>${escHtml([r.state, r.class].filter(Boolean).join(' · ') || '—')}</td>
           <td>${fmtDate(r.requested_at)}</td>
           <td><span class="tag ${isPending ? '' : 'tag-g'}">${status}</span></td>
-          <td>${isPending
+          <td>${r.type !== 'deletion' && r.student_id
+            ? `<button class="btn btn-s btn-xs" style="margin-right:4px" title="Download everything MITRA holds about this student (JSON) to send them" onclick="downloadDataCopy('${jsq(r.student_id)}')">⬇️ Data copy</button>`
+            : ''}${isPending
             ? `<button class="btn btn-s btn-xs" onclick="actionDataRequest('${jsq(r.id)}','actioned')">Mark done</button>`
             : `<span style="font-size:10px;color:var(--text3)">by ${escHtml(r.actioned_by || '—')}</span>`}</td>
         </tr>`;
       }).join('')}
       </tbody>
     </table>`;
+}
+
+// DPDPA right of access: one JSON file with the student's profile, progress,
+// consent, quiz attempts and telemetry, for the officer to send to the family.
+async function downloadDataCopy(studentId) {
+  const data = await safeFetch('/api/compliance/data-export/' + encodeURIComponent(studentId));
+  if (!data || !data.user_id) return;
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `MITRA_data_copy_${studentId}_${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  showToast('⬇️ Data copy downloaded — send it to the student, then press Mark done');
 }
 
 async function actionDataRequest(id, status) {

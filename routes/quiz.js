@@ -26,6 +26,11 @@ const storage = require('../lib/storage');
 //   sequence → options are the steps in the RIGHT order (3–6); the app shuffles
 //              them. correct_answer_index is always 0 (= the right order).
 // Pictures are uploaded through POST /image and served like AR files.
+// Express 4 doesn't catch a rejected async handler: the request would hang
+// until the 60 s Hosting timeout. caught() hands the error to server.js's
+// error handler, which answers with a JSON 500.
+const caught = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
 const ROUND_TYPES = new Set(['picture', 'sequence']);
 const QUIZ_IMG_RE = /^quizimg_[0-9a-f-]{36}\.(jpg|png|webp)$/;
 const quizImgUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024 * 1024 } });
@@ -281,12 +286,16 @@ router.post('/attempts/batch', async (req, res) => {
     const { attempts } = req.body;
     if (!Array.isArray(attempts)) return res.status(400).json({ error: 'attempts array required' });
     const db = getFirestore();
-    const batch = db.batch();
-    attempts.forEach(a => {
-      const ref = db.collection('quiz_attempts').doc(uuidv4());
-      batch.set(ref, { ...a, synced_at: new Date() });
-    });
-    await batch.commit();
+    // A Firestore batch holds at most 500 writes; a phone that was offline a
+    // long time could send more, fail every time and retry forever.
+    for (let i = 0; i < attempts.length; i += 400) {
+      const batch = db.batch();
+      attempts.slice(i, i + 400).forEach(a => {
+        const ref = db.collection('quiz_attempts').doc(uuidv4());
+        batch.set(ref, { ...a, synced_at: new Date() });
+      });
+      await batch.commit();
+    }
     res.json({ received: true, count: attempts.length });
   } catch (err) {
     res.status(500).json({ error: 'Batch submit failed' });
@@ -506,7 +515,7 @@ router.post('/bulk-upload', requirePerm('perm_edit_curriculum'), async (req, res
 // Groups rows by Class + Subject + Topic(normalized) + State → one quiz each.
 // Type: MCQ (default) → A–D + Answer. Sequence → 3–6 steps in A–F in the right
 // order, no Answer. Unusable rows are skipped and returned in `skipped`.
-router.post('/bulk-upload-grouped', requirePerm('perm_edit_curriculum'), async (req, res) => {
+router.post('/bulk-upload-grouped', requirePerm('perm_edit_curriculum'), caught(async (req, res) => {
   const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
   if (!rows.length) return res.status(400).json({ error: 'No rows' });
   const db = getFirestore();
@@ -573,7 +582,7 @@ router.post('/bulk-upload-grouped', requirePerm('perm_edit_curriculum'), async (
     created.push({ quiz_id: id, class: g.class_name, subject: g.subject, topic: g.topic, state: g.state, questions: g.questions.length });
   }
   res.json({ success: true, created_quizzes: created.length, created_questions: created.reduce((s,c)=>s+c.questions,0), quizzes: created, skipped });
-});
+}));
 
 // ── POST /:id/translate — NMT a quiz into target languages ────────────────────
 // body: { target_langs: ['gu','ta',...], source_lang?: 'en', force?: bool }
@@ -582,7 +591,7 @@ router.post('/bulk-upload-grouped', requirePerm('perm_edit_curriculum'), async (
 //   sharing translation_group, same class/subject/topic, tagged language.
 // - Translates question_text/options/explanation; keeps correct_answer_index,
 //   numbers, formulae, {placeholders} verbatim.
-router.post('/:id/translate', requirePerm('perm_edit_curriculum'), async (req, res) => {
+router.post('/:id/translate', requirePerm('perm_edit_curriculum'), caught(async (req, res) => {
   if (!bhashini.isConfigured()) return res.status(503).json({ error: 'Bhashini not configured' });
   const db = getFirestore();
   const srcRef = db.collection('quizzes').doc(req.params.id);
@@ -658,7 +667,7 @@ router.post('/:id/translate', requirePerm('perm_edit_curriculum'), async (req, r
     }
   }
   res.json({ message: 'Translation complete — review each language before publish', group: groupId, created, failed });
-});
+}));
 
 // ── POST /extract-subjects — read an uploaded quiz XLSX, return distinct subjects
 // Powers the manual force-translate picker. Accepts the parsed rows from the

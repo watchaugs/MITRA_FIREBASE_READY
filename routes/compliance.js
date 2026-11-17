@@ -143,6 +143,48 @@ router.get('/dpdpa-report', requirePerm('perm_view_legal'), async (req, res) => 
     res.json({ report: [], generated_at: new Date().toISOString() });
   }
 });
+// ── Full erasure of one student's personal data (DPDPA right to erasure) ─────
+// Deletes everything the app and the dashboard hold about the student:
+//   quiz_attempts, legacy telemetry_sessions, telemetry_sync/{uid} (all the
+//   app's telemetry batches), student_progress, students, app_users, and the
+//   Firebase sign-in account (phone number). Kept, as proof of erasure: the
+//   anonymised consent record, the purge_log entry and the data request (with
+//   the name removed). Ad impressions hold no student id, so they stay.
+// NOTE: telemetry already copied to BigQuery (analytics "Sync") is not
+// touched here — remove it there too if a sync ran after the student joined.
+async function deleteWhere(db, collection, uid) {
+  let n = 0;
+  for (;;) {
+    const s = await db.collection(collection).where('student_id', '==', uid).limit(400).get();
+    if (s.empty) break;
+    const b = db.batch();
+    s.docs.forEach(d => b.delete(d.ref));
+    await b.commit();
+    n += s.size;
+    if (s.size < 400) break;
+  }
+  return n;
+}
+
+async function eraseStudent(db, uid) {
+  const out = { quiz_attempts: 0, telemetry_sessions: 0 };
+  out.quiz_attempts = await deleteWhere(db, 'quiz_attempts', uid);
+  out.telemetry_sessions = await deleteWhere(db, 'telemetry_sessions', uid);
+  await db.recursiveDelete(db.collection('telemetry_sync').doc(uid)); // + sub-collections
+  for (const c of ['student_progress', 'students', 'app_users']) {
+    await db.collection(c).doc(uid).delete().catch(() => {});
+  }
+  const dr = await db.collection('data_requests').where('student_id', '==', uid).get();
+  for (const d of dr.docs) await d.ref.set({ student_name: null, class: null }, { merge: true });
+  try {
+    await require('../lib/firebase').getAuth().deleteUser(uid);
+    out.sign_in = 'deleted';
+  } catch (e) {
+    out.sign_in = (e && e.code === 'auth/user-not-found') ? 'none' : 'failed';
+  }
+  return out;
+}
+
 router.post('/purge-user', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
     const student_id = String(req.body?.student_id || req.body?.user_id || '').trim();
@@ -174,6 +216,8 @@ router.post('/purge-user', requirePerm('perm_manage_compliance'), async (req, re
       } catch (_) { /* no request doc → treat as a direct admin purge */ }
     }
 
+    // Erase the student's data first; the proof-of-erasure records follow.
+    const erased = await eraseStudent(db, student_id);
     const batch = db.batch();
 
     // Anonymise consent record — do not delete (audit trail required by DPDPA)
@@ -186,33 +230,27 @@ router.post('/purge-user', requirePerm('perm_manage_compliance'), async (req, re
       purged_by: req.user.id,
     }, { merge: false });
 
-    // Delete telemetry sessions for this student
-    const sessSnap = await db.collection('telemetry_sessions')
-      .where('student_id', '==', student_id).limit(500).get();
-    sessSnap.docs.forEach(d => batch.delete(d.ref));
-
-    // Delete quiz attempts for this student
-    const quizSnap = await db.collection('quiz_attempts')
-      .where('student_id', '==', student_id).limit(500).get();
-    quizSnap.docs.forEach(d => batch.delete(d.ref));
+    const recordsDeleted = erased.quiz_attempts + erased.telemetry_sessions;
 
     // Write purge audit entry
     batch.set(db.collection('purge_log').doc(), {
       student_id, reason,
       purged_by: req.user.id,
-      records_deleted: sessSnap.size + quizSnap.size,
+      records_deleted: recordsDeleted,
+      erased,
       purged_at: new Date(),
     });
     batch.set(db.collection('audit_log').doc(), {
       action: 'user_purged', actor: req.user.id,
-      detail: { student_id, reason }, created_at: new Date(),
+      detail: { student_id, reason, erased }, created_at: new Date(),
     });
 
     await batch.commit();
     res.json({
       success: true,
       message: `User data purged per DPDPA Article 13`,
-      records_deleted: sessSnap.size + quizSnap.size,
+      records_deleted: recordsDeleted,
+      erased,
     });
   } catch (err) {
     log.error({ err: err.message, student_id: req.body?.student_id }, 'Purge failed');
@@ -248,6 +286,12 @@ router.post('/run-auto-purge', requirePerm('perm_manage_compliance'), async (req
     }
     let purged = 0;
     for (const doc of toPurge) {
+      // consent_records are keyed by the student's uid → erase their data too
+      // (this used to anonymise only the consent record).
+      try { await eraseStudent(db, doc.id); } catch (e) {
+        log.error({ err: e.message, student_id: doc.id }, 'Auto-purge erase failed');
+        continue; // keep the consent record so the next run retries
+      }
       await doc.ref.set({
         student_id: `AUTOPURGED_${Date.now()}_${purged}`,
         granted: false, purged: true,
@@ -392,20 +436,35 @@ router.get('/data-export/:userId', requirePerm('perm_manage_compliance'), async 
       }
     }
 
-    const [consentDoc, sessSnap, quizSnap] = await Promise.all([
+    const [consentDoc, sessSnap, quizSnap, userDoc, studentDoc, progressDoc] = await Promise.all([
       db.collection('consent_records').doc(uid).get(),
       db.collection('telemetry_sessions').where('student_id', '==', uid).limit(500).get(),
       db.collection('quiz_attempts').where('student_id', '==', uid).limit(500).get(),
+      db.collection('app_users').doc(uid).get(),
+      db.collection('students').doc(uid).get(),
+      db.collection('student_progress').doc(uid).get(),
     ]);
+    // The app's telemetry lives in telemetry_sync/{uid}/{collection}/* batches.
+    const telemetry = {};
+    try {
+      for (const c of await db.collection('telemetry_sync').doc(uid).listCollections()) {
+        const s = await c.limit(500).get();
+        telemetry[c.id] = s.docs.map(d => d.data());
+      }
+    } catch (_) { /* none */ }
     res.json({
       user_id: uid,
       exported_at: new Date().toISOString(),
       data: {
+        profile:          userDoc.exists ? userDoc.data() : null,
+        student:          studentDoc.exists ? studentDoc.data() : null,
+        progress:         progressDoc.exists ? progressDoc.data() : null,
         consent:          consentDoc.exists ? consentDoc.data() : null,
         telemetry_count:  sessSnap.size,
         quiz_count:       quizSnap.size,
         sessions:         sessSnap.docs.map(d => d.data()),
         quiz_attempts:    quizSnap.docs.map(d => d.data()),
+        telemetry,
       },
     });
   } catch (err) {

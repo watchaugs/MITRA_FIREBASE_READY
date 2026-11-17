@@ -1,5 +1,8 @@
 'use strict';
 const router  = require('express').Router();
+// Express 4 doesn't catch a rejected async handler (the request would hang
+// until the 60 s Hosting timeout); caught() passes it to the error handler.
+const caught = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const multer  = require('multer');
 const path    = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -954,10 +957,10 @@ router.get('/bhashini/health', requirePerm('perm_upload_unity'), async (req, res
 });
 
 // ── Available TTS voices for a language (dynamic dropdown) ─────────────────────
-router.get('/bhashini/voices/:lang', requirePerm('perm_upload_unity'), async (req, res) => {
+router.get('/bhashini/voices/:lang', requirePerm('perm_upload_unity'), caught(async (req, res) => {
   const voices = await bhashini.ttsVoices((req.params.lang || '').toLowerCase());
   res.json({ lang: req.params.lang, voices });
-});
+}));
 
 // ── Generate narration with Bhashini for one or more languages ────────────────
 // body: { languages: ['hi','gu',...], text: '...' | texts: {hi:'...',gu:'...'}, gender }
@@ -1127,7 +1130,7 @@ router.delete('/assets/:id/video', requirePerm('perm_upload_unity'), async (req,
 // Phase 3e — Regenerate derivatives from stored sources
 //   kind = model (re-run Draco from _original.glb) | transcode (re-encode audio)
 // ═══════════════════════════════════════════════════════════════════════════
-router.post('/assets/:id/regenerate', requirePerm('perm_upload_unity'), async (req, res) => {
+router.post('/assets/:id/regenerate', requirePerm('perm_upload_unity'), caught(async (req, res) => {
   const { id } = req.params;
   const kind = (req.body.kind || '').toLowerCase();
   const db  = getFirestore();
@@ -1187,7 +1190,7 @@ router.post('/assets/:id/regenerate', requirePerm('perm_upload_unity'), async (r
     }
     return res.status(400).json({ error: `Unknown kind "${kind}" (model|transcode|nmt)` });
   } catch (e) { return res.status(500).json({ error: 'Regenerate failed', detail: e.message }); }
-});
+}));
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Phase 3f — Bulk actions   action = delete | publish
