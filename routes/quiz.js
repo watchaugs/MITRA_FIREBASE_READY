@@ -16,6 +16,49 @@ const { stripFields } = require('../lib/writeGuard');
 const LIVE_STATUSES = new Set(['live', 'published']);
 const log = require('../lib/logger');
 const bhashini = require('../lib/bhashini');
+const multer = require('multer');
+const storage = require('../lib/storage');
+
+// ── Question rounds ──────────────────────────────────────────────────────────
+// A question is a normal MCQ unless `type` says otherwise:
+//   picture  → options are captions (may be blank); option_images[i] is the
+//              picture for option i; optional question_image. 2–4 options.
+//   sequence → options are the steps in the RIGHT order (3–6); the app shuffles
+//              them. correct_answer_index is always 0 (= the right order).
+// Pictures are uploaded through POST /image and served like AR files.
+const ROUND_TYPES = new Set(['picture', 'sequence']);
+const QUIZ_IMG_RE = /^quizimg_[0-9a-f-]{36}\.(jpg|png|webp)$/;
+const quizImgUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024 * 1024 } });
+function cleanQuizImg(u) {
+  const s = String(u || '').trim();
+  const name = s.split('/').pop();
+  if (!QUIZ_IMG_RE.test(name)) return '';
+  if (s === `/api/ar/file/${name}`) return s;
+  const pub = process.env.R2_PUBLIC_URL;
+  if (pub && s === `${pub}/ar_assets/${name}`) return s;
+  return '';
+}
+// Round fields to store with a question ({} for a plain MCQ). Throws a
+// readable error when a round is incomplete.
+function roundFields(q, n) {
+  const type = ROUND_TYPES.has(q.type) ? q.type : null;
+  if (!type) return {};
+  const opts = Array.isArray(q.options) ? q.options.map(o => String(o ?? '').trim()) : [];
+  if (type === 'sequence') {
+    if (opts.length < 3 || opts.length > 6 || opts.some(o => !o)) {
+      throw new Error(`Question ${n}: a sequence round needs 3 to 6 filled steps`);
+    }
+    return { type };
+  }
+  const imgs = (Array.isArray(q.option_images) ? q.option_images : []).map(cleanQuizImg);
+  if (imgs.length < 2 || imgs.length > 4 || imgs.some(u => !u) || imgs.length !== opts.length) {
+    throw new Error(`Question ${n}: a picture round needs 2 to 4 pictures, one per option`);
+  }
+  const out = { type, option_images: imgs };
+  const qi = cleanQuizImg(q.question_image);
+  if (qi) out.question_image = qi;
+  return out;
+}
 
 // The 22 scheduled languages (+ common names). A quiz whose SUBJECT is one of
 // these is a language lesson → never auto-translated (stays single-language).
@@ -23,7 +66,7 @@ const LANGUAGE_SUBJECTS = new Set([
   'english','hindi','bengali','bangla','gujarati','marathi','tamil','telugu','kannada',
   'malayalam','punjabi','odia','oriya','assamese','urdu','sanskrit','sindhi','nepali',
   'konkani','manipuri','meitei','bodo','santhali','santali','dogri','kashmiri','maithili',
-  'grammar','language','mother tongue','first language','second language','third language',
+  'grammar','language','languages','mother tongue','first language','second language','third language',
 ]);
 function isLanguageSubject(subject) {
   return LANGUAGE_SUBJECTS.has(String(subject || '').trim().toLowerCase());
@@ -109,6 +152,9 @@ router.get('/pack/:state', async (req, res) => {
   try {
     const db = getFirestore();
     const stateRaw = req.params.state === 'ALL' ? '' : req.params.state;
+    // Apps that can play picture / sequence rounds send ?rounds=1. Older apps
+    // don't, and would show those questions with blank options — skip them.
+    const withRounds = req.query.rounds === '1';
     const snap = await db.collection('quizzes').limit(200).get();
     let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     // State gate + live + released (same rules as the list endpoint).
@@ -120,7 +166,7 @@ router.get('/pack/:state', async (req, res) => {
       try {
         const qs = await db.collection('quizzes').doc(q.id)
           .collection('questions').orderBy('sort_order').get();
-        questions = qs.docs.map(d => {
+        questions = qs.docs.filter(d => withRounds || !ROUND_TYPES.has(d.data().type)).map(d => {
           const x = d.data();
           // Normalise to the app's expected field names.
           const options = Array.isArray(x.options) ? x.options.map(o => String(o ?? '')) : [];
@@ -140,12 +186,19 @@ router.get('/pack/:state', async (req, res) => {
           if (typeof ci !== 'number' || Number.isNaN(ci) || ci < 0) ci = 0;
           // Clamp to the available options so a bad value can't crash the app.
           if (options.length && ci >= options.length) ci = 0;
-          return {
+          const row = {
             question_text: x.question_text || x.text || x.question || '',
             options,
             correct_index: ci,
             explanation: x.explanation || '',
           };
+          if (ROUND_TYPES.has(x.type)) {
+            row.type = x.type;
+            if (x.type === 'sequence') row.correct_index = 0;
+            if (Array.isArray(x.option_images)) row.option_images = x.option_images;
+            if (x.question_image) row.question_image = x.question_image;
+          }
+          return row;
         });
       } catch (_) { /* a quiz with no questions subcollection → empty */ }
       quizzes.push({ id: q.id, title: q.title || '', subject: q.subject || '', questions });
@@ -180,6 +233,28 @@ router.post('/', requirePerm('perm_edit_curriculum'), async (req, res) => {
     await db.collection('quizzes').doc(id).set({ ...fields, target_states: parseTargetStates(fields.target_states), created_by: req.user.id, created_at: new Date(), status, question_count: 0 });
     res.status(201).json({ id, ...fields, status });
   } catch { res.status(500).json({ error: 'Failed to create quiz' }); }
+});
+
+// POST /image — one picture for a picture round (the dashboard shrinks it to
+// ≤640 px first). Returns { url } to save in option_images / question_image.
+router.post('/image', requirePerm('perm_edit_curriculum'), quizImgUpload.single('image'), async (req, res) => {
+  try {
+    const b = req.file && req.file.buffer;
+    if (!b || b.length < 12) return res.status(400).json({ error: 'No picture received' });
+    const ext = (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) ? 'jpg'
+      : (b[0] === 0x89 && b.toString('latin1', 1, 4) === 'PNG') ? 'png'
+      : (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') ? 'webp'
+      : null;
+    if (!ext) return res.status(400).json({ error: 'Use a JPG, PNG or WebP picture' });
+    const name = `quizimg_${uuidv4()}.${ext}`;
+    const key = `ar_assets/${name}`;
+    await storage.putRaw(b, key, { contentType: ext === 'jpg' ? 'image/jpeg' : `image/${ext}` });
+    const url = process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${key}` : `/api/ar/file/${name}`;
+    res.status(201).json({ url, size: b.length });
+  } catch (err) {
+    log.error({ err: err.message }, 'quiz image upload failed');
+    res.status(500).json({ error: 'Could not save the picture' });
+  }
 });
 
 router.put('/:id', requirePerm('perm_edit_curriculum'), async (req, res) => {
@@ -396,6 +471,10 @@ router.post('/bulk-upload', requirePerm('perm_edit_curriculum'), async (req, res
       return res.status(400).json({ error: 'questions array required' });
     }
 
+    let rounds;
+    try { rounds = questions.map((q, i) => roundFields(q, i + 1)); }
+    catch (e) { return res.status(400).json({ error: e.message }); }
+
     const db    = getFirestore();
     const batch = db.batch();
     questions.forEach((q, i) => {
@@ -403,9 +482,11 @@ router.post('/bulk-upload', requirePerm('perm_edit_curriculum'), async (req, res
       batch.set(ref, {
         question_text:         q.question_text         || q.Question       || '',
         options:               q.options               || [q.A, q.B, q.C, q.D].filter(Boolean),
-        correct_answer_index:  q.correct_answer_index  ?? (q.Answer ? ['A','B','C','D'].indexOf(q.Answer) : 0),
+        correct_answer_index:  rounds[i].type === 'sequence' ? 0
+          : (q.correct_answer_index  ?? (q.Answer ? ['A','B','C','D'].indexOf(q.Answer) : 0)),
         explanation:           q.explanation           || q.Explanation    || '',
         sort_order:            q.sort_order            ?? i,
+        ...rounds[i],
         created_at:            new Date(),
       });
     });
@@ -421,35 +502,54 @@ router.post('/bulk-upload', requirePerm('perm_edit_curriculum'), async (req, res
 });
 
 // ── POST /bulk-upload-grouped — one flat sheet → many quizzes ────────────────
-// body: { rows: [ {Class,Subject,Topic,State,"Source Language",question_text,A,B,C,D,Answer,Explanation}, ...] }
+// body: { rows: [ {Class,Subject,Topic,State,"Source Language",question_text,Type,A..F,Answer,Explanation,_row}, ...] }
 // Groups rows by Class + Subject + Topic(normalized) + State → one quiz each.
+// Type: MCQ (default) → A–D + Answer. Sequence → 3–6 steps in A–F in the right
+// order, no Answer. Unusable rows are skipped and returned in `skipped`.
 router.post('/bulk-upload-grouped', requirePerm('perm_edit_curriculum'), async (req, res) => {
   const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
   if (!rows.length) return res.status(400).json({ error: 'No rows' });
   const db = getFirestore();
   const normTopic = (t) => String(t || '').trim().toLowerCase().replace(/\s+/g, ' ');
   const groups = new Map();
-  for (const r of rows) {
+  const skipped = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const rowNo = Number(r._row) || i + 2;
+    const skip = (reason) => { skipped.push({ row: rowNo, reason }); };
     const cls = String(r.class || r.Class || '').trim();
     const subj = String(r.subject || r.Subject || '').trim();
     const topic = String(r.topic || r.Topic || '').trim();
     const state = String(r.state || r.State || '').trim() || 'All India';
     const qtext = String(r.question_text || r.Question || '').trim();
-    if (!cls || !subj || !topic || !qtext) continue;
+    if (!cls || !subj || !topic || !qtext) { skip('Class, Subject, Topic and question_text are required'); continue; }
+    const isSeq = /^seq/i.test(String(r.type || r.Type || '').trim());
+    const cell = (k) => String(r[k] ?? '').trim();
+    let q;
+    if (isSeq) {
+      const steps = ['A','B','C','D','E','F'].map(cell).filter(Boolean);
+      if (steps.length < 3) { skip('A sequence needs at least 3 steps in A–F'); continue; }
+      q = { type: 'sequence', question_text: qtext, options: steps, correct_answer_index: 0 };
+    } else {
+      const options = ['A','B','C','D'].map(cell);
+      const ans = ['A','B','C','D'].indexOf(String(r.answer || r.Answer || '').trim().toUpperCase());
+      if (options.filter(Boolean).length < 2) { skip('An MCQ needs at least 2 options'); continue; }
+      if (ans < 0) { skip('Answer must be A, B, C or D'); continue; }
+      if (!options[ans]) { skip(`Answer ${'ABCD'[ans]} points to an empty option`); continue; }
+      // Drop empty options, keeping the answer on the same option.
+      const kept = options.map((o, k) => ({ o, k })).filter(x => x.o);
+      q = { question_text: qtext, options: kept.map(x => x.o), correct_answer_index: kept.findIndex(x => x.k === ans) };
+    }
+    q.explanation = String(r.explanation || r.Explanation || '').trim();
     const key = [cls, subj, normTopic(topic), state].join('||');
     if (!groups.has(key)) groups.set(key, {
       class_name: cls, subject: subj, topic, state,
       source_language: String(r.source_language || r['Source Language'] || 'en').toLowerCase(),
       questions: [],
     });
-    groups.get(key).questions.push({
-      question_text: qtext,
-      options: [r.A, r.B, r.C, r.D].map(x => String(x ?? '').trim()).filter(Boolean),
-      correct_answer_index: ['A','B','C','D'].indexOf(String(r.answer || r.Answer || 'A').trim().toUpperCase()),
-      explanation: String(r.explanation || r.Explanation || '').trim(),
-    });
+    groups.get(key).questions.push(q);
   }
-  if (!groups.size) return res.status(400).json({ error: 'No complete rows found' });
+  if (!groups.size) return res.status(400).json({ error: 'No complete rows found', skipped });
 
   const created = [];
   for (const g of groups.values()) {
@@ -472,7 +572,7 @@ router.post('/bulk-upload-grouped', requirePerm('perm_edit_curriculum'), async (
     await batch.commit();
     created.push({ quiz_id: id, class: g.class_name, subject: g.subject, topic: g.topic, state: g.state, questions: g.questions.length });
   }
-  res.json({ success: true, created_quizzes: created.length, created_questions: created.reduce((s,c)=>s+c.questions,0), quizzes: created });
+  res.json({ success: true, created_quizzes: created.length, created_questions: created.reduce((s,c)=>s+c.questions,0), quizzes: created, skipped });
 });
 
 // ── POST /:id/translate — NMT a quiz into target languages ────────────────────
@@ -544,6 +644,10 @@ router.post('/:id/translate', requirePerm('perm_edit_curriculum'), async (req, r
           correct_answer_index: q.correct_answer_index ?? 0,   // NEVER translated
           explanation: await _tr(q.explanation || '', srcCode, tgt),
           sort_order: q.sort_order ?? i,
+          // Round type and pictures carry over unchanged.
+          ...(ROUND_TYPES.has(q.type) ? { type: q.type } : {}),
+          ...(Array.isArray(q.option_images) ? { option_images: q.option_images } : {}),
+          ...(q.question_image ? { question_image: q.question_image } : {}),
           created_at: new Date(),
         });
       }

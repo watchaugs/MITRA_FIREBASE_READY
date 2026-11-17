@@ -870,7 +870,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
     <!-- Questions -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div class="card-title">Questions</div>
-      <button class="btn btn-s btn-sm" onclick="addQuizQuestion()">+ Add Question</button>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-s btn-sm" onclick="addQuizQuestion()">+ Add Question</button>
+        <button class="btn btn-s btn-sm" onclick="addQuizQuestion('picture')" title="Students pick the right picture">🖼️ + Picture round</button>
+        <button class="btn btn-s btn-sm" onclick="addQuizQuestion('sequence')" title="Students put the steps in the right order">🔢 + Sequence round</button>
+      </div>
     </div>
     <div id="mqs-questions-container" style="display:grid;gap:14px;max-height:360px;overflow-y:auto;padding-right:4px"></div>
     <div id="mqs-q-placeholder" style="text-align:center;padding:20px;color:var(--text2);font-size:13px;border:1px dashed var(--border2);border-radius:10px">
@@ -5461,7 +5465,9 @@ async function submitQuizBulkUpload() {
     const wb = XLSX.read(await quizUploadFile.arrayBuffer(), { type: 'array' });
     const sheetName = wb.SheetNames.find(n => !['lists','read me first'].includes(n.toLowerCase())) || wb.SheetNames[0];
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '' });
-    const clean = rows.filter(r => String(r.question_text || r.Question || '').trim());
+    // _row = the Excel row number, so skipped rows can be reported back.
+    const clean = rows.map((r, i) => ({ ...r, _row: (r.__rowNum__ ?? i + 1) + 1 }))
+      .filter(r => String(r.question_text || r.Question || '').trim());
     if (!clean.length) { statusEl.innerHTML = '<span style="color:var(--red)">❌ No question rows found on the Quizzes tab.</span>'; return; }
 
     const norm = t => String(t||'').trim().toLowerCase().replace(/\s+/g,' ');
@@ -5474,7 +5480,11 @@ async function submitQuizBulkUpload() {
       body: JSON.stringify({ rows: clean })
     });
     if (!d) { statusEl.innerHTML = '<span style="color:var(--red)">❌ Upload failed.</span>'; return; }
-    statusEl.innerHTML = `<span style="color:var(--accent3)">✅ Created ${d.created_quizzes} quiz(zes), ${d.created_questions} questions. Now click 🌐 Translate on each to generate its state's languages.</span>`;
+    const sk = Array.isArray(d.skipped) ? d.skipped : [];
+    const skHtml = sk.length
+      ? `<div style="color:var(--accent4);margin-top:6px">⚠️ ${sk.length} row(s) skipped:<br>${sk.slice(0, 10).map(x => `Row ${x.row}: ${escHtml(x.reason)}`).join('<br>')}${sk.length > 10 ? '<br>…' : ''}</div>`
+      : '';
+    statusEl.innerHTML = `<span style="color:var(--accent3)">✅ Created ${d.created_quizzes} quiz(zes), ${d.created_questions} questions. Now click 🌐 Translate on each to generate its state's languages.</span>${skHtml}`;
     quizUploadFile = null;
     const qub = document.getElementById('quiz-upload-btn');
     if (qub) { qub.disabled = true; qub.style.opacity = '.35'; qub.style.cursor = 'not-allowed'; qub.style.boxShadow = ''; qub.style.transform = ''; }
@@ -5510,18 +5520,28 @@ function openQuizBuilderPrefilled() {
 }
 let mqsQuestions = [];
 
-function addQuizQuestion() {
+// type: undefined / 'mcq' = normal question, 'picture' = pick the right
+// picture, 'sequence' = put the steps in the right order.
+function addQuizQuestion(type) {
   const container = document.getElementById('mqs-questions-container');
   const placeholder = document.getElementById('mqs-q-placeholder');
   if (placeholder) placeholder.style.display = 'none';
 
   const idx = mqsQuestions.length;
-  mqsQuestions.push({ q:'', a:'', b:'', c:'', d:'', ans:'A', expl:'' });
-
   const div = document.createElement('div');
   div.className = 'card';
   div.style.cssText = 'padding:14px;background:var(--bg3);border:1px solid var(--border2)';
   div.id = `mqs-q-${idx}`;
+  if (type === 'picture' || type === 'sequence') {
+    mqsQuestions.push(type === 'picture'
+      ? { type, q:'', qimg:'', imgs:['','','',''], caps:['','','',''], ans:'A', expl:'' }
+      : { type, q:'', items:['','',''], expl:'' });
+    div.innerHTML = mqsRoundHtml(idx);
+    container.appendChild(div);
+    if (type === 'sequence') mqsRenderSeq(idx);
+    return;
+  }
+  mqsQuestions.push({ q:'', a:'', b:'', c:'', d:'', ans:'A', expl:'' });
   div.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
       <div style="font-size:12px;font-weight:600;color:var(--text2)">Q${idx+1}</div>
@@ -5548,6 +5568,163 @@ function addQuizQuestion() {
       </div>
     </div>`;
   container.appendChild(div);
+}
+
+// ── Picture / sequence rounds ────────────────────────────────────────────────
+function mqsRoundHtml(idx) {
+  const q = mqsQuestions[idx];
+  const head = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:12px;font-weight:600;color:var(--text2)">Q${idx+1} · ${q.type === 'picture' ? '🖼️ Picture round' : '🔢 Sequence round'}</div>
+      <button class="btn btn-r btn-sm" style="padding:3px 8px;font-size:11px" onclick="removeQuestion(${idx})">✕ Remove</button>
+    </div>
+    <div class="form-row"><label class="lbl">Question *</label>
+      <textarea class="inp" style="height:60px;resize:vertical" placeholder="${q.type === 'picture' ? 'e.g. Which picture shows a mammal?' : 'e.g. Put the stages of the water cycle in order'}" onchange="mqsQuestions[${idx}].q=this.value"></textarea>
+    </div>`;
+  const expl = `<div class="form-row"><label class="lbl">Explanation (optional)</label>
+      <input class="inp" placeholder="Brief explanation..." onchange="mqsQuestions[${idx}].expl=this.value"></div>`;
+  if (q.type === 'sequence') {
+    return head + `
+    <label class="lbl">Steps in the RIGHT order * (3 to 6) — the app shuffles them for the student</label>
+    <div id="mqs-seq-${idx}" style="margin-bottom:6px"></div>
+    <button class="btn btn-s btn-sm" id="mqs-seq-add-${idx}" style="margin-bottom:10px" onclick="mqsSeqAdd(${idx})">+ Add step</button>` + expl;
+  }
+  const slot = (k, label) => `
+    <label id="mqs-img-${idx}-${k}" style="display:flex;align-items:center;justify-content:center;height:96px;border:1px dashed var(--border2);border-radius:8px;cursor:pointer;background:var(--bg2) center/contain no-repeat;font-size:11px;color:var(--text2);margin-bottom:6px">
+      <span>📷 ${label}</span>
+      <input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="mqsPickImage(${idx},'${k}',this)">
+    </label>`;
+  const opts = ['A','B','C','D'].map((L, i) => `
+      <div><label class="lbl">Picture ${L}${i < 2 ? ' *' : ''}</label>${slot(i, 'Choose picture')}
+        <input class="inp" placeholder="Caption (optional)" onchange="mqsQuestions[${idx}].caps[${i}]=this.value"></div>`).join('');
+  return head + `
+    <div class="form-row"><label class="lbl">Picture with the question (optional)</label>${slot('q', 'Choose picture')}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">${opts}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label class="lbl">Correct Answer *</label>
+        <select class="sel" onchange="mqsQuestions[${idx}].ans=this.value">
+          <option value="A">A</option><option value="B">B</option>
+          <option value="C">C</option><option value="D">D</option>
+        </select>
+      </div>${expl.replace('class="form-row"', '')}
+    </div>
+    <div style="font-size:11px;color:var(--text2);margin-top:6px">Pictures are shrunk to 640 px before upload. Fill at least 2; empty slots are left out.</div>`;
+}
+
+function mqsRenderSeq(idx) {
+  const q = mqsQuestions[idx], box = document.getElementById(`mqs-seq-${idx}`);
+  if (!q || !box) return;
+  box.innerHTML = q.items.map((it, i) => `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <span style="width:20px;font-size:12px;font-weight:700;color:var(--text2)">${i+1}.</span>
+      <input class="inp" style="flex:1" placeholder="Step ${i+1}" value="${escHtml(it)}" onchange="mqsQuestions[${idx}].items[${i}]=this.value">
+      <button class="btn btn-s btn-sm" style="padding:3px 7px;font-size:11px" title="Move up" ${i === 0 ? 'disabled' : ''} onclick="mqsSeqMove(${idx},${i},-1)">↑</button>
+      <button class="btn btn-s btn-sm" style="padding:3px 7px;font-size:11px" title="Move down" ${i === q.items.length - 1 ? 'disabled' : ''} onclick="mqsSeqMove(${idx},${i},1)">↓</button>
+      <button class="btn btn-r btn-sm" style="padding:3px 8px;font-size:11px" title="Remove step" ${q.items.length <= 3 ? 'disabled' : ''} onclick="mqsSeqRemove(${idx},${i})">✕</button>
+    </div>`).join('');
+  const add = document.getElementById(`mqs-seq-add-${idx}`);
+  if (add) add.disabled = q.items.length >= 6;
+}
+function mqsSeqAdd(idx) {
+  const q = mqsQuestions[idx];
+  if (!q || q.items.length >= 6) return;
+  q.items.push('');
+  mqsRenderSeq(idx);
+}
+function mqsSeqMove(idx, i, d) {
+  const q = mqsQuestions[idx], j = i + d;
+  if (!q || j < 0 || j >= q.items.length) return;
+  [q.items[i], q.items[j]] = [q.items[j], q.items[i]];
+  mqsRenderSeq(idx);
+}
+function mqsSeqRemove(idx, i) {
+  const q = mqsQuestions[idx];
+  if (!q || q.items.length <= 3) return;
+  q.items.splice(i, 1);
+  mqsRenderSeq(idx);
+}
+
+// Shrink a picture to max `max` px on its longest side → JPEG blob.
+function mqsShrinkImage(file, max) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.naturalWidth * k));
+      c.height = Math.max(1, Math.round(img.naturalHeight * k));
+      const g = c.getContext('2d');
+      g.fillStyle = '#ffffff'; g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob(b => b ? resolve(b) : reject(new Error('Could not read the picture')), 'image/jpeg', 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read the picture')); };
+    img.src = url;
+  });
+}
+
+async function mqsPickImage(idx, slot, input) {
+  const f = input.files && input.files[0];
+  const q = mqsQuestions[idx];
+  input.value = '';
+  if (!f || !q) return;
+  const box = document.getElementById(`mqs-img-${idx}-${slot}`);
+  const span = box && box.querySelector('span');
+  if (span) span.textContent = '⏳ Uploading…';
+  try {
+    const blob = await mqsShrinkImage(f, 640);
+    const fd = new FormData();
+    fd.append('image', blob, 'picture.jpg');
+    const r = await fetch('/api/quiz/image', { method: 'POST', headers: authHeaders(), body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.url) throw new Error(d.error || 'Picture upload failed');
+    if (slot === 'q') q.qimg = d.url; else q.imgs[Number(slot)] = d.url;
+    if (box) box.style.backgroundImage = `url("${d.url}")`;
+    if (span) span.textContent = '';
+  } catch (e) {
+    if (span) span.textContent = '📷 Choose picture';
+    showToast('❌ ' + (e.message || 'Picture upload failed'));
+  }
+}
+
+// Builds the bulk-upload rows. Returns null (after a toast) if a round is incomplete.
+function mqsBuildQuestions() {
+  const letters = ['A', 'B', 'C', 'D'];
+  const out = [];
+  const all = mqsQuestions.filter(Boolean);
+  for (let n = 0; n < all.length; n++) {
+    const q = all[n];
+    if (!q.type) {
+      if (q.q && q.a && q.b && q.c && q.d) out.push({
+        question_text: q.q, options: [q.a, q.b, q.c, q.d],
+        correct_answer_index: Math.max(0, letters.indexOf(String(q.ans || 'A').trim().toUpperCase())),
+        explanation: q.expl || '',
+      });
+      continue;
+    }
+    if (!String(q.q || '').trim()) { showToast(`Q${n+1}: enter the question`); return null; }
+    if (q.type === 'sequence') {
+      const items = q.items.map(x => String(x || '').trim()).filter(Boolean);
+      if (items.length < 3) { showToast(`Q${n+1}: a sequence round needs at least 3 steps`); return null; }
+      out.push({ type: 'sequence', question_text: q.q, options: items, correct_answer_index: 0, explanation: q.expl || '' });
+      continue;
+    }
+    const filled = [0, 1, 2, 3].filter(i => q.imgs[i]);
+    if (filled.length < 2) { showToast(`Q${n+1}: add at least 2 pictures`); return null; }
+    const ai = letters.indexOf(String(q.ans || 'A').toUpperCase());
+    if (!q.imgs[ai]) { showToast(`Q${n+1}: the correct answer (${letters[ai]}) has no picture`); return null; }
+    out.push({
+      type: 'picture', question_text: q.q,
+      options: filled.map(i => String(q.caps[i] || '').trim()),
+      option_images: filled.map(i => q.imgs[i]),
+      correct_answer_index: filled.indexOf(ai),
+      ...(q.qimg ? { question_image: q.qimg } : {}),
+      explanation: q.expl || '',
+    });
+  }
+  return out;
 }
 
 function removeQuestion(idx) {
@@ -5579,7 +5756,8 @@ async function saveMqsQuiz(desiredStatus, release) {
   if (!title) return showToast('Quiz title required');
   if (!cls || !subject) return showToast('Class and subject required');
 
-  const questions = mqsQuestions.filter(Boolean).filter(q => q.q && q.a && q.b && q.c && q.d);
+  const questions = mqsBuildQuestions();
+  if (!questions) return;
   if (!questions.length) return showToast('Add at least one question');
 
   const mqsStatesSel = document.getElementById('mqs-states');
@@ -5602,17 +5780,12 @@ async function saveMqsQuiz(desiredStatus, release) {
     const quiz = await qRes.json();
 
     // Save all questions in one call (the old per-question route did not exist, so nothing was saved)
-    const letters = ['A', 'B', 'C', 'D'];
     const up = await fetch('/api/quiz/bulk-upload', {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({
         quiz_id: quiz.id,
-        questions: questions.map((q, i) => ({
-          question_text: q.q, options: [q.a, q.b, q.c, q.d],
-          correct_answer_index: Math.max(0, letters.indexOf(String(q.ans || 'A').trim().toUpperCase())),
-          explanation: q.expl || '', sort_order: i,
-        })),
+        questions: questions.map((q, i) => ({ ...q, sort_order: i })),
       }),
     });
     const upData = await up.json().catch(() => ({}));
@@ -10964,13 +11137,14 @@ async function executeBulkQuizAction(action) {
 
 // --- Secure File Download (Excel) ---
 function downloadBulkTemplate() {
-  // Serves the static v5 template from /public — the single-sheet format the
-  // grouped upload expects (Class/Subject/Topic/State per row).
+  // Serves the static v6 template from /public — the single-sheet format the
+  // grouped upload expects (Class/Subject/Topic/State per row, Type column for
+  // Sequence rounds). v5 sheets still upload (no Type → MCQ).
   showToast('Downloading template...');
   const a = document.createElement('a');
   a.style.display = 'none';
-  a.href = '/MITRA_Quiz_Upload_v5.xlsx';
-  a.download = 'MITRA_Quiz_Upload_v5.xlsx';
+  a.href = '/MITRA_Quiz_Upload_v6.xlsx';
+  a.download = 'MITRA_Quiz_Upload_v6.xlsx';
   document.body.appendChild(a);
   a.click();
   a.remove();
