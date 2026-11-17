@@ -280,4 +280,92 @@ router.get('/check-point', async (req, res) => {
   }
 });
 
+// ── Home-state rule (app: lib/services/territory_service.dart) ───────────────
+// Students may use MITRA only inside their registered state. The app checks
+// its location ON THE PHONE against that state's active geofences, so it needs
+// them (and the offline grace days). No location is sent to this route.
+// Grace days live in compliance_settings/territory_grace:
+//   { default_days: 7, days_by_state: { "<normalised state>": n } }
+const GRACE_DOC = ['compliance_settings', 'territory_grace'];
+const DEFAULT_GRACE_DAYS = 7;
+// "Jammu & Kashmir" == "jammu and kashmir" (same rule as the app).
+const normState = (s) => String(s || '').trim().toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
+
+function graceFor(data, state) {
+  const d = data || {};
+  const v = (d.days_by_state || {})[normState(state)];
+  if (Number.isFinite(Number(v)) && v !== null && v !== '') return Number(v);
+  const def = Number(d.default_days);
+  return Number.isFinite(def) && d.default_days !== undefined ? def : DEFAULT_GRACE_DAYS;
+}
+
+// GET /territory?state=Maharashtra → that state's ACTIVE geofences + grace.
+router.get('/territory', async (req, res) => {
+  const state = String(req.query.state || '').trim();
+  if (!state) return res.status(400).json({ error: 'state required' });
+  try {
+    const db = getFirestore();
+    const [snap, graceDoc] = await Promise.all([
+      db.collection('geofences').where('is_active', '==', true).get(),
+      db.collection(GRACE_DOC[0]).doc(GRACE_DOC[1]).get(),
+    ]);
+    const key = normState(state);
+    const geofences = [];
+    snap.docs.forEach(d => {
+      const g = d.data();
+      if (g.is_active === false || normState(g.state) !== key) return;
+      // Same shape rules as /check-point: real boundary first, else circle.
+      let boundary = g.geojson || null;
+      if (!boundary && g.geojson_str) {
+        try { boundary = JSON.parse(g.geojson_str); } catch (_) { boundary = null; }
+      }
+      if (g.has_geojson && boundary) {
+        geofences.push({ id: d.id, type: 'polygon', geometry: boundary });
+      } else if (g.lat && g.lng && g.radius_km) {
+        geofences.push({ id: d.id, type: 'circle', lat: Number(g.lat), lng: Number(g.lng), radius_km: Number(g.radius_km) });
+      }
+    });
+    // Same for every student of the state; the app refreshes it once a day.
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.json({ state, geofences, grace_days: graceFor(graceDoc.exists ? graceDoc.data() : null, state) });
+  } catch (err) {
+    log.error({ err: err.message }, 'territory fetch failed');
+    res.status(500).json({ error: 'Territory fetch failed' });
+  }
+});
+
+// GET /grace → { default_days, days_by_state } for the curriculum tree.
+router.get('/grace', async (req, res) => {
+  try {
+    const doc = await getFirestore().collection(GRACE_DOC[0]).doc(GRACE_DOC[1]).get();
+    const d = doc.exists ? doc.data() : {};
+    res.json({ default_days: graceFor(d, '__none__'), days_by_state: d.days_by_state || {} });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load grace settings' });
+  }
+});
+
+// PUT /grace/:state { days } — offline grace for one state (0–30 days).
+router.put('/grace/:state', requirePerm('perm_manage_geo'), async (req, res) => {
+  const state = String(req.params.state || '').trim();
+  const days = Number(req.body && req.body.days);
+  if (!state) return res.status(400).json({ error: 'state required' });
+  if (!Number.isInteger(days) || days < 0 || days > 30) {
+    return res.status(400).json({ error: 'Grace must be a whole number of days from 0 to 30' });
+  }
+  if (!canAccessState(req, state)) return res.status(403).json({ error: 'Not your state' });
+  try {
+    const ref = getFirestore().collection(GRACE_DOC[0]).doc(GRACE_DOC[1]);
+    await ref.set({
+      days_by_state: { [normState(state)]: days },
+      updated_at: new Date(),
+      updated_by: req.user.id,
+    }, { merge: true });
+    res.json({ state, days });
+  } catch (err) {
+    log.error({ err: err.message }, 'grace update failed');
+    res.status(500).json({ error: 'Failed to save grace days' });
+  }
+});
+
 module.exports = router;

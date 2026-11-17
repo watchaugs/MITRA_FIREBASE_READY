@@ -6242,9 +6242,13 @@ function removeStateBlock(blockId) {
 async function loadAllGeofenceStatuses() {
   // Every geofence of the state (active + disabled), each with its own
   // ⏸/▶ · ✎ · 🗑 controls, right under the state name next to "📍 Add Geofence".
-  const list = await safeFetch('/api/geofence');
+  const [list, grace] = await Promise.all([
+    safeFetch('/api/geofence'),
+    safeFetch('/api/geofence/grace'),
+  ]);
   if (!Array.isArray(list)) return;
   window._geoList = list;
+  window._geoGrace = grace || { default_days: 7, days_by_state: {} };
   const btn = 'background:none;border:1px solid var(--border);border-radius:6px;color:var(--text2);font-size:10px;padding:0 5px;cursor:pointer;line-height:16px';
   document.querySelectorAll('.state-tree-block').forEach(block => {
     const name = (block.dataset.stateName || '').toLowerCase();
@@ -6263,8 +6267,44 @@ async function loadAllGeofenceStatuses() {
         `<button style="${btn}" title="${on ? 'Disable' : 'Enable'}" onclick="toggleGeofence('${id}', ${on ? 'false' : 'true'})">${on ? '⏸' : '▶'}</button>` +
         (isState ? '' : `<button style="${btn}" title="Edit circle" onclick="editGeofence('${id}')">✎</button>`) +
         `<button style="${btn}" title="Remove" onclick="deleteGeofence('${id}')">🗑</button></span>`;
-    }).join('') + '</span>' + (anyOn ? '' : '<span style="color:var(--red)">· none active: students here have no access</span>');
+    }).join('') + '</span>' + (anyOn ? '' : '<span style="color:var(--red)">· none active: students here have no access</span>') +
+      _geoGraceHtml(block.dataset.stateName || '');
   });
+}
+
+// ── Offline grace (home-state rule) ─────────────────────────────────────────
+// Students use MITRA only inside their registered state. When the app can't
+// confirm the location (GPS off, no fix), lessons saved on the phone stay open
+// for this many days after the last confirmed check; nothing syncs meanwhile.
+function _geoNorm(s) { return String(s || '').trim().toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, ''); }
+function _geoGraceDays(state) {
+  const g = window._geoGrace || {};
+  const v = (g.days_by_state || {})[_geoNorm(state)];
+  return Number.isFinite(Number(v)) ? Number(v) : (Number.isFinite(Number(g.default_days)) ? Number(g.default_days) : 7);
+}
+function _geoGraceHtml(state) {
+  const id = 'geo-grace-' + _geoNorm(state);
+  const tip = 'Days a student may keep using lessons saved on the phone when the app cannot confirm their location (GPS off). Outside the state the app is always locked. 0–30.';
+  return `<span onclick="event.stopPropagation()" title="${tip}" style="display:inline-flex;align-items:center;gap:4px;margin-left:8px">` +
+    `· 📴 Offline grace <input id="${id}" data-state="${escHtml(state)}" type="number" min="0" max="30" value="${_geoGraceDays(state)}" ` +
+    `style="width:46px;padding:1px 4px;font-size:11px;background:var(--bg2);border:1px solid var(--border);border-radius:5px;color:var(--text)"> days ` +
+    `<button style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--text2);font-size:10px;padding:0 6px;cursor:pointer;line-height:16px" ` +
+    `onclick="saveGeoGrace('${id}')">Save</button></span>`;
+}
+async function saveGeoGrace(inputId) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  const state = el.dataset.state || '';
+  const days = Number(el.value);
+  if (!Number.isInteger(days) || days < 0 || days > 30) return showToast('Grace must be 0 to 30 whole days');
+  const r = await safeFetch('/api/geofence/grace/' + encodeURIComponent(state), {
+    method: 'PUT', body: JSON.stringify({ days }),
+  });
+  if (r && r.state) {
+    window._geoGrace = window._geoGrace || { days_by_state: {} };
+    (window._geoGrace.days_by_state = window._geoGrace.days_by_state || {})[_geoNorm(state)] = days;
+    showToast(`✅ ${state}: offline grace ${days} day${days === 1 ? '' : 's'} (phones pick it up within a day)`);
+  }
 }
 
 function _geoById(id) { return (window._geoList || []).find(g => g.id === id) || {}; }
