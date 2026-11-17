@@ -1702,20 +1702,6 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="card-sub">Share of each module's AR views that were replays (top 10)</div>
         <div class="chart-container"><canvas id="chart-replay-detail"></canvas></div>
       </div>
-      <div class="an-panel" id="an-panel-funnel" style="display:none">
-        <div class="card">
-          <div class="card-title">🫗 Learning funnel — per module</div>
-          <div class="card-sub" id="funnel-sub">Started → watched AR → attempted quiz → mastered. Health flags weak or mis-levelled content.</div>
-          <div id="funnel-totals" style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0"></div>
-          <div style="overflow-x:auto">
-            <table class="tbl"><thead><tr>
-              <th>Module</th><th>Started</th><th>Watched</th><th>Attempted</th><th>Mastered</th><th>Watch %</th><th>Mastery %</th><th>Avg score</th><th>Health</th>
-            </tr></thead><tbody id="funnel-body">
-              <tr><td colspan="9" style="text-align:center;color:var(--text2);padding:16px">Open this tab to load.</td></tr>
-            </tbody></table>
-          </div>
-        </div>
-      </div>
       <div class="card">
         <div class="card-title">Students Who Replayed, by Subject</div>
         <div class="card-sub">Distinct students who replayed at least one module</div>
@@ -1739,6 +1725,23 @@ document.addEventListener('DOMContentLoaded', () => {
           <tr><td colspan="3" style="text-align:center;color:var(--text2);padding:16px">Loading…</td></tr>
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Learning Funnel tab (was nested inside the Replay section with the
+       wrong id/class, so switchAnTab('funnel') never showed it). -->
+  <div class="an-section" id="an-funnel">
+    <div class="card">
+      <div class="card-title">🫗 Learning funnel — per module</div>
+      <div class="card-sub" id="funnel-sub">Started → watched AR → attempted quiz → mastered. Health flags weak or mis-levelled content.</div>
+      <div id="funnel-totals" style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0"></div>
+      <div style="overflow-x:auto">
+        <table class="tbl"><thead><tr>
+          <th>Module</th><th>Started</th><th>Watched</th><th>Attempted</th><th>Mastered</th><th>Watch %</th><th>Mastery %</th><th>Avg score</th><th>Health</th>
+        </tr></thead><tbody id="funnel-body">
+          <tr><td colspan="9" style="text-align:center;color:var(--text2);padding:16px">Open this tab to load.</td></tr>
+        </tbody></table>
+      </div>
     </div>
   </div>
 
