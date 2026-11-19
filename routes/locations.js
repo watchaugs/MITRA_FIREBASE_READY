@@ -2,6 +2,7 @@
 const { State, City } = require('country-state-city');
 const router = require('express').Router();
 const { authenticate, requirePerm } = require('../middleware/auth');
+const { toName } = require('../lib/states');
 router.use(authenticate);
 
 // Pulls live from country-state-city package — all 36 states/UTs,
@@ -25,7 +26,9 @@ router.get('/districts/:stateCode', (req, res) => {
 router.get('/districts', (req, res) => {
   const { state } = req.query;
   if (state) {
-    const stateObj = IN_STATES.find(s => s.name === state || s.code === state);
+    // Any form of the state ("Odisha", "OD", "Orissa") finds its districts.
+    const want = toName(state) || state;
+    const stateObj = IN_STATES.find(s => s.name === want || s.code === state);
     if (!stateObj) return res.json([]);
     const cities = City.getCitiesOfState('IN', stateObj.code);
     return res.json(cities.map(c => ({ name: c.name, state_code: stateObj.code })));

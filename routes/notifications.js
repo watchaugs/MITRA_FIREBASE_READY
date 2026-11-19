@@ -26,6 +26,7 @@ const staffOnly = (req, res, next) => (['student', 'teacher'].includes(req.user?
 const { getFirestore }              = require('../lib/firebase');
 const { State }                     = require('country-state-city');
 const log = require('../lib/logger');
+const { toName, sameState } = require('../lib/states');
 
 router.use((req, res, next) => {
   // Optional: a Cloud Scheduler job may still call /dispatch-scheduled with a shared secret.
@@ -46,7 +47,9 @@ function getMessaging() {
 // ── Topic naming — must match the app exactly ────────────────────────────────
 const slug = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_\-.~%]/g, '');
 function topicFor(state, cls) {
-  const st = slug(state);
+  // Phones subscribe with the official name ("gujarat"), so a code or an old
+  // spelling ("GJ", "Orissa") is turned into that name first.
+  const st = slug(toName(state) || state);
   const cl = slug(cls);
   if (st && cl) return `mitra_${st}_${cl}`;
   if (st)       return `mitra_${st}`;
@@ -95,7 +98,7 @@ function buildMessage(n) {
 
 function targetFields(b) {
   return {
-    target_state:    b.target_state    || null,
+    target_state:    (b.target_state && (toName(b.target_state) || b.target_state)) || null,
     target_class:    b.target_class    || null,
     target_ar_topic: b.target_ar_topic || null,
     target_quiz:     b.target_quiz     || null,
@@ -142,7 +145,7 @@ router.get('/', async (req, res) => {
     // A student only sees notifications that were sent to them (all / their state / their class).
     if (req.query.state) {
       const st = slug(req.query.state);
-      data = data.filter(n => !n.target_state || slug(n.target_state) === st);
+      data = data.filter(n => !n.target_state || slug(n.target_state) === st || sameState(n.target_state, req.query.state));
     }
     res.json({ data, total: data.length });
   } catch (_) {
@@ -253,7 +256,7 @@ router.get('/history', staffOnly, async (req, res) => {
 
     const { status, state, date_from } = req.query;
     if (status)    rows = rows.filter(r => r.status === status);
-    if (state)     rows = rows.filter(r => slug(r.target_state) === slug(state));
+    if (state)     rows = rows.filter(r => sameState(r.target_state, state));
     if (date_from) { const t = new Date(date_from).getTime(); rows = rows.filter(r => toMs(r.sent_at || r.scheduled_at || r.created_at) >= t); }
     rows.sort((a, b) => toMs(b.sent_at || b.scheduled_at || b.created_at) - toMs(a.sent_at || a.scheduled_at || a.created_at));
 

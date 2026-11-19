@@ -626,6 +626,8 @@ router.put('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => 
     try { Object.assign(safe, cleanVideoSettings(safe)); }
     catch (e) { return res.status(400).json({ error: e.message }); }
     if (safe.video_region === '' || safe.video_region === null) delete safe.video_region;
+    // Edits save codes too ("Gujarat" → "GJ"), the same as a new upload.
+    if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);
     await db.collection('ar_assets').doc(req.params.id).update({ ...safe, updated_at: new Date() });
     await invalidateManifests(db);
     res.json({ id: req.params.id, ...safe });

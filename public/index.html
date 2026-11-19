@@ -3999,7 +3999,7 @@ function _arConfirmResolve(result) {
       tb.innerHTML = rows.map(a => {
         const imp = a.impressions || 0, clk = a.clicks || 0;
         const ctr = imp > 0 ? ((clk / imp) * 100).toFixed(1) + '%' : '—';
-        const target = (Array.isArray(a.target_states) && a.target_states.length) ? a.target_states.join(', ') : 'All India';
+        const target = (Array.isArray(a.target_states) && a.target_states.length) ? a.target_states.map(_stateName).join(', ') : 'All India';
         const period = (a.publish_at || a.expires_at) ? (fmt(a.publish_at) + ' → ' + fmt(a.expires_at)) : 'Always';
         const fp = a.approved_first_party ? ' <span title="Approved first-party notice" style="font-size:10px;color:var(--green)">✔ 1P</span>' : '';
         const sColor = a.status === 'live' ? 'var(--green)' : (a.status === 'scheduled' ? 'var(--accent2)' : 'var(--text2)');
@@ -5011,6 +5011,18 @@ function updateRolePerms() {
 // From /mitra-states.js — the one state list shared with the server (and
 // mirrored in the app). Codes match the Curriculum Map's saved trees.
 const INDIA_STATES = (window.MITRA_STATES || []).map(s => ({ code: s.code, name: s.name }));
+// Any form of a state ("GJ", "Gujarat", "Orissa") → its entry in the one list.
+function _stNorm(v) { return String(v == null ? '' : v).trim().toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, ''); }
+function _stateEntry(v) {
+  const k = _stNorm(v);
+  if (!k) return null;
+  return (window.MITRA_STATES || []).find(s => [s.code, s.name, ...(s.aliases || [])].some(a => _stNorm(a) === k)) || null;
+}
+function _stateName(v) { const s = _stateEntry(v); return s ? s.name : String(v == null ? '' : v); }
+function _sameStateUI(a, b) {
+  const x = _stateEntry(a), y = _stateEntry(b);
+  return x && y ? x.code === y.code : (!!_stNorm(a) && _stNorm(a) === _stNorm(b));
+}
 
 const INDIA_DISTRICTS = {
   AN:['Nicobars','North and Middle Andaman','South Andaman'],
@@ -5207,11 +5219,14 @@ function openReleaseModal(kind, id) {
   document.getElementById('rel-mode').value = r.mode || 'now';
   document.getElementById('rel-at').value = _relLocal(r.at);
   document.getElementById('rel-others').value = r.others === 'now' ? 'now' : 'hold';
+  // target_states hold codes ("GJ") since Stage 2: show the name, and read a
+  // saved date under any spelling of the state ("gujarat", "gj").
   const targets = (Array.isArray(item.target_states) && item.target_states.length)
-    ? item.target_states.map(n => ({ name: n })) : (typeof INDIA_STATES !== 'undefined' ? INDIA_STATES : []);
+    ? item.target_states.map(n => _stateEntry(n) || { name: n }) : (typeof INDIA_STATES !== 'undefined' ? INDIA_STATES : []);
   const map = r.by_state || {};
   document.getElementById('rel-states').innerHTML = targets.map(s => {
-    const v = map[String(s.name).toLowerCase()];
+    const key = Object.keys(map).find(k => _sameStateUI(k, s.code || s.name));
+    const v = key != null ? map[key] : undefined;
     return `<div style="display:flex;gap:8px;align-items:center">
       <span style="flex:1;font-size:12px">${escHtml(s.name)}</span>
       <input type="datetime-local" class="inp rel-st-at" data-state="${escHtml(s.name)}" value="${_relLocal(v)}" style="width:200px;height:30px;font-size:12px">
@@ -6156,9 +6171,9 @@ function _currTopicCtx(nodeId) {
 }
 // Is content with these target_states allowed in this state? (empty = all India)
 function _currStateAllows(targetStates, ctx) {
-  const ts = (targetStates || []).map(x => String(x).trim().toLowerCase());
+  const ts = (targetStates || []).map(x => String(x).trim()).filter(Boolean);
   if (!ts.length) return true;
-  return ts.includes(String(ctx.stateCode).toLowerCase()) || ts.includes(String(ctx.stateName).toLowerCase());
+  return ts.some(t => _sameStateUI(t, ctx.stateCode) || _sameStateUI(t, ctx.stateName));
 }
 const _currTopicKey = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -7408,7 +7423,7 @@ async function editArAsset(id, focus) {
   set('ar-up-class', a.class_name); set('ar-up-subject', a.subject);
   set('ar-up-language', a.language); set('ar-up-title', a.title);
   const sel = document.getElementById('ar-up-states');
-  if (sel) [...sel.options].forEach(o => { o.selected = (a.target_states || []).includes(o.value); });
+  if (sel) [...sel.options].forEach(o => { o.selected = !!o.value && (a.target_states || []).some(t => _sameStateUI(t, o.value)); });
   await arTopicRefresh(a.topic);
   _arEditing = { id, audios: { ...(a.audios || {}) }, hasVideo: !!a.video_url, hasPage: !!a.mind_url,
     hasModel: !!(a.flutter_url || a.native_url), pageUrl: a.target_image_url || '' };
@@ -7509,7 +7524,8 @@ async function _loadLangConfig() {
 function _allowedLangsFor(asset, cfg) {
   const set = new Set(cfg.universal || ['hi', 'en']);
   (asset.target_states || []).forEach(s => {
-    const k = String(s).trim().toLowerCase().replace(/_/g, ' ');
+    // regions are keyed by name ("gujarat"); target_states may hold codes ("GJ").
+    const k = _stateName(String(s).trim().replace(/_/g, ' ')).toLowerCase();
     (cfg.regions?.[k] || []).forEach(l => set.add(String(l).toLowerCase()));
   });
   if (!(asset.target_states || []).length) {
@@ -7969,7 +7985,8 @@ function _arPassesFilters(a) {
   const media  = document.getElementById('ar-filter-media')?.value || '';
   if (status && (a.status || 'uploaded') !== status) return false;
   if (state) {
-    const ts = (a.target_states || []).map(s => String(s).toLowerCase());
+    // Match the typed text against the code and the name ("gj", "guj", "gujarat").
+    const ts = (a.target_states || []).map(s => (String(s) + ' ' + _stateName(s)).toLowerCase());
     const national = !ts.length;
     if (!national && !ts.some(s => s.includes(state))) return false;
   }
@@ -8482,7 +8499,7 @@ function renderArLinkList(assets, hiddenByState) {
       <span style="font-size:28px;flex-shrink:0">${icon}</span>
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${same ? '★ ' : ''}${escHtml(a.title||a.original_name||'Unnamed')}</div>
-        <div style="font-size:11px;color:var(--text2)">${escHtml(a.class_name||'—')} · ${escHtml(a.subject||'—')} · ${escHtml(a.topic||'—')} · .${ext}${(a.target_states||[]).length ? ' · ' + escHtml(a.target_states.join(', ')) : ' · All India'}</div>
+        <div style="font-size:11px;color:var(--text2)">${escHtml(a.class_name||'—')} · ${escHtml(a.subject||'—')} · ${escHtml(a.topic||'—')} · .${ext}${(a.target_states||[]).length ? ' · ' + escHtml(a.target_states.map(_stateName).join(', ')) : ' · All India'}</div>
       </div>
       <div style="flex-shrink:0"><span class="tag tag-${a.status==='published'?'g':'b'}">${escHtml(a.status||'uploaded')}</span></div>
       ${isLinked ? '<span class="tag" style="flex-shrink:0">Linked ✓</span>' : '<button class="btn btn-p btn-sm" style="flex-shrink:0">Link →</button>'}

@@ -4,7 +4,7 @@ const multer  = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
-const { filterByState, canAccessState, visibleInState } = require('../lib/stateScope');
+const { filterByState, canAccessState, visibleInState, parseTargetStates } = require('../lib/stateScope');
 const storage = require('../lib/storage');
 const log = require('../lib/logger');
 const { isAppCaller } = require('../lib/release');
@@ -286,7 +286,7 @@ router.post('/', requirePerm('perm_manage_ads'), async (req, res) => {
     if (scopeErr) return res.status(422).json({ error: scopeErr });
     const doc = { ...b, id,
                   status: b.status === 'scheduled' ? 'scheduled' : 'draft',
-                  target_states: Array.isArray(b.target_states) ? b.target_states : [],
+                  target_states: parseTargetStates(b.target_states),
                   approved_first_party: b.approved_first_party === true,
                   approved_by: b.approved_first_party === true ? req.user.id : null,
                   impressions: 0, clicks: 0,
@@ -318,6 +318,7 @@ router.put('/:id', requirePerm('perm_manage_ads'), async (req, res) => {
     const safe = { ...req.body };
     ['id', 'impressions', 'clicks', 'created_by', 'created_at',
      'published_at', 'published_by', 'status', 'last_impression_at'].forEach(k => delete safe[k]);
+    if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);
     await ref.update({ ...safe, updated_at: new Date() });
     res.json({ id: req.params.id, ...safe });
   } catch (err) {

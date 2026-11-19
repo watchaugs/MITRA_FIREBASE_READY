@@ -11,6 +11,7 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const staffOnly = (req, res, next) => (['student', 'teacher'].includes(req.user?.role)
   ? res.status(403).json({ error: 'Dashboard staff only' }) : next());
 const { visibleInState, parseTargetStates } = require('../lib/stateScope');
+const { toName, sameState } = require('../lib/states');
 const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
 const { stripFields } = require('../lib/writeGuard');
 const LIVE_STATUSES = new Set(['live', 'published']);
@@ -268,6 +269,8 @@ router.put('/:id', requirePerm('perm_edit_curriculum'), async (req, res) => {
     const safe = stripFields(req.body, [
       'id', 'status', 'release', 'created_by', 'created_at', 'question_count', 'published_at',
     ]);
+    // Edits save codes too ("Gujarat" → "GJ"), the same as a new quiz.
+    if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);
     await db.collection('quizzes').doc(req.params.id).update({ ...safe, updated_at: new Date() });
     res.json({ id: req.params.id, ...safe });
   } catch { res.status(500).json({ error: 'Failed to update quiz' }); }
@@ -334,13 +337,14 @@ async function loadAttempts(db, q = {}) {
       time_secs: Number(a.time_taken_secs ?? a.time_secs) || 0,
       subject: a.subject || quiz.subject || null,
       class_name: a.class_grade || a.class_name || quiz.class_name || null,
-      state: a.state || null, district: a.district || null,
+      // One spelling per state, so "by state" has one row per state.
+      state: toName(a.state) || a.state || null, district: a.district || null,
       language: a.app_language || a.language || quiz.language || null,
       at: ms(a.completed_at) || ms(a.submitted_at) || ms(a.synced_at),
     };
   }).filter(a =>
     (!since || a.at >= since) &&
-    (!q.state || lc(a.state) === lc(q.state)) &&
+    (!q.state || sameState(a.state, q.state)) &&
     (!q.district || lc(a.district) === lc(q.district)) &&
     (!q.class_name || lc(a.class_name) === lc(q.class_name)) &&
     (!q.subject || lc(a.subject) === lc(q.subject)) &&

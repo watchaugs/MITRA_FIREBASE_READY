@@ -24,6 +24,9 @@ gha-creds-*.json
 *-sa-key.json
 gcp-key.json
 
+# State migration backups (scripts/migrate_states.js) — contain user ids
+scripts/backups/
+
 # Uploads (local dev)
 uploads/
 public/uploads/

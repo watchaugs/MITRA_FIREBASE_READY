@@ -10,7 +10,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { visibleInState, canAccessState, stateAliases } = require('../lib/stateScope');
-const { toCode, toName } = require('../lib/states');
+const { toCode, toName, sameState } = require('../lib/states');
 const { isAppCaller, isReleased } = require('../lib/release');
 const log = require('../lib/logger');
 router.use(authenticate);
@@ -463,8 +463,8 @@ const _norm = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
 function _assetTargetsState(a, stateName, stateCode) {
   const ts = Array.isArray(a.target_states) ? a.target_states : [];
   if (!ts.length) return true;                       // national asset → every state
-  const want = new Set([_norm(stateName), _norm(stateCode)]);
-  return ts.some(t => want.has(_norm(t)));
+  // Any form matches ("GJ" tag, "Gujarat" tree, old "GUJARAT" tag).
+  return ts.some(t => sameState(t, stateCode) || sameState(t, stateName));
 }
 
 // ── GET /hierarchy ─── every saved state (the Curriculum page loads this) ────
