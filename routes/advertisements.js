@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
 const { filterByState, canAccessState, visibleInState, parseTargetStates } = require('../lib/stateScope');
+const { unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
 const storage = require('../lib/storage');
 const log = require('../lib/logger');
 const { isAppCaller } = require('../lib/release');
@@ -282,6 +283,8 @@ router.post('/', requirePerm('perm_manage_ads'), async (req, res) => {
     const id  = uuidv4();
     const b = req.body || {};
     if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Campaign name is required' });
+    const badStates = unknownStates(parseTargetStates(b.target_states));
+    if (badStates.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badStates) });
     const scopeErr = await noticeScopeError(b);
     if (scopeErr) return res.status(422).json({ error: scopeErr });
     const doc = { ...b, id,
@@ -319,6 +322,8 @@ router.put('/:id', requirePerm('perm_manage_ads'), async (req, res) => {
     ['id', 'impressions', 'clicks', 'created_by', 'created_at',
      'published_at', 'published_by', 'status', 'last_impression_at'].forEach(k => delete safe[k]);
     if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);
+    const badEdit = unknownStates(safe.target_states || []);
+    if (badEdit.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badEdit) });
     await ref.update({ ...safe, updated_at: new Date() });
     res.json({ id: req.params.id, ...safe });
   } catch (err) {

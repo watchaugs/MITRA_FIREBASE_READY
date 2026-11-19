@@ -26,7 +26,7 @@ const staffOnly = (req, res, next) => (['student', 'teacher'].includes(req.user?
 const { getFirestore }              = require('../lib/firebase');
 const { State }                     = require('country-state-city');
 const log = require('../lib/logger');
-const { toName, sameState } = require('../lib/states');
+const { toName, sameState, unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
 
 router.use((req, res, next) => {
   // Optional: a Cloud Scheduler job may still call /dispatch-scheduled with a shared secret.
@@ -161,6 +161,7 @@ router.post('/send', requirePerm('perm_send_notif'), async (req, res) => {
     const body  = String(b.body  || '').trim();
     if (!title || !body) return res.status(400).json({ error: 'Title and body are required' });
     if (b.target_class && !b.target_state) return res.status(400).json({ error: CLASS_NEEDS_STATE });
+    if (b.target_state && unknownStates(b.target_state).length) return res.status(400).json({ error: UNKNOWN_STATE_MSG([b.target_state]) });
 
     const topic = topicFor(b.target_state, b.target_class);
     const id = uuidv4();
@@ -191,6 +192,7 @@ router.post('/schedule', requirePerm('perm_send_notif'), async (req, res) => {
     const body  = String(b.body  || '').trim();
     if (!title || !body) return res.status(400).json({ error: 'Title and body are required' });
     if (b.target_class && !b.target_state) return res.status(400).json({ error: CLASS_NEEDS_STATE });
+    if (b.target_state && unknownStates(b.target_state).length) return res.status(400).json({ error: UNKNOWN_STATE_MSG([b.target_state]) });
     const when = new Date(b.scheduled_at);
     if (!b.scheduled_at || Number.isNaN(when.getTime())) return res.status(400).json({ error: 'scheduled_at required (date & time)' });
 

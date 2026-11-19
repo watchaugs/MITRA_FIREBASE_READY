@@ -10,7 +10,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { visibleInState, canAccessState, stateAliases } = require('../lib/stateScope');
-const { toCode, toName, sameState } = require('../lib/states');
+const { toCode, toName, sameState, UNKNOWN_STATE_MSG } = require('../lib/states');
 const { isAppCaller, isReleased } = require('../lib/release');
 const log = require('../lib/logger');
 router.use(authenticate);
@@ -435,8 +435,12 @@ router.put('/learning-settings', requirePerm('perm_edit_curriculum'), async (req
 // ── State Hierarchy ────────────────────────────────────────────────────────────
 router.post('/hierarchy', requirePerm('perm_edit_curriculum'), async (req, res) => {
   try {
-    const { state_code, structure } = req.body;
-    if (!state_code) return res.status(400).json({ error: 'state_code required' });
+    if (!req.body.state_code) return res.status(400).json({ error: 'state_code required' });
+    // Stage 4: the tree is always saved under the state's code ("GJ"), with its official name.
+    const state_code = toCode(req.body.state_code) || toCode(req.body.state_name);
+    if (!state_code) return res.status(400).json({ error: UNKNOWN_STATE_MSG([req.body.state_code]) });
+    req.body.state_name = toName(state_code);
+    const { structure } = req.body;
     if (!canAccessState(req, req.body.state_name || state_code) && !canAccessState(req, state_code)) {
       return res.status(403).json({ error: 'Your account cannot edit this state\'s curriculum.' });
     }

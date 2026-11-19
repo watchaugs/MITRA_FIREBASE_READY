@@ -12,6 +12,7 @@ const { toGlb, needsConversion } = require('../lib/modelConvert');
 const storage          = require('../lib/storage');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { visibleInState, parseTargetStates } = require('../lib/stateScope');
+const { unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
 const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
 const { stripFields } = require('../lib/writeGuard');
 const log = require('../lib/logger');
@@ -138,6 +139,8 @@ router.post('/upload', requirePerm('perm_upload_unity'),
   (req, res, next) => arUpload.single('file')(req, res, err => err ? res.status(400).json({ error: err.message }) : next()),
   async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const badStates = unknownStates(parseTargetStates(req.body.target_states));
+    if (badStates.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badStates) });
     const { class_name, subject, topic, language, title } = req.body;
     const id  = uuidv4();
     const ext = path.extname(req.file.originalname).toLowerCase();
@@ -435,6 +438,8 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
     }
     let videoSettings;
     try { videoSettings = cleanVideoSettings(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
+    const badStates = unknownStates(parseTargetStates(req.body.target_states));
+    if (badStates.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badStates) });
 
     const { class_name, subject, topic, language, title } = req.body;
     const id  = uuidv4();
@@ -628,6 +633,8 @@ router.put('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => 
     if (safe.video_region === '' || safe.video_region === null) delete safe.video_region;
     // Edits save codes too ("Gujarat" → "GJ"), the same as a new upload.
     if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);
+    const badEdit = unknownStates(safe.target_states || []);
+    if (badEdit.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badEdit) });
     await db.collection('ar_assets').doc(req.params.id).update({ ...safe, updated_at: new Date() });
     await invalidateManifests(db);
     res.json({ id: req.params.id, ...safe });

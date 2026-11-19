@@ -10,7 +10,7 @@ const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm, canGrantRole } = require('../middleware/auth');
 const { sendWelcomeEmail } = require('../lib/mailer');
 const log = require('../lib/logger');
-const { toCode } = require('../lib/states');
+const { toCode, toName, isNational, unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
 router.use(authenticate);
 
 // Server-enforced permissions (the ones requirePerm() checks in routes/*.js).
@@ -83,6 +83,9 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
       permissions = {}
     } = req.body || {};
     if (!full_name) return res.status(400).json({ error: 'full_name required' });
+    // Stage 4: only states from the list (or All India) are saved, as the official name.
+    const badState = unknownStates(assigned_state);
+    if (badState.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badState) });
     if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'valid email required' });
     if (!canGrantRole(req.user.role, role)) {
       return res.status(403).json({ error: 'You cannot grant a role higher than your own' });
@@ -103,7 +106,8 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
     }
     const userData = {
       email: String(email).toLowerCase(), password_hash, full_name, role,
-      assigned_state, assigned_district: assigned_district || null,
+      assigned_state: (isNational(assigned_state) || !String(assigned_state || '').trim()) ? 'All India' : toName(assigned_state),
+      assigned_district: assigned_district || null,
       // Stage 2: the state's code next to its name ("GJ"; null = All India).
       assigned_state_code: toCode(assigned_state),
       is_active: true, created_at: new Date(),
@@ -235,7 +239,13 @@ router.post('/bulk-update', requirePerm('perm_create_users'), async (req, res) =
     const allowed = ['role', 'is_active', 'assigned_state', 'assigned_district'];
     const safeUpdates = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)));
     if (!Object.keys(safeUpdates).length) return res.status(400).json({ error: 'No valid fields to update' });
-    if ('assigned_state' in safeUpdates) safeUpdates.assigned_state_code = toCode(safeUpdates.assigned_state);
+    if ('assigned_state' in safeUpdates) {
+      const bad = unknownStates(safeUpdates.assigned_state);
+      if (bad.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(bad) });
+      const st = safeUpdates.assigned_state;
+      safeUpdates.assigned_state = isNational(st) || !String(st || '').trim() ? 'All India' : toName(st);
+      safeUpdates.assigned_state_code = toCode(safeUpdates.assigned_state);
+    }
     if (safeUpdates.role && !canGrantRole(req.user.role, safeUpdates.role)) {
       return res.status(403).json({ error: 'You cannot grant a role higher than your own' });
     }

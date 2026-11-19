@@ -11,7 +11,7 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const staffOnly = (req, res, next) => (['student', 'teacher'].includes(req.user?.role)
   ? res.status(403).json({ error: 'Dashboard staff only' }) : next());
 const { visibleInState, parseTargetStates } = require('../lib/stateScope');
-const { toName, sameState } = require('../lib/states');
+const { toName, sameState, unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
 const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
 const { stripFields } = require('../lib/writeGuard');
 const LIVE_STATUSES = new Set(['live', 'published']);
@@ -236,6 +236,8 @@ router.post('/', requirePerm('perm_edit_curriculum'), async (req, res) => {
     const { go_live_immediately, release, ...fields } = req.body || {};
     const status = go_live_immediately === true ? 'live' : 'draft';
     if (release) fields.release = cleanRelease(release);
+    const badStates = unknownStates(parseTargetStates(fields.target_states));
+    if (badStates.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badStates) });
     await db.collection('quizzes').doc(id).set({ ...fields, target_states: parseTargetStates(fields.target_states), created_by: req.user.id, created_at: new Date(), status, question_count: 0 });
     res.status(201).json({ id, ...fields, status });
   } catch { res.status(500).json({ error: 'Failed to create quiz' }); }
@@ -271,6 +273,8 @@ router.put('/:id', requirePerm('perm_edit_curriculum'), async (req, res) => {
     ]);
     // Edits save codes too ("Gujarat" → "GJ"), the same as a new quiz.
     if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);
+    const badEdit = unknownStates(safe.target_states || []);
+    if (badEdit.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badEdit) });
     await db.collection('quizzes').doc(req.params.id).update({ ...safe, updated_at: new Date() });
     res.json({ id: req.params.id, ...safe });
   } catch { res.status(500).json({ error: 'Failed to update quiz' }); }
@@ -579,6 +583,8 @@ router.post('/bulk-upload-grouped', requirePerm('perm_edit_curriculum'), caught(
   for (const g of groups.values()) {
     const id = uuidv4();
     const targetStates = /^all india$/i.test(g.state) ? [] : [g.state];
+    // Stage 4: a row with a state that is not in the list is skipped, not saved.
+    if (unknownStates(targetStates).length) { skipped.push({ reason: UNKNOWN_STATE_MSG(targetStates), topic: g.topic }); continue; }
     await db.collection('quizzes').doc(id).set({
       title: `${g.subject} — ${g.topic} (${g.class_name})`,
       class_name: g.class_name, subject: g.subject, topic: g.topic,
