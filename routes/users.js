@@ -10,6 +10,7 @@ const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm, canGrantRole } = require('../middleware/auth');
 const { sendWelcomeEmail } = require('../lib/mailer');
 const log = require('../lib/logger');
+const { toCode } = require('../lib/states');
 router.use(authenticate);
 
 // Server-enforced permissions (the ones requirePerm() checks in routes/*.js).
@@ -103,6 +104,8 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
     const userData = {
       email: String(email).toLowerCase(), password_hash, full_name, role,
       assigned_state, assigned_district: assigned_district || null,
+      // Stage 2: the state's code next to its name ("GJ"; null = All India).
+      assigned_state_code: toCode(assigned_state),
       is_active: true, created_at: new Date(),
       perm_manage_geo:       perms.geofence       === true,
       perm_create_users:     perms.users          === true,
@@ -232,6 +235,7 @@ router.post('/bulk-update', requirePerm('perm_create_users'), async (req, res) =
     const allowed = ['role', 'is_active', 'assigned_state', 'assigned_district'];
     const safeUpdates = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)));
     if (!Object.keys(safeUpdates).length) return res.status(400).json({ error: 'No valid fields to update' });
+    if ('assigned_state' in safeUpdates) safeUpdates.assigned_state_code = toCode(safeUpdates.assigned_state);
     if (safeUpdates.role && !canGrantRole(req.user.role, safeUpdates.role)) {
       return res.status(403).json({ error: 'You cannot grant a role higher than your own' });
     }

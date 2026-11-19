@@ -6,6 +6,7 @@ const { getFirestore } = require('../lib/firebase');
 const { stripFields } = require('../lib/writeGuard');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { canAccessState } = require('../lib/stateScope');
+const { toName, toCode, sameState } = require('../lib/states');
 const log = require('../lib/logger');
 router.use(authenticate);
 
@@ -46,7 +47,10 @@ router.get('/available-states', (req, res) => {
 router.post('/state/:code', requirePerm('perm_manage_geo'), async (req, res) => {
   try {
     const key = String(req.params.code || '').trim().toLowerCase();
-    const entry = loadIndiaStates().byKey[key];
+    const byKey = loadIndiaStates().byKey;
+    // Any form works ("OD", "Odisha", "Orissa"): the bundled map uses a few
+    // older codes (OR, DN), so fall back to the official name.
+    const entry = byKey[key] || byKey[String(toName(key) || '').toLowerCase()];
     if (!entry) return res.status(404).json({ error: 'Unknown state code/name' });
     const db = getFirestore();
     const docId = 'state_' + (entry.code || entry.state).toLowerCase().replace(/\s+/g, '_');
@@ -291,9 +295,14 @@ const DEFAULT_GRACE_DAYS = 7;
 // "Jammu & Kashmir" == "jammu and kashmir" (same rule as the app).
 const normState = (s) => String(s || '').trim().toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
 
+// Grace days are kept per state under the official name ("gujarat"), so a
+// student saved as "Gujarat" and a request for "GJ" find the same value.
+const graceKey = (s) => normState(toName(s) || s);
+
 function graceFor(data, state) {
   const d = data || {};
-  const v = (d.days_by_state || {})[normState(state)];
+  const byState = d.days_by_state || {};
+  const v = graceKey(state) in byState ? byState[graceKey(state)] : byState[normState(state)];
   if (Number.isFinite(Number(v)) && v !== null && v !== '') return Number(v);
   const def = Number(d.default_days);
   return Number.isFinite(def) && d.default_days !== undefined ? def : DEFAULT_GRACE_DAYS;
@@ -309,11 +318,11 @@ router.get('/territory', async (req, res) => {
       db.collection('geofences').where('is_active', '==', true).get(),
       db.collection(GRACE_DOC[0]).doc(GRACE_DOC[1]).get(),
     ]);
-    const key = normState(state);
     const geofences = [];
     snap.docs.forEach(d => {
       const g = d.data();
-      if (g.is_active === false || normState(g.state) !== key) return;
+      // Any form of the state matches ("Gujarat", "GJ", "gujarat").
+      if (g.is_active === false || !sameState(g.state || g.state_code, state)) return;
       // Same shape rules as /check-point: real boundary first, else circle.
       let boundary = g.geojson || null;
       if (!boundary && g.geojson_str) {
@@ -339,7 +348,14 @@ router.get('/grace', async (req, res) => {
   try {
     const doc = await getFirestore().collection(GRACE_DOC[0]).doc(GRACE_DOC[1]).get();
     const d = doc.exists ? doc.data() : {};
-    res.json({ default_days: graceFor(d, '__none__'), days_by_state: d.days_by_state || {} });
+    // Also list each value under the state's code, so the Dashboard finds it
+    // whether its block is labelled "Gujarat" or "GJ".
+    const byState = { ...(d.days_by_state || {}) };
+    for (const [k, v] of Object.entries(d.days_by_state || {})) {
+      const code = toCode(k);
+      if (code && !(normState(code) in byState)) byState[normState(code)] = v;
+    }
+    res.json({ default_days: graceFor(d, '__none__'), days_by_state: byState });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load grace settings' });
   }
@@ -357,7 +373,7 @@ router.put('/grace/:state', requirePerm('perm_manage_geo'), async (req, res) => 
   try {
     const ref = getFirestore().collection(GRACE_DOC[0]).doc(GRACE_DOC[1]);
     await ref.set({
-      days_by_state: { [normState(state)]: days },
+      days_by_state: { [graceKey(state)]: days },
       updated_at: new Date(),
       updated_by: req.user.id,
     }, { merge: true });

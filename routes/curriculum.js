@@ -10,6 +10,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { visibleInState, canAccessState, stateAliases } = require('../lib/stateScope');
+const { toCode, toName } = require('../lib/states');
 const { isAppCaller, isReleased } = require('../lib/release');
 const log = require('../lib/logger');
 router.use(authenticate);
@@ -272,7 +273,13 @@ async function buildStateManifest(db, stateCode, stateName) {
 router.get('/manifest/:state', async (req, res) => {
   try {
     const db = getFirestore();
-    const stateKey = req.params.state;
+    // The app asks by name ("Gujarat"); the Curriculum Map saves the tree under
+    // the state's code ("GJ"). Both now resolve to the code via the one state
+    // table, so the app gets the tree (with its quiz links) and the copy that
+    // Save curriculum rebuilds. An unknown value is used as given.
+    const asked = String(req.params.state || '').trim();
+    let stateKey = toCode(asked) || asked;
+    const stateName = toName(asked) || req.query.state_name || stateKey;
     // Serve a stored copy if present (written on publish); else build on demand.
     let manifest = null;
     try {
@@ -280,7 +287,17 @@ router.get('/manifest/:state', async (req, res) => {
       if (cached.exists && cached.data().version === MANIFEST_VERSION) manifest = cached.data();
     } catch (_) {}
     if (!manifest) {
-      manifest = await buildStateManifest(db, stateKey, req.query.state_name || stateKey);
+      // Older data: a tree saved under the asked form and none under the code.
+      if (stateKey !== asked) {
+        try {
+          const [byCode, byAsked] = await Promise.all([
+            db.collection('curriculum_hierarchy').doc(stateKey).get(),
+            db.collection('curriculum_hierarchy').doc(asked).get(),
+          ]);
+          if (!byCode.exists && byAsked.exists) stateKey = asked;
+        } catch (_) {}
+      }
+      manifest = await buildStateManifest(db, stateKey, stateName);
       try { await db.collection('curriculum_manifests').doc(stateKey).set(manifest); } catch (_) {}
     }
     res.set('Cache-Control', 'public, max-age=60'); // 1 min — content updates propagate quickly

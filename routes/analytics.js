@@ -16,6 +16,7 @@ const XLSX   = require('xlsx');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { runQuery, FQ_TABLE } = require('../lib/bq');
 const { runExport } = require('../lib/telemetry_exporter');
+const { isNational, sameState, stateKeys, toName } = require('../lib/states');
 
 router.use(authenticate);
 
@@ -27,7 +28,7 @@ router.use(authenticate);
 function actorStateScope(req) {
   if (req.user?.role === 'master_admin') return '';          // national
   const s = (req.user?.assigned_state || '').trim();
-  return s;                                                  // '' => national
+  return isNational(s) ? '' : s;                             // '' / "All India" => national
 }
 
 // ── Zeroed defaults (shown until the first Refresh populates the snapshot) ────
@@ -683,11 +684,14 @@ router.get('/report', requirePerm('perm_export_data'), async (req, res) => {
     // regardless of the scope they requested.
     const stateScope = actorStateScope(req);
     if (stateScope !== '') {
-      if (scope.toLowerCase() !== stateScope.toLowerCase() && scope !== 'All India') {
+      if (!sameState(scope, stateScope) && scope !== 'All India') {
         return res.status(403).json({ error: 'You may only export reports for your own state.' });
       }
       scope = stateScope; // force it — ignores 'All India' too
     }
+    // Report caches are saved under the state's name ("Gujarat"); a code or
+    // other spelling ("GJ") must open the same one.
+    if (scope !== 'All India') scope = toName(scope) || scope;
     const db = require('../lib/firebase').getFirestore();
     const doc = await db.collection('analytics_cache').doc('scope__' + slugScope(scope)).get();
     const payload = doc.exists ? doc.data() : null;
@@ -718,7 +722,7 @@ router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
     // empty/other state value can't widen the export.
     const stateScope = actorStateScope(req);
     if (stateScope !== '') {
-      if (state && state.toLowerCase() !== stateScope.toLowerCase()) {
+      if (state && !sameState(state, stateScope)) {
         return res.status(403).json({ error: 'You may only export data for your own state.' });
       }
       state = stateScope;
@@ -732,13 +736,13 @@ router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
         is_replay, completed, offline_session, connectivity_type,
         cold_start_ms, CAST(timestamp AS STRING) AS event_time
       FROM ${FQ_TABLE}
-      WHERE (@state = ''       OR state = @state)
+      WHERE (@state = ''       OR LOWER(state) IN UNNEST(@state_forms))
         AND (@district = ''    OR district = @district)
         AND (@class_grade = '' OR class_grade = @class_grade)
         AND (@subject = ''     OR subject = @subject)
         AND (@month = ''       OR STARTS_WITH(CAST(timestamp AS STRING), @month))
       LIMIT 50000
-    `, { state, district, class_grade, subject, month },
+    `, { state, state_forms: state ? [...stateKeys(state)] : [''], district, class_grade, subject, month },
        { cacheKey: `export:${state}:${district}:${class_grade}:${subject}:${month}` });
 
     const out = rows.map(s => ({

@@ -4,6 +4,7 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
 const XLSX = require('xlsx');
 const log = require('../lib/logger');
+const { sameState, isNational: isNationalState } = require('../lib/states');
 
 // The score shown on the Compliance page now comes from the LIVE engine
 // (lib/complianceEngine.js). The old list below had 8 of 10 checks hard-coded
@@ -461,13 +462,12 @@ router.get('/data-export/:userId', requirePerm('perm_manage_compliance'), async 
 
     // State-scope: a non-national officer may only export a student in THEIR state.
     // master_admin and officers with no assigned_state (national) may export anyone.
-    const actorState = (req.user?.assigned_state || '').trim().toLowerCase();
-    const isNational = req.user?.role === 'master_admin' || actorState === '';
+    const actorState = (req.user?.assigned_state || '').trim();
+    const isNational = req.user?.role === 'master_admin' || actorState === '' || isNationalState(actorState);
     if (!isNational) {
       const studentDoc = await db.collection('app_users').doc(uid).get();
-      const studentState = (studentDoc.exists ? (studentDoc.data().assigned_state || '') : '')
-        .trim().toLowerCase();
-      if (studentState !== actorState) {
+      const studentState = studentDoc.exists ? (studentDoc.data().assigned_state || '') : '';
+      if (!sameState(studentState, actorState)) {
         return res.status(403).json({ error: 'You may only export students in your own state.' });
       }
     }
