@@ -1240,7 +1240,28 @@ router.get('/language-config', async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('language_config').doc('regions').get();
-    const regions = snap.exists ? (snap.data().regions || snap.data() || {}) : {};
+    const saved = snap.exists ? (snap.data().regions || snap.data() || {}) : {};
+    // Every state always gets its own language (Punjab → pa), keyed by name
+    // AND code. Nothing ever saved language_config, so every state got only
+    // hi + en and the app hid Punjabi / Gujarati / … narration.
+    const { STATE_PRIMARY } = require('../lib/stateLang');
+    const { toCode } = require('../lib/states');
+    const regions = {};
+    const add = (k, langs) => {
+      const key = String(k || '').trim().toLowerCase();
+      if (!key) return;
+      regions[key] = [...new Set([...(regions[key] || []), ...langs.map(l => String(l).toLowerCase())])];
+    };
+    for (const [name, lang] of Object.entries(STATE_PRIMARY)) {
+      if (lang === 'hi' || lang === 'en') continue;
+      add(name, [lang]);
+      add(toCode(name), [lang]);
+    }
+    for (const [k, langs] of Object.entries(saved)) {   // admin-added extras still apply
+      if (!Array.isArray(langs)) continue;
+      add(k, langs);
+      add(toCode(k), langs);
+    }
     return res.json({ regions, universal: ['hi', 'en'] });
   } catch (e) {
     return res.json({ regions: {}, universal: ['hi', 'en'] }); // fail-open

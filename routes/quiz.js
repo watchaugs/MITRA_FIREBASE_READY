@@ -84,23 +84,54 @@ const LANG_NAME_TO_CODE = {
   assamese:'as', urdu:'ur', sanskrit:'sa', nepali:'ne', konkani:'kok', manipuri:'mni',
   bodo:'brx', santhali:'sat', santali:'sat', dogri:'doi', kashmiri:'ks', maithili:'mai', sindhi:'sd',
 };
-// Protect numbers, formulae, units, {placeholders} from being translated.
-function _guardTokens(text) {
-  const tokens = [];
-  const guarded = String(text || '').replace(
-    /(\{[^}]+\}|\$[^$]+\$|\b\d+(?:[.,]\d+)?\s?(?:%|kg|g|mg|km|m|cm|mm|ml|l|°[CF]?)?\b|[A-Za-z]+\d|\b[A-Z]{2,}\b)/g,
-    (m) => { tokens.push(m); return `\u0000${tokens.length - 1}\u0000`; }
-  );
-  return { guarded, tokens };
+// "English" / "EN" / "en" → "en". Quizzes store the code; the dashboard shows the name.
+function _langCode(v) {
+  const s = String(v || '').trim().toLowerCase();
+  return LANG_NAME_TO_CODE[s] || s;
 }
-function _restoreTokens(text, tokens) {
-  return String(text || '').replace(/\u0000(\d+)\u0000/g, (_, i) => tokens[Number(i)] ?? '');
-}
+// Kept exactly as written: {placeholders}, $maths$, codes like H2O, ALL-CAPS
+// words (DNA) and numbers with a unit (5 kg, 37 °C). Plain numbers go to
+// Bhashini as they are (it keeps digits). The old hidden-marker trick lost the
+// numbers: Bhashini drops the invisible characters, so "Class 9" came back as
+// "Class 0" and an option "206" as "0".
+const _KEEP_RE = /(\{[^}]+\}|\$[^$]+\$|\b[A-Za-z]+\d[A-Za-z\d]*\b|\b[A-Z]{2,}\b|\d+(?:[.,]\d+)?\s?(?:%|kg|mg|km|cm|mm|ml|g|m|l|°[CF]?)(?![A-Za-z]))/g;
+const _KEEP_ALL_RE = /(\{[^}]+\}|\$[^$]+\$|\b[A-Za-z]+\d[A-Za-z\d]*\b|\b[A-Z]{2,}\b|\d+(?:[.,]\d+)?(?:\s?(?:%|kg|mg|km|cm|mm|ml|g|m|l|°[CF]?)(?![A-Za-z]))?)/g;
+const _numSig = (t) => (String(t).match(/\d+(?:[.,]\d+)?/g) || []).sort().join('|');
+const _mark = (k) => `QZX${String.fromCharCode(65 + k)}XZQ`;
 async function _tr(text, src, tgt) {
-  if (!text) return text;
-  const { guarded, tokens } = _guardTokens(text);
-  const out = await bhashini.translate(guarded, src, tgt);
-  return _restoreTokens(out, tokens);
+  const s = String(text || '');
+  if (!s.trim()) return s;
+  // Nothing but numbers / units / symbols (an option like "206"): keep as is.
+  if (!/\p{L}/u.test(s.replace(_KEEP_ALL_RE, ''))) return s;
+  const keep = s.match(_KEEP_RE) || [];
+  if (keep.length <= 26) {
+    let i = 0;
+    const out = String(await bhashini.translate(keep.length ? s.replace(_KEEP_RE, () => _mark(i++)) : s, src, tgt) || '');
+    if (out && keep.every((_, k) => out.split(_mark(k)).length === 2)) {
+      const back = keep.reduce((t, tok, k) => t.replace(_mark(k), () => tok), out);
+      if (_numSig(back) === _numSig(s)) return back;   // every number came back unchanged
+    }
+  }
+  // Fallback: send only the words between the kept parts (numbers kept too).
+  const parts = s.split(_KEEP_ALL_RE);
+  const done = [];
+  for (let k = 0; k < parts.length; k++) {
+    const p = parts[k];
+    if (k % 2 === 1 || !/\p{L}/u.test(p)) { done.push(p); continue; }
+    const lead = p.match(/^\s*/)[0], trail = p.match(/\s*$/)[0];
+    done.push(lead + (String(await bhashini.translate(p.trim(), src, tgt) || '') || p.trim()) + trail);
+  }
+  return done.join('');
+}
+// Translations add quiz ids the app's cached curriculum doesn't know yet:
+// drop the cached copies so the next app read rebuilds them.
+async function _dropManifests(db) {
+  try {
+    const snap = await db.collection('curriculum_manifests').get();
+    const batch = db.batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  } catch (e) { log.warn({ err: e.message }, 'manifest refresh after translate failed'); }
 }
 router.use((req, res, next) => {
   // Cloud Scheduler calls /dispatch-scheduled with a shared secret (no user token).
@@ -116,8 +147,17 @@ router.use((req, res, next) => {
 router.get('/', async (req, res) => {
   try {
     const db = getFirestore();
-    const snap = await db.collection('quizzes').limit(50).get();
-    let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Was .limit(50) over every quiz: once there were more than 50, the rest
+    // never reached the app or the Curriculum Map. Students only need live ones.
+    const base = db.collection('quizzes');
+    const snap = await (isAppCaller(req)
+      ? base.where('status', 'in', [...LIVE_STATUSES]).limit(1000)
+      : base.limit(1000)).get();
+    let rows = snap.docs.map(d => {
+      const q = { id: d.id, ...d.data() };
+      if (q.language) q.language = _langCode(q.language); // older quizzes say "English"
+      return q;
+    });
     rows     = visibleInState(rows, req.query.state); // geofence: national + requested state
     if (isAppCaller(req)) {
       // Students: only live/published quizzes that are released for their state.
@@ -234,6 +274,7 @@ router.post('/', requirePerm('perm_edit_curriculum'), async (req, res) => {
     const db = getFirestore();
     const id = uuidv4();
     const { go_live_immediately, release, ...fields } = req.body || {};
+    if (fields.language) fields.language = _langCode(fields.language); // "English" → "en"
     const status = go_live_immediately === true ? 'live' : 'draft';
     if (release) fields.release = cleanRelease(release);
     const badStates = unknownStates(parseTargetStates(fields.target_states));
@@ -273,6 +314,7 @@ router.put('/:id', requirePerm('perm_edit_curriculum'), async (req, res) => {
     ]);
     // Edits save codes too ("Gujarat" → "GJ"), the same as a new quiz.
     if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);
+    if (safe.language) safe.language = _langCode(safe.language);
     const badEdit = unknownStates(safe.target_states || []);
     if (badEdit.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badEdit) });
     await db.collection('quizzes').doc(req.params.id).update({ ...safe, updated_at: new Date() });
@@ -572,7 +614,7 @@ router.post('/bulk-upload-grouped', requirePerm('perm_edit_curriculum'), caught(
     const key = [cls, subj, normTopic(topic), state].join('||');
     if (!groups.has(key)) groups.set(key, {
       class_name: cls, subject: subj, topic, state,
-      source_language: String(r.source_language || r['Source Language'] || 'en').toLowerCase(),
+      source_language: _langCode(r.source_language || r['Source Language'] || 'en'),
       questions: [],
     });
     groups.get(key).questions.push(q);
@@ -687,6 +729,7 @@ router.post('/:id/translate', requirePerm('perm_edit_curriculum'), caught(async 
       failed.push({ lang: tgt, error: e.message });
     }
   }
+  if (created.length) await _dropManifests(db);
   res.json({ message: 'Translation complete — review each language before publish', group: groupId, created, failed });
 }));
 
@@ -818,16 +861,32 @@ router.post('/bulk-action', requirePerm('perm_edit_curriculum'), async (req, res
     if (!Array.isArray(quizIds) || !quizIds.length) {
       return res.status(400).json({ error: 'quizIds required' });
     }
-    const statusForAction = { publish: 'published', archive: 'archived', pause: 'draft' };
+    // The dashboard buttons send live / paused / draft / delete; older callers
+    // sent publish / pause / archive. Accept both, and write the same status
+    // (and stamps) the single-quiz ▶ Live / ⏸ buttons write.
+    const statusForAction = {
+      live: 'live', publish: 'live', published: 'live',
+      paused: 'paused', pause: 'paused',
+      draft: 'draft', archive: 'archived', archived: 'archived',
+    };
     if (action !== 'delete' && !statusForAction[action]) {
       return res.status(400).json({ error: 'Unknown action: ' + action });
     }
+    if (quizIds.length > 450) {
+      return res.status(400).json({ error: 'Select at most 450 quizzes at a time' });
+    }
     const db    = getFirestore();
     const batch = db.batch();
+    const now   = new Date();
+    const by    = (req.user && req.user.id) || null;
     quizIds.forEach(id => {
-      const ref = db.collection('quizzes').doc(id);
-      if (action === 'delete') batch.delete(ref);
-      else batch.update(ref, { status: statusForAction[action], updated_at: new Date() });
+      const ref = db.collection('quizzes').doc(String(id));
+      if (action === 'delete') { batch.delete(ref); return; }
+      const status = statusForAction[action];
+      const upd = { status, updated_at: now };
+      if (status === 'live')   Object.assign(upd, { published_at: now, published_by: by });
+      if (status === 'paused') Object.assign(upd, { paused_at: now, paused_by: by });
+      batch.update(ref, upd);
     });
     await batch.commit();
     res.json({ message: `Applied "${action}" to ${quizIds.length} quizzes`, action, count: quizIds.length });

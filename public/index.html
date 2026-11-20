@@ -2605,9 +2605,9 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:10px;padding:14px;margin-bottom:14px">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px">🎯 Audience Targeting</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div><label class="lbl">Target State</label><select class="sel" id="notif-state" onchange="updateFcmTopicPreview()"><option value="">All States</option></select></div>
+            <div><label class="lbl">Target State</label><select class="sel" id="notif-state" onchange="updateFcmTopicPreview();filterNotifContent()"><option value="">All States</option></select></div>
             <div><label class="lbl">Class / Grade</label>
-           <select class="sel" id="notif-class" onchange="updateFcmTopicPreview()">
+           <select class="sel" id="notif-class" onchange="updateFcmTopicPreview();filterNotifContent()">
              <option value="">All Classes</option>
              <option>Class 1</option><option>Class 2</option><option>Class 3</option>
              <option>Class 4</option><option>Class 5</option><option>Class 6</option>
@@ -5069,6 +5069,21 @@ const INDIA_LANGUAGES = [
   'Odia','Punjabi','Sanskrit','Santali','Sindhi','Tamil','Telugu','Urdu',
   'Bhojpuri','Chhattisgarhi','Garhwali','Haryanvi','Kumaoni','Rajasthani','Tulu'
 ];
+// Quizzes store a language CODE ("en"); older ones a name ("English"). Every
+// list and filter compares codes, and shows the name.
+const LANG_CODE_BY_NAME = {
+  assamese:'as', bengali:'bn', bangla:'bn', bodo:'brx', dogri:'doi', english:'en', gujarati:'gu',
+  hindi:'hi', kannada:'kn', kashmiri:'ks', konkani:'kok', maithili:'mai', malayalam:'ml',
+  manipuri:'mni', marathi:'mr', nepali:'ne', odia:'or', oriya:'or', punjabi:'pa', sanskrit:'sa',
+  santali:'sat', santhali:'sat', sindhi:'sd', tamil:'ta', telugu:'te', urdu:'ur',
+  bhojpuri:'bho', chhattisgarhi:'hne', garhwali:'gbm', haryanvi:'bgc', kumaoni:'kfy',
+  rajasthani:'raj', tulu:'tcy',
+};
+const LANG_NAME_BY_CODE = Object.fromEntries(INDIA_LANGUAGES.map(n => [LANG_CODE_BY_NAME[n.toLowerCase()], n]));
+function langCode(v) { const s = String(v || '').trim().toLowerCase(); return LANG_CODE_BY_NAME[s] || s; }
+function langLabel(v) { const c = langCode(v); return c ? (LANG_NAME_BY_CODE[c] || c) : ''; }
+// "Class 8" / "8" / "class-8" → "8", so class names written differently still match.
+function _clsKey(v) { const s = String(v || '').trim().toLowerCase(); const m = s.match(/\d+/); return m ? m[0] : s; }
 
 // ── Populate all state/district/language selects on page load ─────────────────
 function populateAllLocationDropdowns() {
@@ -5107,7 +5122,7 @@ function populateAllLocationDropdowns() {
     const el = document.getElementById(id);
     if (!el) return;
     while (el.options.length > 1) el.remove(1);
-    INDIA_LANGUAGES.forEach(lang => el.add(new Option(lang, lang)));
+    INDIA_LANGUAGES.forEach(lang => el.add(new Option(lang, langCode(lang))));  // value = code ("en")
   });
 
   // mqs-states multiselect
@@ -5152,6 +5167,7 @@ function switchCurrTab(tabId, btn) {
 
   if (tabId === 'quiz-master') loadQuizList();
   if (tabId === 'quiz-manager') loadQuizManagerStats();
+  if (tabId === 'hierarchy' && typeof refreshQuizDropdowns === 'function') refreshQuizDropdowns();
 }
 
 // filterHierarchy / resetHierarchyFilters — DEDUPLICATED: canonical versions defined below in curriculum section
@@ -5322,7 +5338,7 @@ async function loadQuizList() {
         <td>${escHtml(q.class_name||'—')}</td>
         <td>${escHtml(q.subject||'—')}</td>
         <td>${escHtml(q.topic||'—')}</td>
-        <td>${escHtml(q.language||'—')}</td>
+        <td title="${escHtml(langCode(q.language))}">${escHtml(langLabel(q.language)||'—')}</td>
         <td>${q.question_count||0}</td>
         <td>${quizStatusBadge(q.status)}</td>
         <td style="font-size:11px">${releaseSummary(q)}</td>
@@ -5392,7 +5408,7 @@ function openQuizTranslate(id) {
   document.getElementById('qtr-sub').textContent = `"${q.title || id}" — pick target languages. Each becomes a reviewable variant (status: submitted).`;
   document.getElementById('qtr-langskip').style.display = isLangSubj ? 'block' : 'none';
   document.getElementById('qtr-force').checked = false;
-  const srcCode = (q.language || '').toLowerCase();
+  const srcCode = langCode(q.language);
   document.getElementById('qtr-langs').innerHTML = _QTR_LANGS
     .filter(([c]) => c !== srcCode)
     .map(([c, name]) => `<label style="display:inline-flex;align-items:center;gap:3px"><input type="checkbox" class="qtr-lang" value="${c}" style="width:auto"> ${name} (${c})</label>`)
@@ -5825,54 +5841,50 @@ async function openQuizLinkModal(nodeId, topicName, className, subjectName) {
   const listEl = document.getElementById('quiz-link-list');
   listEl.innerHTML = '<div style="color:var(--text2);text-align:center;padding:16px">Loading quizzes...</div>';
 
-  // Populate lang filter
+  // Language filter: value = code, so it matches "en" and older "English".
   const langSel = document.getElementById('quiz-link-lang-filter');
   while (langSel.options.length > 1) langSel.remove(1);
-  INDIA_LANGUAGES.forEach(l => langSel.add(new Option(l, l)));
+  INDIA_LANGUAGES.forEach(l => langSel.add(new Option(l, langCode(l))));
+  langSel.value = '';
 
   openModal('modal-quiz-link');
 
-  try {
-    const res = await fetch(`/api/quiz?class_name=${encodeURIComponent(className)}&subject=${encodeURIComponent(subjectName)}&limit=200`, { headers: authHeaders() });
-    if (res.ok) {
-      const data = await res.json();
-      allQuizzesCache = data.data || [];
-    } else { allQuizzesCache = []; }
-  } catch(e) { allQuizzesCache = []; }
-
-  // Same rule as AR linking: only quizzes allowed in this state; same topic first.
-  const ctx = _currTopicCtx(nodeId);
-  const tk = _currTopicKey(topicName);
-  allQuizzesCache = allQuizzesCache
-    .filter(q => q.status !== 'archived' && _currStateAllows(q.target_states, ctx))
-    .sort((a, b) => (_currTopicKey(b.topic) === tk) - (_currTopicKey(a.topic) === tk)
-      || String(a.title || '').localeCompare(String(b.title || '')));
+  // Same rule as the Quick-Link dropdown: this State + Class, translations as
+  // one entry, same topic first. Always fresh, so a quiz made a moment ago shows.
+  const all = await _fetchAllQuizzes(true);
+  allQuizzesCache = _quizzesForTopic(all, _currTopicCtx(nodeId));
   renderQuizLinkList(allQuizzesCache);
 }
 
 function filterQuizLinkList() {
   const lang = document.getElementById('quiz-link-lang-filter').value;
-  const filtered = lang ? allQuizzesCache.filter(q => q.language === lang) : allQuizzesCache;
+  const filtered = lang ? allQuizzesCache.filter(q => (q._langs || []).includes(lang)) : allQuizzesCache;
   renderQuizLinkList(filtered);
 }
 
 function renderQuizLinkList(quizzes) {
   const listEl = document.getElementById('quiz-link-list');
+  const ctx = _currTopicCtx(currentLinkNodeId);
   if (!quizzes.length) {
-    listEl.innerHTML = '<div style="color:var(--text2);text-align:center;padding:16px">No matching quizzes found. Create quizzes in Quiz Manager first.</div>';
+    const lang = document.getElementById('quiz-link-lang-filter')?.value;
+    listEl.innerHTML = `<div style="color:var(--text2);text-align:center;padding:16px">No ${escHtml(ctx.cls || '')} quizzes${lang ? ' in ' + escHtml(langLabel(lang)) : ''} for ${escHtml(ctx.stateName || 'this state')} yet.<br><span style="font-size:11px">Make one in Quiz Manager (or upload a sheet) with Class "${escHtml(ctx.cls || '')}" and State ${escHtml(ctx.stateName || '')} or All India.</span></div>`;
     return;
   }
-  const tk = _currTopicKey(_currTopicCtx(currentLinkNodeId).topic);
+  const tk = _currTopicKey(ctx.topic);
   const linked = new Set([...(document.getElementById(currentLinkNodeId)?.querySelectorAll('[data-quiz-id]') || [])].map(c => c.dataset.quizId));
-  listEl.innerHTML = quizzes.map(q => `
-    <label class="checklist-item" style="cursor:pointer${linked.has(q.id) ? ';opacity:.55' : ''}">
-      <input type="checkbox" value="${q.id}" ${linked.has(q.id) ? 'checked disabled title="Already linked"' : ''} style="accent-color:var(--accent);width:14px;height:14px">
+  listEl.innerHTML = quizzes.map(q => {
+    const isLinked = (q._ids || [q.id]).some(id => linked.has(id));
+    const langs = q._langs || [];
+    const langTxt = langs.length > 1 ? `${langs.length} languages (${langs.join(', ')})` : langLabel(langs[0] || q.language);
+    return `
+    <label class="checklist-item" style="cursor:pointer${isLinked ? ';opacity:.55' : ''}">
+      <input type="checkbox" value="${q.id}" ${isLinked ? 'checked disabled title="Already linked"' : ''} style="accent-color:var(--accent);width:14px;height:14px">
       <div>
-        <div style="font-weight:500;font-size:13px">${tk && _currTopicKey(q.topic) === tk ? '★ ' : ''}${escHtml(q.title)}${linked.has(q.id) ? ' · linked' : ''}</div>
-        <div style="font-size:11px;color:var(--text2)">${[q.class_name, q.subject, q.topic, q.language].filter(Boolean).join(' · ')} · ${q.question_count||0} Qs · ${quizStatusBadge(q.status)}</div>
+        <div style="font-weight:500;font-size:13px">${tk && _currTopicKey(q.topic) === tk ? '★ ' : ''}${escHtml(q.title)}${isLinked ? ' · linked' : ''}</div>
+        <div style="font-size:11px;color:var(--text2)">${[q.class_name, q.subject, q.topic, langTxt].filter(Boolean).map(escHtml).join(' · ')} · ${q.question_count||0} Qs · ${quizStatusBadge(q.status)}</div>
       </div>
-    </label>
-  `).join('');
+    </label>`;
+  }).join('') + (tk ? '<div style="font-size:11px;color:var(--text3);padding:0 4px">★ = same topic · translations are one entry: linking it links every language</div>' : '');
 }
 
 async function saveQuizLinks() {
@@ -6009,7 +6021,7 @@ function renderQuizTopTable(quizzes) {
     <tr>
       <td><strong>${escHtml(q.title)}</strong></td>
       <td>${escHtml(q.class_name||'—')}</td><td>${escHtml(q.subject||'—')}</td>
-      <td>${escHtml(q.topic||'—')}</td><td>${escHtml(q.language||'—')}</td>
+      <td>${escHtml(q.topic||'—')}</td><td>${escHtml(langLabel(q.language)||'—')}</td>
       <td>${quizStatusBadge(q.status)}</td>
       <td>${parseInt(q.attempts||0).toLocaleString('en-IN')}</td>
       <td>${(q.avg_score_pct ?? q.avg_score) ? (q.avg_score_pct ?? q.avg_score)+'%' : '—'}</td>
@@ -6602,37 +6614,69 @@ function currAddTopicManual(subjectNodeId, classNodeId, subject) {
 }
 
 // ── Quick-link quiz directly from topic row dropdown ─────────────────────────
-// One request per Class + Subject (was one per topic row).
-const _quizDropCache = {};
+// One request for the whole tree, reused for 20 s only (it used to be kept for
+// the whole session, so a quiz made after the page opened never showed up).
+let _quizAllCache = null;
+function _fetchAllQuizzes(fresh) {
+  if (!fresh && _quizAllCache && Date.now() - _quizAllCache.at < 20000) return _quizAllCache.p;
+  const p = fetch('/api/quiz?limit=1000', { headers: authHeaders() })
+    .then(r => r.ok ? r.json() : {}).then(d => d.data || []).catch(() => []);
+  _quizAllCache = { at: Date.now(), p };
+  return p;
+}
+// Quizzes for a topic row: same Class, allowed in this State, not archived.
+// A quiz and its translations are ONE entry (the original), carrying all their
+// languages (_langs) and ids (_ids): linking it links every language, and the
+// app shows each student their own. Same topic first (★), then same subject.
+function _quizzesForTopic(all, ctx) {
+  const ck = _clsKey(ctx.cls), sk = _currTopicKey(ctx.subject), tk = _currTopicKey(ctx.topic);
+  const mine = (all || []).filter(q => q.status !== 'archived'
+    && (!ck || _clsKey(q.class_name) === ck)
+    && (!(ctx.stateCode || ctx.stateName) || _currStateAllows(q.target_states, ctx)));
+  const sets = new Map();
+  mine.forEach(q => {
+    const g = q.translation_group || q.id;
+    if (!sets.has(g)) sets.set(g, []);
+    sets.get(g).push(q);
+  });
+  return [...sets.values()].map(list => {
+    const main = list.find(q => !q.translated_from) || list.find(q => langCode(q.language) === 'en') || list[0];
+    return { ...main,
+      _langs: [...new Set(list.map(q => langCode(q.language)).filter(Boolean))],
+      _ids: list.map(q => q.id) };
+  }).sort((a, b) => (_currTopicKey(b.topic) === tk) - (_currTopicKey(a.topic) === tk)
+    || (_currTopicKey(b.subject) === sk) - (_currTopicKey(a.subject) === sk)
+    || String(a.title || '').localeCompare(String(b.title || '')));
+}
 async function populateQuizDropdown(selId, className, subject, topic, stateCode) {
   const sel = document.getElementById(selId);
   if (!sel) return;
   try {
-    const params = new URLSearchParams({ limit: 200 });
-    if (className) params.append('class_name', className);
-    if (subject)   params.append('subject', subject);
-    const key = params.toString();
-    _quizDropCache[key] = _quizDropCache[key] || fetch('/api/quiz?' + params, { headers: authHeaders() })
-      .then(r => r.ok ? r.json() : {}).catch(() => ({}));
-    const data = await _quizDropCache[key];
-    const block = document.getElementById('stblock-' + stateCode);
-    const ctx = { stateCode: stateCode || '', stateName: block?.dataset.stateName || '' };
-    const tk = _currTopicKey(topic);
-    const quizzes = (data.data || [])
-      .filter(q => q.status !== 'archived' && (!stateCode || _currStateAllows(q.target_states, ctx)))
-      .sort((a, b) => (_currTopicKey(b.topic) === tk) - (_currTopicKey(a.topic) === tk)
-        || String(a.title || '').localeCompare(String(b.title || '')));
+    const nodeId = selId.replace(/^quiz-quick-sel-/, '');
+    const c = _currTopicCtx(nodeId);
+    const block = document.getElementById('stblock-' + (c.stateCode || stateCode));
+    const ctx = { stateCode: c.stateCode || stateCode || '', stateName: c.stateName || block?.dataset.stateName || '',
+                  cls: c.cls || className, subject: c.subject || subject, topic: c.topic || topic };
+    const quizzes = _quizzesForTopic(await _fetchAllQuizzes(), ctx);
+    const tk = _currTopicKey(ctx.topic);
     if (!quizzes.length) {
-      sel.innerHTML = '<option value="">No quizzes for this class yet</option>';
+      sel.innerHTML = `<option value="">No ${escHtml(ctx.cls || 'class')} quizzes yet</option>`;
     } else {
-      sel.innerHTML = '<option value="">+ Quick-Link Quiz…</option>' +
-        quizzes.map(q =>
-          `<option value="${q.id}" data-title="${escHtml(q.title)}">${tk && _currTopicKey(q.topic) === tk ? '★ ' : ''}${escHtml(q.title)} (${q.question_count||0} Qs)</option>`
-        ).join('');
+      sel.innerHTML = `<option value="">+ Quick-Link Quiz (${quizzes.length})…</option>` +
+        quizzes.map(q => {
+          const n = (q._langs || []).length;
+          const lang = n > 1 ? ` · ${n} languages` : (n ? ' · ' + langLabel(q._langs[0]) : '');
+          return `<option value="${q.id}" data-title="${escHtml(q.title)}" data-ids="${escHtml((q._ids || [q.id]).join(','))}">${tk && _currTopicKey(q.topic) === tk ? '★ ' : ''}${escHtml(q.title)} (${q.question_count||0} Qs${lang})</option>`;
+        }).join('');
     }
   } catch(e) {
     sel.innerHTML = '<option value="">Could not load quizzes</option>';
   }
+}
+// Re-read every topic row's quiz list (on opening the Curriculum Hierarchy tab).
+function refreshQuizDropdowns() {
+  _quizAllCache = null;
+  document.querySelectorAll('select[id^="quiz-quick-sel-"]').forEach(sel => populateQuizDropdown(sel.id));
 }
 
 function quickAddQuizFromDrop(nodeId, topicName, className, subject) {
@@ -6651,8 +6695,10 @@ function quickAddQuizFromDrop(nodeId, topicName, className, subject) {
     topicDiv.appendChild(chipsRow);
   }
 
-  // Prevent duplicate
-  if (chipsRow.querySelector(`[data-quiz-id="${quizId}"]`)) {
+  // Prevent duplicate (any language of the same quiz counts)
+  const sameSet = (sel.options[sel.selectedIndex]?.dataset?.ids || quizId).split(',').filter(Boolean);
+  if (sameSet.some(id => chipsRow.querySelector(`[data-quiz-id="${id}"]`))) {
+    sel.value = '';
     showToast('Quiz already linked'); return;
   }
 
@@ -8466,8 +8512,8 @@ function filterArLinkModal() {
   const list = _arAssetsModalCache.filter(a => {
     const text = ((a.title||'') + ' ' + (a.topic||'') + ' ' + (a.subject||'')).toLowerCase();
     if (search && !text.includes(search)) return false;
-    if (cls && a.class_name !== cls) return false;
-    if (subj && a.subject !== subj) return false;
+    if (cls && _clsKey(a.class_name) !== _clsKey(cls)) return false;
+    if (subj && _currTopicKey(a.subject) !== _currTopicKey(subj)) return false;
     if (!_currStateAllows(a.target_states, ctx)) { hiddenByState++; return false; }
     return true;
   });
@@ -9156,31 +9202,51 @@ let notifFiltersData = { states: [], classes: [], subjects: [], topics: [], quiz
 let notifHistoryCurrentPage = 1;
 
 async function initNotificationsPage() {
-  const data = await safeFetch('/api/notifications/filters');
-  if (data) {
-    notifFiltersData = data;
-    populateNotifDropdowns(data);
-  }
+  await refreshNotifFilters();
   dispatchDueNotifications(false);
   loadNotifKpis();
   loadNotifHistory();
   loadNotifRecent();
 }
 
+// Re-read topics / quizzes on every visit, so content added since shows up.
+async function refreshNotifFilters() {
+  const data = await safeFetch('/api/notifications/filters');
+  if (data) {
+    notifFiltersData = { states: [], classes: [], subjects: [], topics: [], quizzes: [], ...data };
+    populateNotifDropdowns(notifFiltersData);
+  }
+}
+function _notifFill(id, items, val, text, firstLabel) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const keep = el.value;
+  while (el.options.length > 1) el.remove(1);           // keep the "All …" option, avoid duplicates
+  if (firstLabel && el.options[0]) el.options[0].textContent = firstLabel;
+  (items || []).forEach(x => el.add(new Option(text(x), val(x))));
+  if (keep && [...el.options].some(o => o.value === keep)) el.value = keep;
+}
 function populateNotifDropdowns(data) {
-  const fill = (id, items, val, text, firstLabel) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    while (el.options.length > 1) el.remove(1);           // keep the "All …" option, avoid duplicates
-    if (firstLabel && el.options[0]) el.options[0].textContent = firstLabel;
-    (items || []).forEach(x => el.add(new Option(text(x), val(x))));
-  };
   const name = x => (typeof x === 'string' ? x : x.name);
-  fill('notif-state',     data.states,  name, name);
-  fill('nh-filter-state', data.states,  name, name);
-  fill('notif-class',     data.classes, name, name);
-  fill('notif-topic',     data.topics,  t => t.id, t => t.name, data.topics?.length ? 'No Topic Filter' : 'No published AR topics yet');
-  fill('notif-quiz',      data.quizzes, q => q.id, q => q.name, data.quizzes?.length ? 'No Quiz Filter' : 'No live quizzes yet');
+  _notifFill('notif-state',     data.states,  name, name);
+  _notifFill('nh-filter-state', data.states,  name, name);
+  _notifFill('notif-class',     data.classes, name, name);
+  filterNotifContent();
+}
+// AR Topic and Quiz lists follow the chosen State + Class (blank = all).
+let notifShown = { topics: [], quizzes: [] };
+function filterNotifContent() {
+  const state = document.getElementById('notif-state')?.value || '';
+  const ck = _clsKey(document.getElementById('notif-class')?.value || '');
+  const ctx = { stateCode: '', stateName: state };
+  const ok = x => (!state || _currStateAllows(x.states, ctx)) && (!ck || !x.class_name || _clsKey(x.class_name) === ck);
+  notifShown = { topics: (notifFiltersData.topics || []).filter(ok), quizzes: (notifFiltersData.quizzes || []).filter(ok) };
+  const where = [state, document.getElementById('notif-class')?.value].filter(Boolean).join(' · ');
+  _notifFill('notif-topic', notifShown.topics, t => t.id, t => t.name,
+    notifShown.topics.length ? `No Topic Filter (${notifShown.topics.length})` : `No topics${where ? ' for ' + where : ''} yet`);
+  _notifFill('notif-quiz', notifShown.quizzes, q => q.id, q => q.name,
+    notifShown.quizzes.length ? `No Quiz Filter (${notifShown.quizzes.length})` : `No live quizzes${where ? ' for ' + where : ''} yet`);
+  if (document.getElementById('notif-dl-type')?.value) onDeepLinkTypeChange();
 }
 
 function updateFcmTopicPreview() {
@@ -9208,10 +9274,14 @@ function onDeepLinkTypeChange() {
   if (!idSel) return;
   idSel.innerHTML = '<option value="">— select —</option>';
   if (type === 'ar_topic') {
-    notifFiltersData.topics.forEach(t => { const o = new Option(t.name, t.id); idSel.appendChild(o); });
+    notifShown.topics.forEach(t => { const o = new Option(t.name, t.id); idSel.appendChild(o); });
   } else if (type === 'quiz') {
-    notifFiltersData.quizzes.forEach(q => { const o = new Option(q.name, q.id); idSel.appendChild(o); });
+    notifShown.quizzes.forEach(q => { const o = new Option(q.name, q.id); idSel.appendChild(o); });
   }
+  // Topic picked above → open that topic.
+  const pick = type === 'ar_topic' ? document.getElementById('notif-topic')?.value
+             : type === 'quiz' ? document.getElementById('notif-quiz')?.value : '';
+  if (pick && [...idSel.options].some(o => o.value === pick)) idSel.value = pick;
   const dlPrev = document.getElementById('notif-preview-deeplink');
   if (dlPrev) dlPrev.style.display = type ? 'block' : 'none';
   updateNotifPreview(); // re-sync expanded + in-app previews with the deep-link state
@@ -9744,6 +9814,7 @@ window.showPage = function showPage(pageId, topBtn, sbBtn) {
   }
   if (pageId === 'notifications') {
     if (!window._notifInited) { window._notifInited = true; initNotificationsPage && initNotificationsPage(); }
+    else if (typeof refreshNotifFilters === 'function') refreshNotifFilters();
   }
   if (pageId === 'compliance') {
     typeof initLegalPage === 'function' && initLegalPage();
@@ -10961,6 +11032,28 @@ if (typeof originalDoLogin === 'function') {
 // ═══════════════════════════════════════════════════════════════════════════
 // DPDPA 2023 COMPLIANCE TRACKER - Dynamic Real-Time Status
 // ═══════════════════════════════════════════════════════════════════════════
+// "Fix →" on the tracker: scroll to the box that fixes the check, light up its
+// whole panel, and put the cursor in the field so the admin can type at once.
+function jumpToComplianceFix(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  // Light up the bordered panel around the field (a lone toggle or number is
+  // easy to miss): the nearest ancestor with a visible border.
+  let panel = el.parentElement;
+  while (panel && panel !== document.body) {
+    const cs = getComputedStyle(panel);
+    if (parseFloat(cs.borderTopWidth) > 0 && panel.offsetHeight > el.offsetHeight + 16) break;
+    panel = panel.parentElement;
+  }
+  if (!panel || panel === document.body) panel = el;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  panel.style.transition = 'box-shadow .3s';
+  panel.style.boxShadow = '0 0 0 3px var(--accent)';
+  setTimeout(() => { panel.style.boxShadow = ''; }, 2200);
+  // Text / number / URL boxes get the cursor; switches and buttons get focus.
+  setTimeout(() => { try { el.focus({ preventScroll: true }); } catch (_) {} }, 450);
+}
+
 async function renderDPDPATracker() {
   const container = document.getElementById('dpdpa-tracker');
   if (!container) return;
@@ -10973,25 +11066,26 @@ async function renderDPDPATracker() {
     const checks = data.checks || [];
     // Map each failing check to the dashboard control that fixes it, so a click
     // scrolls the admin straight to the right form/toggle.
+    // Each check → the box on this page that fixes it.
     const _fixTarget = {
-      dpo_appointed: 'dpo-command-center',
-      grievance_officer: 'go-name',
-      retention_policy: 'auto-purge-toggle',
-      right_to_erasure: 'auto-purge-toggle',
-      parental_consent: 'certin-checklist',
-      breach_procedure: 'certin-checklist',
-      admin_mfa: 'certin-checklist',
-      audit_log_active: 'certin-checklist',
-      privacy_policy: 'certin-checklist',
-      consent_mechanism: 'certin-checklist',
-      // data_localisation is an env-var / deploy setting, no in-page control.
+      privacy_policy: 'set-privacy-url',        // DPDPA data points
+      retention_policy: 'set-retention-days',   // DPDPA data points
+      breach_procedure: 'set-breach-contact',   // DPDPA data points
+      right_to_erasure: 'auto-purge-toggle',    // Auto-purge switch
+      admin_mfa: 'toggle-global-mfa',           // Sign-in code (MFA)
+      dpo_appointed: 'dpo-name',                // DPO form
+      grievance_officer: 'go-name',             // Grievance Officer form
+      consent_mechanism: 'cl-total',            // Consent Log (fills from the app)
+      parental_consent: 'cl-parental',          // Consent Log (fills from the app)
+      audit_log_active: 'audit-toggle-btn',     // Audit Log card
+      // data_localisation is a server setting (DATA_REGION), no box on this page.
     };
     container.innerHTML = checks.map(item => {
       const ok = !!item.status;
       const crit = item.severity === 'critical' && !ok;
       const tgt = !ok ? _fixTarget[item.key] : null;
       const clickAttr = tgt
-        ? `onclick="(function(){var e=document.getElementById('${tgt}');if(e){e.scrollIntoView({behavior:'smooth',block:'center'});e.style.transition='box-shadow .3s';e.style.boxShadow='0 0 0 3px var(--accent)';setTimeout(function(){e.style.boxShadow='';},1600);}})()" style="cursor:pointer"`
+        ? `onclick="jumpToComplianceFix('${tgt}')" style="cursor:pointer"`
         : '';
       return `
       <div ${clickAttr} style="display:flex;align-items:center;gap:10px;padding:10px;background:${ok ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)'};border-radius:8px;border:1px solid ${ok ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'};margin-bottom:6px;${tgt ? 'cursor:pointer' : ''}">
@@ -11203,7 +11297,10 @@ async function executeBulkQuizAction(action) {
       body: JSON.stringify({ action, quizIds })
     });
 
-    if (!response.ok) throw new Error('Bulk action failed');
+    if (!response.ok) {
+      const j = await response.json().catch(() => ({}));
+      throw new Error(j.error || ('HTTP ' + response.status));
+    }
     
     showToast(`Success! Applied "${action}" to ${quizIds.length} quizzes.`);
     
@@ -11214,7 +11311,7 @@ async function executeBulkQuizAction(action) {
     }
   } catch (error) {
     console.error(error);
-    showToast('Error applying bulk actions.');
+    showToast('Bulk action failed: ' + error.message);
   }
 }
 

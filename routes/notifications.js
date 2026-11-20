@@ -292,17 +292,53 @@ router.delete('/:id',        requirePerm('perm_send_notif'), cancelScheduled);
 router.get('/filters', staffOnly, async (req, res) => {
   const states   = State.getStatesOfCountry('IN').map(s => ({ code: s.isoCode, name: s.name }));
   const classes  = Array.from({ length: 12 }, (_, i) => ({ name: `Class ${i + 1}` }));
+  // Topics come from every state's Curriculum Map plus published AR lessons;
+  // quizzes are the live ones (one per set of translations). Each carries its
+  // class and states (null = All India) so the form can follow State + Class.
   let topics = [], quizzes = [];
   try {
     const db = getFirestore();
-    const [arSnap, qSnap] = await Promise.all([
-      db.collection('ar_assets').where('status', '==', 'published').limit(200).get(),
-      db.collection('quizzes').limit(200).get(),
+    const [hSnap, arSnap, qSnap] = await Promise.all([
+      db.collection('curriculum_hierarchy').get(),
+      db.collection('ar_assets').where('status', '==', 'published').limit(1000).get(),
+      db.collection('quizzes').where('status', 'in', ['live', 'published']).limit(1000).get(),
     ]);
-    topics  = arSnap.docs.map(d => { const a = d.data(); return { id: d.id, name: [a.topic || a.title || d.id, a.class_name].filter(Boolean).join(' · ') }; });
+    const key = (c, sj, t) => [c, sj, t].map(v => String(v || '').trim().toLowerCase()).join('|');
+    const byKey = new Map();
+    const addTopic = (cls, subject, topic, id, states) => {
+      if (!topic) return;
+      const k = key(cls, subject, topic);
+      let t = byKey.get(k);
+      if (!t) {
+        t = { id: id || 'topic:' + k, name: [topic, subject, cls].filter(Boolean).join(' · '),
+              class_name: cls || '', subject: subject || '', topic, states: [] };
+        byKey.set(k, t);
+      } else if (id && t.id.startsWith('topic:')) t.id = id;
+      if (t.states === null) return;                     // already All India
+      if (!states || !states.length) t.states = null;    // All India
+      else states.forEach(s => { if (!t.states.includes(s)) t.states.push(s); });
+    };
+    hSnap.docs.forEach(d => {
+      const h = d.data() || {};
+      const st = h.state_code || d.id;
+      (h.structure || []).forEach(c => (c.subjects || []).forEach(sj => (sj.topics || []).forEach(t => {
+        const first = (t.ar_assets || []).find(x => x && x.id);
+        addTopic(c.class_name, sj.subject, t.topic, first && first.id, [st]);
+      })));
+    });
+    arSnap.docs.forEach(d => {
+      const a = d.data();
+      addTopic(a.class_name, a.subject, a.topic || a.title, d.id, Array.isArray(a.target_states) ? a.target_states : []);
+    });
+    topics = [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const seen = new Set();
     quizzes = qSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .filter(q => ['live', 'published'].includes(q.status))
-      .map(q => ({ id: q.id, name: [q.title || q.id, q.class_name].filter(Boolean).join(' · ') }));
+      .sort((a, b) => (a.translated_from ? 1 : 0) - (b.translated_from ? 1 : 0)) // originals first
+      .filter(q => { const g = q.translation_group || q.id; if (seen.has(g)) return false; seen.add(g); return true; })
+      .map(q => ({ id: q.id, name: [q.title || q.id, q.class_name].filter(Boolean).join(' · '),
+                   class_name: q.class_name || '', topic: q.topic || '',
+                   states: Array.isArray(q.target_states) && q.target_states.length ? q.target_states : null }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   } catch (err) {
     log.warn({ err: err.message }, 'notification filters: topic/quiz lookup failed');
   }

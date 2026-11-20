@@ -155,7 +155,8 @@ async function _territorySupported(db, state) {
 // at the CDN/proxy. (Later: push the same JSON to R2 — format stays identical.)
 // Bump when the manifest shape changes: cached copies with an older version
 // are rebuilt on the next read instead of being served stale.
-const MANIFEST_VERSION = 5; // v5: lessons carry the page-video settings (region, sound, view)
+const MANIFEST_VERSION = 6; // v6: a linked quiz brings its translations (same translation_group)
+                            // v5: lessons carry the page-video settings (region, sound, view)
                             // v4: lessons carry target_image_url (native ARCore page scan)
                             // v3: tree links decide a topic's AR lessons; lessons carry quiz_ids
 async function buildStateManifest(db, stateCode, stateName) {
@@ -177,6 +178,22 @@ async function buildStateManifest(db, stateCode, stateName) {
   } catch (_) {}
   const nrm = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
   const byId = new Map(assets.map(a => [a.id, a]));
+  // Linking one language of a quiz links all its translations: quiz_ids carry
+  // every quiz in the same translation_group, and the app shows each student
+  // the one in their language (English / the original when theirs is missing).
+  const quizSet = new Map(); // quiz id → ids of all its translations
+  try {
+    const qSnap = await db.collection('quizzes').select('translation_group').limit(5000).get();
+    const byGroup = new Map();
+    qSnap.docs.forEach(d => {
+      const g = d.get('translation_group');
+      if (!g) return;
+      if (!byGroup.has(g)) byGroup.set(g, []);
+      byGroup.get(g).push(d.id);
+    });
+    for (const ids of byGroup.values()) ids.forEach(id => quizSet.set(id, ids));
+  } catch (e) { log.warn({ err: e.message }, 'manifest: quiz translations lookup failed'); }
+  const withTranslations = (ids) => [...new Set(ids.flatMap(id => quizSet.get(id) || [id]))];
   // Assets the admin placed on a topic in the Curriculum tree. Tree links win:
   // a placed asset shows only where it was linked, never again via its tags.
   const placed = new Set();
@@ -189,7 +206,7 @@ async function buildStateManifest(db, stateCode, stateName) {
   const lessonsForTopic = (cls, subj, t) => {
     const explicit = (t.ar_assets || []).map(x => x && x.id).filter(Boolean);
     const list = explicit.length ? explicit.map(id => byId.get(id)).filter(Boolean) : tagMatched(cls, subj, t.topic);
-    const quizIds = (t.quizzes || []).map(q => q && q.id).filter(Boolean);
+    const quizIds = withTranslations((t.quizzes || []).map(q => q && q.id).filter(Boolean));
     return list.map(a => toLesson(a, quizIds));
   };
   const lessonsFor = (cls, subj, topic) => tagMatched(cls, subj, topic).map(a => toLesson(a, []));
