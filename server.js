@@ -202,6 +202,7 @@ async function boot() {
   app.use('/api/ar',           arAssetsRoutes);
   app.use('/api/curriculum',   curriculumRoutes);
   app.use('/api/app-builder',  appBuilderRoutes);
+  app.use('/api/app-packs',    require('./routes/app_packs')); // content packs (no new APK)
   app.use('/api/quiz',         quizRoutes);
   app.use('/api/locations',    locationsRoutes);
   app.use('/api/uploads',      uploadsRoutes);

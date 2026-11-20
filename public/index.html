@@ -2079,6 +2079,7 @@ document.addEventListener('DOMContentLoaded', () => {
 <div class="am-tabs" id="am-tab-bar">
   <button class="am-tab"     onclick="switchAmTab('apps',this)">📋 Deployed Apps</button>
   <button class="am-tab"     onclick="switchAmTab('tenant',this)">🏛️ Tenant App Registry</button>
+  <button class="am-tab"     onclick="switchAmTab('packs',this)">📦 Content Packs</button>
 </div>
 
 
@@ -2185,6 +2186,55 @@ document.addEventListener('DOMContentLoaded', () => {
       <tbody id="am-deployed-tbody">
         <tr><td colspan="7" style="text-align:center;color:var(--text2);padding:20px">Loading deployed apps…</td></tr>
       </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════ TAB: CONTENT PACKS (new looks without a new APK) ════════════════ -->
+<div class="am-panel" id="am-packs">
+  <div class="sh" style="margin-bottom:12px">
+    <div><div class="card-title">📦 Content Packs</div>
+      <div class="card-sub">New themes, hero suits, Chiku looks, intro slides, wording, settings and animations — without a new APK. Phones download published packs in the background (checked, kept offline) and use them from the <b>next app start</b>.</div></div>
+    <button class="btn btn-s btn-sm" onclick="loadPacks()">↻ Refresh</button>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title" style="font-size:14px">⬆️ Upload a pack (or a new version of one)</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin:12px 0">
+      <div><label class="lbl">Pack id</label><input class="inp" id="pk-id" placeholder="diwali_theme" maxlength="49"></div>
+      <div><label class="lbl">Type</label>
+        <select class="sel" id="pk-type" onchange="packTypeHelp()">
+          <option value="theme">🎨 Theme / festival skin</option>
+          <option value="hero_suit">🦸 Hero suits</option>
+          <option value="chiku_look">🐒 Chiku look</option>
+          <option value="slides">🖼️ Intro slides</option>
+          <option value="strings">🔤 Wording / translations</option>
+          <option value="settings">⚙️ Settings</option>
+          <option value="lottie">✨ Animation (Lottie)</option>
+        </select></div>
+      <div><label class="lbl">Title (for you)</label><input class="inp" id="pk-title" placeholder="Diwali 2026 skin"></div>
+      <div><label class="lbl">Pack file (.json)</label><input class="inp" type="file" id="pk-file" accept=".json,application/json"></div>
+      <div><label class="lbl">States (none = All India)</label><select class="sel" id="pk-states" multiple style="height:60px"></select></div>
+      <div><label class="lbl">Show from (optional)</label><input class="inp" type="datetime-local" id="pk-start"></div>
+      <div><label class="lbl">Show until (optional)</label><input class="inp" type="datetime-local" id="pk-end"></div>
+      <div><label class="lbl">Oldest app build (optional)</label><input class="inp" type="number" min="0" id="pk-minbuild" placeholder="0 = any"></div>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin:4px 0 8px;font-size:13px">
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="pk-wifi"> Download on Wi-Fi only (big packs)</label>
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="pk-publish"> Publish now (otherwise saved as a draft)</label>
+    </div>
+    <div id="pk-help" style="font-size:12px;color:var(--text2);margin:6px 0;line-height:1.5"></div>
+    <div id="pk-status" style="font-size:12px;min-height:18px;margin:6px 0"></div>
+    <button class="btn btn-p btn-sm" onclick="uploadPack()">⬆️ Upload pack</button>
+    <button class="btn btn-s btn-sm" onclick="downloadPackTemplate()">📄 Download a template for this type</button>
+  </div>
+
+  <div class="card" style="padding:0;overflow:hidden">
+    <div class="tbl-scroll">
+    <table class="tbl">
+      <thead><tr><th>Pack</th><th>Type</th><th>Version</th><th>Status</th><th>States</th><th>Shows</th><th>Size</th><th>Actions</th></tr></thead>
+      <tbody id="pk-tbody"><tr><td colspan="8" style="text-align:center;color:var(--text2);padding:20px">Loading packs…</td></tr></tbody>
     </table>
     </div>
   </div>
@@ -8427,6 +8477,141 @@ function switchAmTab(id, btn) {
   if (panel && !panel.getAttribute('aria-hidden')) panel.classList.add('on');
   if (id === 'tenant') loadTenantFiles();
   if (id === 'apps') { typeof initStateAppForm === 'function' ? initStateAppForm() : (typeof loadDeployedApps === 'function' && loadDeployedApps()); }
+  if (id === 'packs') loadPacks();
+}
+
+// ── Content packs (App Manager → 📦 Content Packs) ────────────────────────────
+const PACK_HELP = {
+  theme: 'Colours for the app themes. Key <code>*</code> = every theme (festival skin); or name one: midnightSlate, deepForest, twilightPurple, warmCharcoal, abyssalBlue. Each: <code>gradient</code> [top, bottom] and/or <code>highlight</code>.',
+  hero_suit: 'Hero colours / names (<code>heroes</code>, matched by subject <code>keywords</code> — a new subject gets a new hero), new <code>emblems</code> and <code>masks</code>, and extra suit parts (<code>chunks</code>: layer, svg, min_level–max_level 0–4, gender any/boy/girl). Colour tokens in svg: {M} suit, {GL} glow, {AN} accent glow, {SK} skin, {HR} hair.',
+  chiku_look: '<code>colors</code> swaps Chiku\'s colours (e.g. fur #B5652A → another), <code>head_extra</code> / <code>body_extra</code> add a hat, glasses or scarf (SVG shapes on his 400×600 canvas, moving with his head / body), <code>parts</code> replaces whole parts (vine, tail, legs, body, wave, ears, head, eyes, squint, smile, mouth_open, tongue, grip).',
+  slides: 'Intro slides before sign-in. <code>mode</code>: replace, append or prepend. Each slide: title, title_accent, body (text, or per language {"en":…,"hi":…}), gradient, visual: emoji / heroes / cards / svg / lottie.',
+  strings: 'Wording by language: {"en": {"key": "text"}, "hi": {…}}. Overrides any app text (English too). A whole language file here also works for a language the app doesn\'t carry yet.',
+  settings: 'Numbers and switches the app reads. Today: <code>ar_gesture_hint_auto_times</code> (how many times the 3D gesture guide opens by itself) and <code>ar_gesture_hint_seconds</code>.',
+  lottie: 'Replaces a built-in animation: <code>replaces</code> = assets/animations/splash_animation.json · assets/animations/Confetti.json · assets/lotties/waving_hands.json · the AR globe; <code>animation</code> = the Lottie JSON. Keep a splash 2–4 s long: the app waits for it to finish.',
+};
+function packTypeHelp() {
+  const t = document.getElementById('pk-type')?.value || 'theme';
+  const el = document.getElementById('pk-help');
+  if (el) el.innerHTML = 'ℹ️ ' + (PACK_HELP[t] || '') + ' File: <code>{"mitra_pack": 1, "type": "' + t + '", "data": {…}}</code>';
+}
+function _packStatesFill() {
+  const sel = document.getElementById('pk-states');
+  if (!sel || sel.options.length || typeof INDIA_STATES === 'undefined') return;
+  INDIA_STATES.forEach(s => sel.add(new Option(s.name, s.code || s.name)));
+}
+let _packsCache = [];
+async function loadPacks() {
+  _packStatesFill(); packTypeHelp();
+  const tb = document.getElementById('pk-tbody');
+  const d = await safeFetch('/api/app-packs');
+  if (!d) { if (tb) tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text2);padding:20px">Could not load packs</td></tr>'; return; }
+  _packsCache = d.data || [];
+  if (!_packsCache.length) { tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text2);padding:20px">No packs yet — download a template, edit it, upload it.</td></tr>'; return; }
+  const day = v => v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  tb.innerHTML = _packsCache.map(p => {
+    const live = p.status === 'published';
+    const states = (p.target_states || []).length ? p.target_states.join(', ') : 'All India';
+    const when = (p.starts_at || p.ends_at) ? `${day(p.starts_at) || 'now'} → ${day(p.ends_at) || 'always'}` : 'always';
+    const id = escHtml(p.id);
+    return `<tr>
+      <td><b>${id}</b><div style="font-size:11px;color:var(--text2)">${escHtml(p.title || '')}</div></td>
+      <td>${escHtml(p.type)}</td>
+      <td>v${p.version}${p.pending ? ` <span style="color:#fbbf24">· v${p.pending.version} waiting</span>` : ''}</td>
+      <td>${live ? '<span class="tag tag-g">● Published</span>' : '<span class="tag tag-b">Draft</span>'}${p.wifi_only ? ' <span class="tag tag-b">Wi-Fi</span>' : ''}${p.min_build ? ` <span class="tag tag-b">build ≥ ${p.min_build}</span>` : ''}</td>
+      <td style="font-size:12px">${escHtml(states)}</td>
+      <td style="font-size:12px">${escHtml(when)}</td>
+      <td style="font-size:12px">${((p.size || 0) / 1024).toFixed(1)} KB</td>
+      <td style="white-space:nowrap">
+        ${live && !p.pending ? `<button class="btn btn-s btn-sm" onclick="packAction('${id}','unpublish')">⏸ Unpublish</button>`
+                             : `<button class="btn btn-p btn-sm" onclick="packAction('${id}','publish')">▶ Publish${p.pending ? ' v' + p.pending.version : ''}</button>`}
+        ${p.can_rollback ? `<button class="btn btn-s btn-sm" onclick="packAction('${id}','rollback')" title="Back to the previous version">↩ Rollback</button>` : ''}
+        <button class="btn btn-s btn-sm" onclick="packPrefill('${id}')" title="Fill the form to upload a new version or change states / dates">✏️</button>
+        <button class="btn btn-r btn-sm" onclick="packAction('${id}','delete')">🗑</button>
+      </td></tr>`;
+  }).join('');
+}
+function packPrefill(id) {
+  const p = _packsCache.find(x => x.id === id);
+  if (!p) return;
+  const local = v => { if (!v) return ''; const d = new Date(v); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+  document.getElementById('pk-id').value = p.id;
+  document.getElementById('pk-type').value = p.type;
+  document.getElementById('pk-title').value = p.title || '';
+  document.getElementById('pk-start').value = local(p.starts_at);
+  document.getElementById('pk-end').value = local(p.ends_at);
+  document.getElementById('pk-minbuild').value = p.min_build || '';
+  document.getElementById('pk-wifi').checked = !!p.wifi_only;
+  const want = new Set(p.target_states || []);
+  [...document.getElementById('pk-states').options].forEach(o => { o.selected = want.has(o.value); });
+  packTypeHelp();
+  document.getElementById('pk-status').innerHTML = `✏️ Editing <b>${escHtml(p.id)}</b>: choose a file to upload a new version, or <a href="#" onclick="savePackMeta();return false">save states / dates only</a>.`;
+  document.getElementById('pk-id').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function _packMeta() {
+  const iso = v => v ? new Date(v).toISOString() : '';
+  return {
+    title: document.getElementById('pk-title').value.trim(),
+    target_states: JSON.stringify([...document.getElementById('pk-states').selectedOptions].map(o => o.value).filter(Boolean)),
+    starts_at: iso(document.getElementById('pk-start').value),
+    ends_at: iso(document.getElementById('pk-end').value),
+    min_build: document.getElementById('pk-minbuild').value || '0',
+    wifi_only: document.getElementById('pk-wifi').checked ? 'true' : 'false',
+  };
+}
+async function savePackMeta() {
+  const id = document.getElementById('pk-id').value.trim().toLowerCase();
+  const st = document.getElementById('pk-status');
+  const d = await safeFetch('/api/app-packs/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(_packMeta()) });
+  if (d) { st.textContent = '✅ Saved'; loadPacks(); }
+}
+async function uploadPack() {
+  const st = document.getElementById('pk-status');
+  const file = document.getElementById('pk-file').files[0];
+  const id = document.getElementById('pk-id').value.trim().toLowerCase();
+  if (!id) { st.textContent = '⚠ Give the pack an id (e.g. diwali_theme)'; return; }
+  if (!file) { st.textContent = '⚠ Choose the pack file (.json)'; return; }
+  const fd = new FormData();
+  fd.append('id', id);
+  fd.append('type', document.getElementById('pk-type').value);
+  Object.entries(_packMeta()).forEach(([k, v]) => fd.append(k, v));
+  fd.append('publish', document.getElementById('pk-publish').checked ? 'true' : 'false');
+  fd.append('file', file);
+  st.textContent = '⏳ Checking and uploading…';
+  try {
+    const r = await fetch('/api/app-packs', { method: 'POST', headers: authHeaders(), body: fd });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      st.innerHTML = '❌ ' + escHtml(j.error || ('HTTP ' + r.status)) +
+        (j.problems ? '<ul style="margin:4px 0 0 18px">' + j.problems.map(x => '<li>' + escHtml(x) + '</li>').join('') + '</ul>' : '');
+      return;
+    }
+    st.textContent = `✅ ${j.id} v${j.version} — ${j.status}`;
+    document.getElementById('pk-file').value = '';
+    loadPacks();
+  } catch (e) {
+    st.textContent = '❌ Upload failed: ' + e.message;
+  }
+}
+async function packAction(id, action) {
+  const ask = { delete: `Delete pack "${id}" and all its versions? Phones remove it at their next check.`,
+                unpublish: `Unpublish "${id}"? Phones remove it at their next check.`,
+                rollback: `Go back to the previous version of "${id}"?` }[action];
+  if (ask && !confirm(ask)) return;
+  const d = await safeFetch('/api/app-packs/' + encodeURIComponent(id) + (action === 'delete' ? '' : '/' + action),
+    { method: action === 'delete' ? 'DELETE' : 'POST' });
+  if (d) { showToast({ publish: '✅ Published', unpublish: '⏸ Unpublished', rollback: '↩ Rolled back', delete: '🗑 Deleted' }[action]); loadPacks(); }
+}
+async function downloadPackTemplate() {
+  const t = document.getElementById('pk-type').value;
+  try {
+    const r = await fetch('/api/app-packs/template/' + t, { headers: authHeaders() });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const blob = new Blob([JSON.stringify(await r.json(), null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'mitra_pack_' + t + '.json'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  } catch (e) { showToast('Template download failed: ' + e.message); }
 }
 
 // ── AR Asset Save & Apply ─────────────────────────────────────────
