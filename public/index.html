@@ -2356,11 +2356,12 @@ document.addEventListener('DOMContentLoaded', () => {
         <label class="lbl">Narration <span style="color:var(--text2);font-weight:400">(approved files for this Class + Subject · same topic listed first · only the target states' languages)</span></label>
         <div id="ar-narr-pickers" style="font-size:12px;color:var(--text2)"><em>Pick Class and Subject above to see narration files.</em></div>
         <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border,#333);display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px">
-          <span>Or upload a file:</span>
-          <select class="sel" id="ar-narr-up-lang" style="width:130px"></select>
-          <input type="file" id="ar-narr-up-file" accept="audio/*" style="font-size:11px;max-width:190px">
+          <span>Or upload files from your computer:</span>
+          <input type="file" id="ar-narr-up-files" accept="audio/*" multiple onchange="narrFilesPicked('ar')" style="font-size:11px;max-width:220px">
           <button class="btn btn-s btn-sm" onclick="arNarrUpload()">⬆ Add to library</button>
         </div>
+        <!-- One row per chosen file: pick its language (English names) -->
+        <div id="ar-narr-up-list" style="font-size:12px"></div>
       </div>
     </div>
 
@@ -2494,6 +2495,17 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
       <!-- Per-language translations to review/edit before voicing -->
       <div id="studio-review" style="margin-top:10px"></div>
+
+      <!-- ⬆ Narration files recorded elsewhere — several at once, each tagged -->
+      <div style="margin-top:14px;border-top:1px dashed var(--border,#333);padding-top:10px">
+        <div style="font-weight:600;margin-bottom:4px">⬆ Upload narration files</div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Uses the Class, Subject, Topic and State chosen above. Pick one or more audio files (MP3 / WAV / M4A / OGG), then choose each file's language. One file per language; uploaded files are approved at once.</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px">
+          <input type="file" id="studio-narr-up-files" accept="audio/*" multiple onchange="narrFilesPicked('studio')" style="font-size:11px;max-width:260px">
+          <button class="btn btn-s btn-sm" onclick="studioNarrUpload()">⬆ Add to library</button>
+        </div>
+        <div id="studio-narr-up-list" style="font-size:12px"></div>
+      </div>
 
       <div style="margin-top:14px;border-top:1px dashed var(--border,#333);padding-top:10px">
         <div style="font-weight:600;margin-bottom:6px">Generated library</div>
@@ -7076,11 +7088,6 @@ async function initNarrationStudio() {
   copyOpts('studio-class', 'studio-filter-class');
   studioTopicRefresh();
   copyOpts('studio-subject', 'studio-filter-subject');
-  const up = document.getElementById('ar-narr-up-lang');
-  if (up && !up.options.length) {
-    up.add(new Option('Language…', ''));
-    langs.forEach(l => up.add(new Option(l.name, l.code)));
-  }
   studioLoadLibrary();
 }
 function studioLangAll(on) { document.querySelectorAll('.studio-lang').forEach(c => { c.checked = on; }); }
@@ -7400,35 +7407,90 @@ async function _arLinkNarration(assetId, picks, prevAudios) {
   }
   return { linked, removed };
 }
-// Fallback: upload a narration file from the local drive into the library.
+// ── Upload narration files from the computer (several at once) ──────────────
+// Each chosen file gets a language box (English names — the names the library
+// files carry, e.g. …_HumanAnatomy_Punjabi_Upload). Used by the AR upload form
+// ('ar') and the 🗣 Narration tab ('studio'). Files go to the narration library,
+// approved, tagged with Class / Subject / Topic / State like Bhashini files.
+function _narrEnglish(l) {
+  return l.english || ((/\(([^)]+)\)/.exec(l.name || '') || [])[1]) || l.name || l.code;
+}
+async function narrFilesPicked(where) {
+  const host = document.getElementById(where + '-narr-up-list');
+  if (!host) return;
+  const files = [...(document.getElementById(where + '-narr-up-files')?.files || [])];
+  if (!files.length) { host.innerHTML = ''; return; }
+  const langs = (await _loadStudioLanguages())
+    .map(l => ({ code: l.code, en: _narrEnglish(l) }))
+    .sort((a, b) => a.en.localeCompare(b.en));
+  const opts = '<option value="">Choose language…</option>' +
+    langs.map(l => `<option value="${escHtml(l.code)}">${escHtml(l.en)}</option>`).join('');
+  const size = (b) => b < 1048576 ? Math.ceil(b / 1024) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
+  host.innerHTML = files.map((f, i) => `<div style="display:flex;gap:8px;align-items:center;margin-top:5px">
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(f.name)}">🎵 ${escHtml(f.name)} <span style="color:var(--text3)">(${size(f.size)})</span></span>
+      <select class="sel" id="${where}-narr-lang-${i}" style="width:160px">${opts}</select>
+    </div>`).join('');
+}
+// Sends the chosen files with their languages; returns the server reply or null.
+async function _narrUploadBatch(where, tags) {
+  const input = document.getElementById(where + '-narr-up-files');
+  const files = [...(input?.files || [])];
+  if (!files.length) { showToast('⚠ Choose one or more audio files'); return null; }
+  const langs = files.map((_, i) => document.getElementById(`${where}-narr-lang-${i}`)?.value || '');
+  const miss = langs.findIndex(l => !l);
+  if (miss >= 0) { showToast(`⚠ Choose the language of "${files[miss].name}"`); return null; }
+  const all = await _loadStudioLanguages();
+  const name = (c) => _narrEnglish(all.find(l => l.code === c) || { code: c });
+  const dup = langs.find((l, i) => langs.indexOf(l) !== i);
+  if (dup) { showToast(`⚠ Two files are tagged ${name(dup)} — one file per language`); return null; }
+  const fd = new FormData();
+  files.forEach(f => fd.append('audio', f, f.name));
+  fd.append('languages', JSON.stringify(langs));
+  Object.entries(tags).forEach(([k, v]) => fd.append(k, v || ''));
+  showToast(`⏳ Uploading ${files.length} narration file${files.length > 1 ? 's' : ''}…`);
+  try {
+    const r = await fetch('/api/ar/narration-studio/upload-multi', { method: 'POST', headers: authHeaders(), body: fd });
+    const d = await r.json().catch(() => ({}));
+    const done = d.done || [], failed = d.failed || [];
+    if (!done.length) {
+      showToast('❌ ' + (failed.length ? failed.map(x => `${x.file}: ${x.error}`).join(' · ') : (d.error || 'Upload failed')));
+      return null;
+    }
+    input.value = '';
+    document.getElementById(where + '-narr-up-list').innerHTML = '';
+    const msg = '✅ Added: ' + done.map(it => it.name).join(', ');
+    showToast(failed.length ? msg + ' · ❌ Not added: ' + failed.map(x => `${x.file} (${x.error})`).join(', ') : msg);
+    return d;
+  } catch { showToast('❌ Upload failed'); return null; }
+}
+// AR upload form: files are named after this form's Class / Subject / Topic.
 async function arNarrUpload() {
-  const lang = document.getElementById('ar-narr-up-lang')?.value || '';
-  const file = document.getElementById('ar-narr-up-file')?.files?.[0];
   const cls = document.getElementById('ar-up-class')?.value || '';
   const subj = document.getElementById('ar-up-subject')?.value || '';
   const topic = (document.getElementById('ar-up-topic')?.value || '').trim();
-  if (!cls || !subj || !topic) return showToast('⚠ Fill Class, Subject and AR Topic first — they name the file');
-  if (!lang) return showToast('⚠ Pick the language of this audio');
-  if (!file) return showToast('⚠ Choose an audio file');
+  if (!cls || !subj || !topic || topic === '__new__') return showToast('⚠ Fill Class, Subject and AR Topic first — they name the files');
   const states = _arSelectedStates();
-  const fd = new FormData();
-  fd.append('audio', file, file.name);
-  fd.append('language', lang);
-  fd.append('class_name', cls);
-  fd.append('subject', subj);
-  fd.append('topic', topic);
-  fd.append('state', states.length === 1 ? _arStateName(states[0]) : '');
-  showToast('⏳ Uploading narration…');
-  try {
-    const r = await fetch('/api/ar/narration-studio/upload', { method: 'POST', headers: authHeaders(), body: fd });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) return showToast('❌ ' + (d.error || 'Upload failed'));
-    document.getElementById('ar-narr-up-file').value = '';
-    const keep = Object.fromEntries([...document.querySelectorAll('.ar-narr-pick')].map(s => [s.dataset.lang, s.value]));
-    keep[lang] = d.item.id; // select the file just uploaded
-    await arNarrRefresh(keep);
-    showToast('✅ Added: ' + d.item.name);
-  } catch { showToast('❌ Upload failed'); }
+  const d = await _narrUploadBatch('ar', {
+    class_name: cls, subject: subj, topic,
+    state: states.length === 1 ? _arStateName(states[0]) : '',
+  });
+  if (!d) return;
+  // Select the files just uploaded in the Narration picker above.
+  const keep = Object.fromEntries([...document.querySelectorAll('.ar-narr-pick')].map(s => [s.dataset.lang, s.value]));
+  d.done.forEach(it => { keep[it.language] = it.id; });
+  await arNarrRefresh(keep);
+}
+// 🗣 Narration tab: files are named after the Studio's Class / Subject / Topic / State.
+async function studioNarrUpload() {
+  const cls = document.getElementById('studio-class')?.value || '';
+  const subj = document.getElementById('studio-subject')?.value || '';
+  const topic = (document.getElementById('studio-topic')?.value || '').trim();
+  if (!cls || !subj || !topic || topic === '__new__') return showToast('⚠ Pick Class, Subject and Topic first — they name the files');
+  const d = await _narrUploadBatch('studio', {
+    class_name: cls, subject: subj, topic,
+    state: document.getElementById('studio-state')?.value || '',
+  });
+  if (d) studioLoadLibrary();
 }
 document.addEventListener('DOMContentLoaded', () => {
   ['ar-up-class', 'ar-up-subject', 'ar-up-states'].forEach(id =>

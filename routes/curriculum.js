@@ -56,6 +56,24 @@ router.get('/subjects/:state', async (req, res) => {
   try {
     const db = getFirestore();
     const rawState = req.params.state || '';
+    if (isAppCaller(req)) {
+      // A student's Home tiles count the lessons their own state serves them
+      // (the same list as Learn). They used to count every published lesson
+      // aimed at the state, whatever the state's map and release said.
+      const m = await servedManifest(db, req, rawState);
+      const ids = {};
+      (m.classes || []).forEach(c => (c.subjects || []).forEach(sj => (sj.topics || []).forEach(t =>
+        (t.ar_lessons || []).forEach(l => { (ids[sj.subject] ||= new Set()).add(l.id); }))));
+      const EMO = { science:'🔬', maths:'📐', mathematics:'📐', english:'📖', hindi:'📘',
+        'social science':'🌍', history:'📜', geography:'🗺️', biology:'🧬', physics:'⚛️',
+        chemistry:'⚗️', 'computer science':'💻' };
+      const subjects = Object.entries(ids).filter(([name]) => name).map(([name, set]) => ({
+        name, emoji: EMO[String(name).toLowerCase()] || '📚',
+        ar: set.size, ar_topics_count: set.size, progress: 0,
+      }));
+      res.set('Cache-Control', 'private, max-age=60'); // per student
+      return res.json({ success: true, subjects });
+    }
     const want = new Set(stateAliases(rawState));
     const EMOJI = { science:'🔬', maths:'📐', mathematics:'📐', english:'📖',
       hindi:'📘', 'social science':'🌍', history:'📜', geography:'🗺️',

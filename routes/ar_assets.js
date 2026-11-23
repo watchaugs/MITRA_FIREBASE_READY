@@ -933,6 +933,7 @@ router.post('/assets/:id/audio', requirePerm('perm_upload_unity'),
       const update = { audios, audios_aac };
       if (!data.audio_url) { update.audio_url = url; update.language = lang; }
       await ref.set(update, { merge: true });
+      await invalidateManifests(db); // phones get the new language on their next read
       return res.json({ message: 'Language audio saved', id, language: lang, url, audios });
     } catch (e) {
       return res.status(500).json({ error: 'Audio stored but asset update failed', detail: e.message });
@@ -970,6 +971,7 @@ router.delete('/assets/:id/audio/:lang', requirePerm('perm_upload_unity'), async
     delete audios[lk];
     delete audiosAac[lk];
     await ref.set({ audios, audios_aac: audiosAac }, { merge: true });
+    await invalidateManifests(db); // phones drop the language on their next read
     return res.json({ message: 'Language audio removed', id, lang, audios });
   } catch (e) {
     return res.status(500).json({ error: 'Failed to remove language audio', detail: e.message });
@@ -1326,8 +1328,13 @@ const STUDIO_LANGUAGES = [
 ];
 
 // GET /bhashini/languages — the Studio language dropdown (engine-supported set).
+// Each language also carries its English name ("Punjabi") — the name used in
+// library file names and in the upload pickers, so choosing is unambiguous.
 router.get('/bhashini/languages', requirePerm('perm_upload_unity'), (req, res) => {
-  res.json({ languages: STUDIO_LANGUAGES, configured: bhashini.isConfigured() });
+  res.json({
+    languages: STUDIO_LANGUAGES.map(l => ({ ...l, english: langEnglishName(l.code) })),
+    configured: bhashini.isConfigured(),
+  });
 });
 
 // ── Narration naming ─────────────────────────────────────────────────────────
@@ -1527,30 +1534,82 @@ router.post('/narration-studio/upload', requirePerm('perm_upload_unity'), arUplo
     const lang = String(b.language || '').toLowerCase();
     if (!f) return res.status(400).json({ error: 'Choose an audio file' });
     if (!STUDIO_LANGUAGES.some(l => l.code === lang)) return res.status(400).json({ error: 'Pick the language of this audio' });
-    let opus, aac;
-    try { ({ opus, aac } = await transcodeNarration(f.buffer)); }
-    catch (e) { return res.status(400).json({ error: 'Could not read this audio file', detail: e.message }); }
-    const db = getFirestore();
-    const itemId = uuidv4();
-    const baseKey = `ar_assets/nlib_${itemId}_${lang}`;
-    const pub = (k) => process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${k}` : `/api/ar/file/${k.replace('ar_assets/', '')}`;
-    await storage.putRaw(opus, `${baseKey}.opus`, { contentType: 'audio/ogg' });
-    await storage.putRaw(aac,  `${baseKey}.m4a`,  { contentType: 'audio/aac' });
-    const tags = {
-      language: lang, voice: 'Upload', class_name: b.class_name || null, subject: b.subject || null,
-      topic: b.topic || null, state: b.state || null,
-    };
-    const item = {
-      id: itemId, ...tags, text: null, origin: 'upload', original_name: f.originalname,
-      name: await uniqueNarrationName(db, narrationBaseName(tags)),
-      url: pub(`${baseKey}.opus`), url_aac: pub(`${baseKey}.m4a`),
-      status: 'approved', approved_by: req.user.id, approved_at: new Date(),
-      created_by: req.user.id, created_at: new Date(),
-    };
-    await db.collection('narration_library').doc(itemId).set(item);
+    let item;
+    try { item = await saveUploadedNarration(getFirestore(), req, f, lang, b); }
+    catch (e) {
+      if (e.status === 400) return res.status(400).json({ error: e.message, detail: e.detail });
+      throw e;
+    }
     res.json({ message: 'Narration uploaded', item });
   } catch (e) { res.status(500).json({ error: 'Upload failed', detail: e.message }); }
 });
+
+// One uploaded file → Opus + AAC → a library item tagged exactly like a
+// generated one (language, class, subject, topic, state), named
+// State_Class8_Science_HumanAnatomy_Punjabi_Upload, approved at once.
+async function saveUploadedNarration(db, req, f, lang, b) {
+  let opus, aac;
+  try { ({ opus, aac } = await transcodeNarration(f.buffer)); }
+  catch (e) {
+    const err = new Error('Could not read this audio file');
+    err.status = 400; err.detail = e.message;
+    throw err;
+  }
+  const itemId = uuidv4();
+  const baseKey = `ar_assets/nlib_${itemId}_${lang}`;
+  const pub = (k) => process.env.R2_PUBLIC_URL ? `${process.env.R2_PUBLIC_URL}/${k}` : `/api/ar/file/${k.replace('ar_assets/', '')}`;
+  await storage.putRaw(opus, `${baseKey}.opus`, { contentType: 'audio/ogg' });
+  await storage.putRaw(aac,  `${baseKey}.m4a`,  { contentType: 'audio/aac' });
+  const tags = {
+    language: lang, voice: 'Upload', class_name: b.class_name || null, subject: b.subject || null,
+    topic: b.topic || null, state: b.state || null,
+  };
+  const item = {
+    id: itemId, ...tags, text: null, origin: 'upload', original_name: f.originalname,
+    name: await uniqueNarrationName(db, narrationBaseName(tags)),
+    url: pub(`${baseKey}.opus`), url_aac: pub(`${baseKey}.m4a`),
+    status: 'approved', approved_by: req.user.id, approved_at: new Date(),
+    created_by: req.user.id, created_at: new Date(),
+  };
+  await db.collection('narration_library').doc(itemId).set(item);
+  return item;
+}
+
+// POST /narration-studio/upload-multi — several narration files from the local
+// drive in one go, each with its own language. multipart: audio (one part per
+// file) + languages (JSON array of codes, same order as the files) + class_name,
+// subject, topic, state. One file per language per batch. Each file is saved
+// like the single upload; one bad file doesn't stop the others.
+const MAX_NARRATION_FILES = 25;
+router.post('/narration-studio/upload-multi', requirePerm('perm_upload_unity'),
+  (req, res, next) => arUpload.array('audio', MAX_NARRATION_FILES)(req, res,
+    err => err ? res.status(400).json({ error: err.code === 'LIMIT_UNEXPECTED_FILE' ? `At most ${MAX_NARRATION_FILES} files at a time` : err.message }) : next()),
+  async (req, res) => {
+    try {
+      const files = req.files || [];
+      const b = req.body || {};
+      let langs = [];
+      try { langs = JSON.parse(b.languages || '[]'); } catch (_) { langs = []; }
+      langs = Array.isArray(langs) ? langs.map(l => String(l || '').trim().toLowerCase()) : [];
+      if (!files.length) return res.status(400).json({ error: 'Choose at least one audio file' });
+      if (langs.length !== files.length) return res.status(400).json({ error: 'Give every file its language' });
+      const bad = langs.findIndex(l => !STUDIO_LANGUAGES.some(x => x.code === l));
+      if (bad >= 0) return res.status(400).json({ error: `Pick the language of "${files[bad].originalname}"` });
+      const dup = langs.find((l, i) => langs.indexOf(l) !== i);
+      if (dup) return res.status(400).json({ error: `Two files are tagged ${langEnglishName(dup)} — one file per language` });
+      if (!b.class_name || !b.subject || !b.topic) return res.status(400).json({ error: 'Class, Subject and Topic are required — they name the files' });
+      const db = getFirestore();
+      const done = [], failed = [];
+      for (let i = 0; i < files.length; i++) {
+        try { done.push(await saveUploadedNarration(db, req, files[i], langs[i], b)); }
+        catch (e) { failed.push({ file: files[i].originalname, language: langs[i], error: e.message }); }
+      }
+      res.status(done.length ? 200 : 400).json({
+        message: `${done.length} narration file(s) added`, done, failed,
+        ...(done.length ? {} : { error: 'No file could be added' }),
+      });
+    } catch (e) { res.status(500).json({ error: 'Upload failed', detail: e.message }); }
+  });
 
 // POST /narration-studio/:itemId/approve — flag reviewed/approved.
 router.post('/narration-studio/:itemId/approve', requirePerm('perm_upload_unity'), async (req, res) => {

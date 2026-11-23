@@ -177,6 +177,19 @@ router.get('/', async (req, res) => {
   }
 });
 
+// A student may open only a quiz their state's list would show them (drafts
+// and other states' quizzes used to open by id). Translations count as one.
+async function appMayOpenQuiz(db, req, q) {
+  const scope = await stateScope(db, studentState(req, req.query.state));
+  let rows = [q];
+  if (q.translation_group) {
+    const sib = await db.collection('quizzes').where('translation_group', '==', q.translation_group).limit(50).get();
+    rows = sib.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (!rows.some(r => r.id === q.id)) rows.push(q);
+  }
+  return allowedQuizzes(rows, scope, LIVE_STATUSES).some(r => r.id === q.id);
+}
+
 router.get('/:id', async (req, res, next) => {
   // '/:id' is declared before '/analytics', '/template' and '/pack', so Express
   // sent those requests here and answered 404 "Quiz not found". Hand them on.
@@ -187,19 +200,8 @@ router.get('/:id', async (req, res, next) => {
     const doc = await db.collection('quizzes').doc(req.params.id).get();
     if (!doc.exists) return res.status(404).json({ error: 'Quiz not found' });
     const q = { id: doc.id, ...doc.data() };
-    if (isAppCaller(req)) {
-      // A student may open only a quiz their state's list would show them
-      // (drafts and other states' quizzes used to open by id).
-      const scope = await stateScope(db, studentState(req, req.query.state));
-      let rows = [q];
-      if (q.translation_group) {
-        const sib = await db.collection('quizzes').where('translation_group', '==', q.translation_group).limit(50).get();
-        rows = sib.docs.map(d => ({ id: d.id, ...d.data() }));
-        if (!rows.some(r => r.id === q.id)) rows.push(q);
-      }
-      if (!allowedQuizzes(rows, scope, LIVE_STATUSES).some(r => r.id === q.id)) {
-        return res.status(404).json({ error: 'Quiz not found' });
-      }
+    if (isAppCaller(req) && !(await appMayOpenQuiz(db, req, q))) {
+      return res.status(404).json({ error: 'Quiz not found' });
     }
     return res.json(q);
   } catch (err) {
@@ -286,6 +288,14 @@ router.get('/pack/:state', async (req, res) => {
 router.get('/:id/questions', async (req, res) => {
   try {
     const db   = getFirestore();
+    if (isAppCaller(req)) {
+      // Same rule as opening the quiz: the questions of another state's quiz,
+      // or of a draft, used to load for anyone who knew its id.
+      const doc = await db.collection('quizzes').doc(req.params.id).get();
+      if (!doc.exists || !(await appMayOpenQuiz(db, req, { id: doc.id, ...doc.data() }))) {
+        return res.status(404).json({ error: 'Quiz not found' });
+      }
+    }
     const snap = await db.collection('quizzes').doc(req.params.id)
                          .collection('questions').orderBy('sort_order').get();
     return res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })));
