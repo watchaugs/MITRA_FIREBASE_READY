@@ -334,7 +334,32 @@ router.post('/refresh', async (req, res) => {
     if (!rotation.ok) {
       return res.status(401).json({ error: 'Session is no longer valid. Please sign in again.' });
     }
-    const accessToken = jwt.sign(
+    // The new access token carries the same claims as at sign-in (role, state,
+    // permissions), read fresh from the account. It used to carry only the id:
+    // a student's renewed token then had no role or state, so the server looked
+    // for them among dashboard staff, found nothing and rejected the token
+    // ("Account deactivated") until the app signed in again.
+    let claims = null;
+    try {
+      const db = getFirestore();
+      const [staff, app] = await Promise.all([
+        db.collection('dashboard_users').doc(decoded.id).get(),
+        db.collection('app_users').doc(decoded.id).get(),
+      ]);
+      if (staff.exists) {
+        claims = { id: decoded.id, ...staff.data() };
+      } else if (app.exists) {
+        const u = app.data() || {};
+        claims = {
+          id: decoded.id,
+          role: ['student', 'teacher'].includes(u.role) ? u.role : 'student',
+          email: u.email || null,
+          full_name: u.full_name || u.name || null,
+          assigned_state: u.assigned_state || null,
+        };
+      }
+    } catch (e) { log.warn({ err: e.message }, 'refresh: account lookup failed'); }
+    const accessToken = claims ? signAccess(claims) : jwt.sign(
       { id: decoded.id, fam: decoded.fam },
       process.env.JWT_SECRET,
       { expiresIn: '8h', algorithm: 'HS256' }

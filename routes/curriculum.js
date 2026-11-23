@@ -12,6 +12,7 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const { visibleInState, canAccessState, stateAliases } = require('../lib/stateScope');
 const { toCode, toName, sameState, UNKNOWN_STATE_MSG } = require('../lib/states');
 const { isAppCaller, isReleased } = require('../lib/release');
+const { stateScope, studentState, clsKey, dropScopeCache } = require('../lib/contentScope');
 const log = require('../lib/logger');
 router.use(authenticate);
 
@@ -155,7 +156,9 @@ async function _territorySupported(db, state) {
 // at the CDN/proxy. (Later: push the same JSON to R2 — format stays identical.)
 // Bump when the manifest shape changes: cached copies with an older version
 // are rebuilt on the next read instead of being served stale.
-const MANIFEST_VERSION = 6; // v6: a linked quiz brings its translations (same translation_group)
+const MANIFEST_VERSION = 7; // v7: only the state's own classes (no auto-added classes); lessons
+                            //     carry their release rule, checked each time the manifest is served
+                            // v6: a linked quiz brings its translations (same translation_group)
                             // v5: lessons carry the page-video settings (region, sound, view)
                             // v4: lessons carry target_image_url (native ARCore page scan)
                             // v3: tree links decide a topic's AR lessons; lessons carry quiz_ids
@@ -225,7 +228,11 @@ async function buildStateManifest(db, stateCode, stateName) {
                  video_region: a.video_region || null, video_sound: a.video_sound || null,
                  video_default_view: a.video_default_view || null,
                  chroma_enabled: a.chroma_enabled === true, chroma_color: a.chroma_color || null,
-                 ar_mode: a.ar_mode || null });
+                 ar_mode: a.ar_mode || null,
+                 // Release rule (now / date / per state): checked when the manifest is
+                 // served (see servedManifest), so a dated release opens on time and a
+                 // per-state hold keeps other states out. Removed before sending.
+                 release: a.release || null });
   // Build the class/subject/topic tree from the saved hierarchy when one exists.
   let classes = structure.map(c => ({
     class_name: c.class_name,
@@ -248,6 +255,9 @@ async function buildStateManifest(db, stateCode, stateName) {
       for (const t of sj.topics)
         covered.add(nrm(c.class_name) + '|' + nrm(sj.subject) + '|' + nrm(t.topic));
 
+  // Only into classes this state's Curriculum Map has: a lesson for a class
+  // the state hasn't created (or a state with no map at all) never shows.
+  const ownClasses = new Set(classes.map(c => clsKey(c.class_name)));
   const tree = {};
   for (const a of assets) {
     if (placed.has(a.id)) continue; // already placed by a tree link
@@ -255,6 +265,7 @@ async function buildStateManifest(db, stateCode, stateName) {
     const subj = (a.subject || '').trim();
     const top = (a.topic || '').trim();
     if (!cls || !subj || !top) continue;
+    if (!ownClasses.has(clsKey(cls))) continue;
     if (covered.has(nrm(cls) + '|' + nrm(subj) + '|' + nrm(top))) continue;
     tree[cls] = tree[cls] || {};
     tree[cls][subj] = tree[cls][subj] || new Set();
@@ -285,39 +296,91 @@ async function buildStateManifest(db, stateCode, stateName) {
   };
 }
 
+// The state's manifest as stored (built on demand when missing / outdated).
+async function storedManifest(db, asked, stateNameHint) {
+  // The app asks by name ("Gujarat"); the Curriculum Map saves the tree under
+  // the state's code ("GJ"). Both resolve to the code via the one state table.
+  let stateKey = toCode(asked) || asked;
+  const stateName = toName(asked) || stateNameHint || stateKey;
+  try {
+    const cached = await db.collection('curriculum_manifests').doc(stateKey).get();
+    if (cached.exists && cached.data().version === MANIFEST_VERSION) return cached.data();
+  } catch (_) {}
+  // Older data: a tree saved under the asked form and none under the code.
+  if (stateKey !== asked) {
+    try {
+      const [byCode, byAsked] = await Promise.all([
+        db.collection('curriculum_hierarchy').doc(stateKey).get(),
+        db.collection('curriculum_hierarchy').doc(asked).get(),
+      ]);
+      if (!byCode.exists && byAsked.exists) stateKey = asked;
+    } catch (_) {}
+  }
+  const manifest = await buildStateManifest(db, stateKey, stateName);
+  try { await db.collection('curriculum_manifests').doc(stateKey).set(manifest); } catch (_) {}
+  return manifest;
+}
+
+// Scheduled lessons whose reveal date has passed go live here (no scheduler,
+// no idle cost) — checked at most every 5 minutes per server. Cached manifests
+// are dropped so the newly live lessons reach the app on its next read (they
+// used to wait for some other edit to rebuild the manifest).
+let _lastRevealCheck = 0;
+async function publishDueLessons(db) {
+  if (Date.now() - _lastRevealCheck < 5 * 60 * 1000) return 0;
+  _lastRevealCheck = Date.now();
+  try {
+    const sSnap = await db.collection('ar_assets').where('status', '==', 'scheduled').limit(200).get();
+    const now = Date.now();
+    const revMs = (v) => (v && typeof v.toDate === 'function') ? v.toDate().getTime() : (v ? new Date(v).getTime() : null);
+    const due = sSnap.docs.filter(d => { const t = revMs(d.data().reveal_date); return t != null && t <= now; });
+    if (!due.length) return 0;
+    const batch = db.batch();
+    due.forEach(d => batch.update(d.ref, { status: 'published', updated_at: new Date(), auto_published_at: new Date() }));
+    const mSnap = await db.collection('curriculum_manifests').get();
+    mSnap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    return due.length;
+  } catch (e) {
+    log.warn({ err: e.message }, 'reveal-date check failed');
+    return 0;
+  }
+}
+
+// The manifest a caller gets. Students: their OWN registered state only, only
+// while it is open (Curriculum Map + active geofence), only lessons released
+// for it. Staff: the asked state, unfiltered. Release rules are never sent.
+async function servedManifest(db, req, askedRaw) {
+  const app = isAppCaller(req);
+  const asked = app ? studentState(req, askedRaw) : String(askedRaw || '').trim();
+  await publishDueLessons(db);
+  if (app) {
+    const scope = await stateScope(db, asked);
+    if (!scope.open) {
+      return { version: MANIFEST_VERSION, state_code: scope.code, state_name: scope.name,
+               generated_at: new Date().toISOString(), classes: [], territory_supported: false };
+    }
+  }
+  const m = await storedManifest(db, asked, req.query.state_name);
+  const name = m.state_name || asked;
+  const classes = (m.classes || []).map(c => ({ ...c,
+    subjects: (c.subjects || []).map(sj => ({ ...sj,
+      topics: (sj.topics || []).map(t => ({ ...t,
+        ar_lessons: (t.ar_lessons || [])
+          .filter(l => !app || isReleased({ release: l.release }, name))
+          .map(({ release, ...l }) => l),
+      })),
+    })),
+  }));
+  return { ...m, classes, territory_supported: true };
+}
+
 // GET /manifest/:state — the app reads this ONCE per launch instead of querying
 // several collections. Cached hard; recomputed only if no cached copy exists.
 router.get('/manifest/:state', async (req, res) => {
   try {
-    const db = getFirestore();
-    // The app asks by name ("Gujarat"); the Curriculum Map saves the tree under
-    // the state's code ("GJ"). Both now resolve to the code via the one state
-    // table, so the app gets the tree (with its quiz links) and the copy that
-    // Save curriculum rebuilds. An unknown value is used as given.
-    const asked = String(req.params.state || '').trim();
-    let stateKey = toCode(asked) || asked;
-    const stateName = toName(asked) || req.query.state_name || stateKey;
-    // Serve a stored copy if present (written on publish); else build on demand.
-    let manifest = null;
-    try {
-      const cached = await db.collection('curriculum_manifests').doc(stateKey).get();
-      if (cached.exists && cached.data().version === MANIFEST_VERSION) manifest = cached.data();
-    } catch (_) {}
-    if (!manifest) {
-      // Older data: a tree saved under the asked form and none under the code.
-      if (stateKey !== asked) {
-        try {
-          const [byCode, byAsked] = await Promise.all([
-            db.collection('curriculum_hierarchy').doc(stateKey).get(),
-            db.collection('curriculum_hierarchy').doc(asked).get(),
-          ]);
-          if (!byCode.exists && byAsked.exists) stateKey = asked;
-        } catch (_) {}
-      }
-      manifest = await buildStateManifest(db, stateKey, stateName);
-      try { await db.collection('curriculum_manifests').doc(stateKey).set(manifest); } catch (_) {}
-    }
-    res.set('Cache-Control', 'public, max-age=60'); // 1 min — content updates propagate quickly
+    const manifest = await servedManifest(getFirestore(), req, req.params.state);
+    res.set('Cache-Control', 'private, max-age=60'); // per student (their own state) — 1 min
     res.json(manifest);
   } catch (err) {
     log.error({ err: err.message }, 'manifest build failed');
@@ -327,6 +390,39 @@ router.get('/manifest/:state', async (req, res) => {
 
 router.get('/ar-topics', async (req, res) => {
   const db = getFirestore();
+  // Students: the same lessons as their manifest (own state, open, on its
+  // Curriculum Map, released) — this list used to show every state's lessons
+  // when no state was sent, and All-India lessons in states without the class.
+  if (isAppCaller(req)) {
+    try {
+      const m = await servedManifest(db, req, req.query.state);
+      const data = [];
+      for (const c of (m.classes || [])) for (const sj of (c.subjects || [])) for (const t of (sj.topics || [])) {
+        for (const l of (t.ar_lessons || [])) {
+          data.push({ ...l, topic: t.topic, class_name: c.class_name, subject: sj.subject,
+            language: 'English', status: 'published', unity_url: null });
+        }
+      }
+      // "Coming soon" teasers: scheduled lessons on this state's map only.
+      if (m.territory_supported) {
+        try {
+          const scope = await stateScope(db, studentState(req, req.query.state));
+          const sSnap = await db.collection('ar_assets').where('status', '==', 'scheduled').limit(100).get();
+          const teasers = sSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+            .filter(r => scope.linkedAssets.has(r.id) ||
+              (scope.classKeys.has(clsKey(r.class_name)) && visibleInState([r], scope.code).length > 0))
+            .slice(0, 5)
+            .map(r => ({ id: r.id, topic: r.topic || '', class_name: r.class_name || '', subject: r.subject || '',
+              language: r.language || 'English', status: 'scheduled', locked: true }));
+          data.push(...teasers);
+        } catch (_) {/* teasers are best-effort */}
+      }
+      return res.json({ data, total: data.length, territory_supported: m.territory_supported !== false });
+    } catch (err) {
+      log.error({ err: err.message }, 'ar-topics (student) failed');
+      return res.status(500).json({ error: 'Failed to load lessons' });
+    }
+  }
   let snap = null;
   try {
     snap = await db.collection('ar_assets').where('status', '==', 'published').limit(200).get();
@@ -464,6 +560,7 @@ router.post('/hierarchy', requirePerm('perm_edit_curriculum'), async (req, res) 
     if (!Array.isArray(structure)) return res.status(400).json({ error: 'structure must be a list' });
     const db = getFirestore();
     await db.collection('curriculum_hierarchy').doc(state_code).set({ state_code, state_name: req.body.state_name || state_code, structure, updated_by: req.user?.id, updated_at: new Date() }, { merge: true });
+    dropScopeCache(); // students see the new map straight away
     // Rebuild this state's cached manifest so the app's next read is instant and DB-free.
     try {
       const manifest = await buildStateManifest(db, state_code, req.body.state_name || state_code);
@@ -566,6 +663,7 @@ const _stateMatch = (h, wanted) => {
 async function _saveHierarchyAndManifest(db, h, structure, userId) {
   await db.collection('curriculum_hierarchy').doc(h.state_code).set(
     { structure, updated_by: userId || null, updated_at: new Date() }, { merge: true });
+  dropScopeCache();
   try {
     const manifest = await buildStateManifest(db, h.state_code, h.state_name || h.state_code);
     await db.collection('curriculum_manifests').doc(h.state_code).set(manifest);
@@ -811,3 +909,6 @@ router.get('/schedule/:stateCode/:term', async (req, res) => {
 
 module.exports = router;
 module.exports.readLearningRules = readLearningRules;
+// Shared with routes/ar_assets.js so every student-facing lesson route
+// answers from the same manifest (one rule).
+module.exports.servedManifest = servedManifest;

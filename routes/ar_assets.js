@@ -552,14 +552,28 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
   }
 );
 
+// Lesson ids a student may get: the ones in their own state's manifest (own
+// registered state, open, on its Curriculum Map, released) — same rule as
+// /api/curriculum/manifest and /ar-topics.
+async function studentLessonIds(db, req) {
+  const m = await require('./curriculum').servedManifest(db, req, req.query.state);
+  const ids = new Set();
+  for (const c of (m.classes || [])) for (const sj of (c.subjects || [])) for (const t of (sj.topics || [])) {
+    for (const l of (t.ar_lessons || [])) ids.add(l.id);
+  }
+  return ids;
+}
+
 router.get('/assets', async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('ar_assets').limit(100).get();
     let rows   = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    rows       = visibleInState(rows, req.query.state); // geofence: national + requested state
     if (isAppCaller(req)) {
-      rows = rows.filter(r => r.status === 'published' && isReleased(r, req.query.state || req.user.state));
+      const ids = await studentLessonIds(db, req);
+      rows = rows.filter(r => r.status === 'published' && ids.has(r.id));
+    } else {
+      rows = visibleInState(rows, req.query.state); // geofence: national + requested state
     }
     return res.json({ data: rows, total: rows.length });
   } catch (err) {
@@ -573,8 +587,12 @@ router.get('/topics', async (req, res) => {
     const db   = getFirestore();
     const snap = await db.collection('ar_assets').where('status', '==', 'published').limit(200).get();
     let rows   = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    rows       = visibleInState(rows, req.query.state); // geofence: national + requested state
-    if (isAppCaller(req)) rows = rows.filter(r => isReleased(r, req.query.state || req.user.state));
+    if (isAppCaller(req)) {
+      const ids = await studentLessonIds(db, req);
+      rows = rows.filter(r => ids.has(r.id));
+    } else {
+      rows = visibleInState(rows, req.query.state); // geofence: national + requested state
+    }
     return res.json(rows.map(r => ({
       id:          r.id,
       topic:       r.topic       || '',
@@ -607,8 +625,12 @@ router.get('/assets/:id', async (req, res) => {
   try {
     const db  = getFirestore();
     const doc = await db.collection('ar_assets').doc(req.params.id).get();
-    if (doc.exists) return res.json({ id: doc.id, ...doc.data() });
-    return res.status(404).json({ error: 'Asset not found' });
+    if (!doc.exists) return res.status(404).json({ error: 'Asset not found' });
+    // Students: only a lesson their own state's list shows.
+    if (isAppCaller(req) && !(await studentLessonIds(db, req)).has(doc.id)) {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+    return res.json({ id: doc.id, ...doc.data() });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load AR asset');
     return res.status(500).json({ error: 'Failed to load asset' });

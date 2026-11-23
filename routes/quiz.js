@@ -13,6 +13,7 @@ const staffOnly = (req, res, next) => (['student', 'teacher'].includes(req.user?
 const { visibleInState, parseTargetStates } = require('../lib/stateScope');
 const { toName, sameState, unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
 const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
+const { stateScope, studentState, allowedQuizzes } = require('../lib/contentScope');
 const { stripFields } = require('../lib/writeGuard');
 const LIVE_STATUSES = new Set(['live', 'published']);
 const log = require('../lib/logger');
@@ -158,13 +159,16 @@ router.get('/', async (req, res) => {
       if (q.language) q.language = _langCode(q.language); // older quizzes say "English"
       return q;
     });
-    rows     = visibleInState(rows, req.query.state); // geofence: national + requested state
     if (isAppCaller(req)) {
-      // Students: only live/published quizzes that are released for their state.
-      // (The app treats any unknown status as "live", so drafts/paused used to show.)
-      const st = req.query.state || req.user.state;
-      rows = rows.filter(q => LIVE_STATUSES.has(q.status) && isReleased(q, st))
-                 .map(q => ({ ...q, status: 'live' }));
+      // Students: their OWN state only, while it is open, quizzes on its
+      // Curriculum Map (linked, or for a class it has), live and released for it.
+      // (An All-India quiz used to show in every state with that class name —
+      // even states without that class or still locked — and with no state
+      // sent, every state's quizzes came back.)
+      const scope = await stateScope(db, studentState(req, req.query.state));
+      rows = allowedQuizzes(rows, scope, LIVE_STATUSES).map(q => ({ ...q, status: 'live' }));
+    } else {
+      rows = visibleInState(rows, req.query.state); // geofence: national + requested state
     }
     return res.json({ data: rows, total: rows.length });
   } catch (err) {
@@ -181,8 +185,23 @@ router.get('/:id', async (req, res, next) => {
   try {
     const db  = getFirestore();
     const doc = await db.collection('quizzes').doc(req.params.id).get();
-    if (doc.exists) return res.json({ id: doc.id, ...doc.data() });
-    return res.status(404).json({ error: 'Quiz not found' });
+    if (!doc.exists) return res.status(404).json({ error: 'Quiz not found' });
+    const q = { id: doc.id, ...doc.data() };
+    if (isAppCaller(req)) {
+      // A student may open only a quiz their state's list would show them
+      // (drafts and other states' quizzes used to open by id).
+      const scope = await stateScope(db, studentState(req, req.query.state));
+      let rows = [q];
+      if (q.translation_group) {
+        const sib = await db.collection('quizzes').where('translation_group', '==', q.translation_group).limit(50).get();
+        rows = sib.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (!rows.some(r => r.id === q.id)) rows.push(q);
+      }
+      if (!allowedQuizzes(rows, scope, LIVE_STATUSES).some(r => r.id === q.id)) {
+        return res.status(404).json({ error: 'Quiz not found' });
+      }
+    }
+    return res.json(q);
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load quiz');
     res.status(500).json({ error: 'Failed to load quiz' });
@@ -201,11 +220,18 @@ router.get('/pack/:state', async (req, res) => {
     // Apps that can play picture / sequence rounds send ?rounds=1. Older apps
     // don't, and would show those questions with blank options — skip them.
     const withRounds = req.query.rounds === '1';
-    const snap = await db.collection('quizzes').limit(200).get();
+    const snap = await db.collection('quizzes').limit(1000).get();
     let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    // State gate + live + released (same rules as the list endpoint).
-    rows = visibleInState(rows, stateRaw)
-      .filter(q => LIVE_STATUSES.has(q.status) && isReleased(q, stateRaw || req.user?.state));
+    if (isAppCaller(req)) {
+      // Same rule as the quiz list: the student's own open state only ("ALL"
+      // used to download every state's quizzes onto the phone).
+      const scope = await stateScope(db, studentState(req, stateRaw));
+      rows = allowedQuizzes(rows, scope, LIVE_STATUSES);
+    } else {
+      // State gate + live + released (same rules as the list endpoint).
+      rows = visibleInState(rows, stateRaw)
+        .filter(q => LIVE_STATUSES.has(q.status) && isReleased(q, stateRaw || req.user?.state));
+    }
     const quizzes = [];
     for (const q of rows) {
       let questions = [];
