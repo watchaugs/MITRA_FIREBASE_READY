@@ -56,7 +56,7 @@ async function getBuilds(req) {
   try {
     const db   = getFirestore();
     const snap = await db.collection('app_builds').orderBy('created_at', 'desc').limit(100).get();
-    const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const rows = snap.docs.map(d => ({ ...d.data(), id: d.id })); // stored "id" can't replace the real one
     return req ? filterByState(req, rows) : rows;   // per-state gate-keeping
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load app builds');
@@ -89,7 +89,7 @@ router.post('/builds', requirePerm('perm_publish_apps'), async (req, res) => {
   try {
     const db  = getFirestore();
     const id  = uuidv4();
-    const doc = { ...req.body, status: 'building', created_by: req.user.id, created_at: new Date() };
+    const doc = { ...req.body, id, status: 'building', created_by: req.user.id, created_at: new Date() }; // id after the body
     await db.collection('app_builds').doc(id).set(doc);
     res.status(201).json({ id, ...doc });
   } catch (err) {
@@ -158,7 +158,7 @@ router.get('/ota-updates', async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('ota_updates').orderBy('created_at', 'desc').limit(20).get();
-    res.json({ data: snap.docs.map(d => ({ id: d.id, ...d.data() })), total: snap.size });
+    res.json({ data: snap.docs.map(d => ({ ...d.data(), id: d.id })), total: snap.size });
   } catch (_) {
     res.json({ data: [], total: 0 });
   }

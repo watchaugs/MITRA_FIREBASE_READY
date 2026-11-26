@@ -10,7 +10,8 @@ const { getFirestore } = require('../lib/firebase');
 const { authenticate, requirePerm, canGrantRole } = require('../middleware/auth');
 const { sendWelcomeEmail } = require('../lib/mailer');
 const log = require('../lib/logger');
-const { toCode, toName, isNational, unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
+const { toCode, toName, isNational, sameState, unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
+const { scopeState, canAccessState } = require('../lib/stateScope');
 router.use(authenticate);
 
 // Server-enforced permissions (the ones requirePerm() checks in routes/*.js).
@@ -22,8 +23,10 @@ const BACKEND_PERMS = ['perm_publish_apps','perm_upload_unity','perm_manage_geo'
 // Only someone who OUTRANKS an account may change or remove it (the master
 // admin may manage anyone), and nobody may hand out a permission they don't
 // hold themselves. Every change is written to audit_log (CERT-In).
+// A state-scoped officer may also only manage accounts of their own state.
 function canManage(req, target) {
-  return !!target && canGrantRole(req.user.role, target.role);
+  return !!target && canGrantRole(req.user.role, target.role) &&
+    canAccessState(req, target.assigned_state);
 }
 // Permissions being ADDED that the actor doesn't hold. Ones the account
 // already has are fine (the edit form sends every ticked box).
@@ -69,7 +72,7 @@ router.get('/', requirePerm('perm_create_users'), async (req, res) => {
       const data = { id: d.id, ...d.data() };
       delete data.password_hash;
       return data;
-    });
+    }).filter(u => canAccessState(req, u.assigned_state)); // state officers: own state only
     // Support both response shapes the dashboard uses
     res.json({ data: users, users, total: users.length });
   } catch { res.status(500).json({ error: 'Failed to fetch users' }); }
@@ -79,9 +82,16 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
   try {
     const {
       full_name, email, role = 'viewer',
-      assigned_state = 'All India', assigned_district,
+      assigned_state: askedState, assigned_district,
       permissions = {}
     } = req.body || {};
+    // A state-scoped officer adds accounts for their own state only. (The
+    // All India default used to hand those accounts national scope.)
+    const scope = scopeState(req);
+    if (scope && askedState && !isNational(askedState) && !sameState(askedState, scope)) {
+      return res.status(403).json({ error: 'You can only add users for your own state' });
+    }
+    const assigned_state = scope || askedState || 'All India';
     if (!full_name) return res.status(400).json({ error: 'full_name required' });
     // Stage 4: only states from the list (or All India) are saved, as the official name.
     const badState = unknownStates(assigned_state);
@@ -164,6 +174,7 @@ router.get('/:id', requirePerm('perm_create_users'), async (req, res) => {
     const doc = await db.collection('dashboard_users').doc(req.params.id).get();
     if (!doc.exists) return res.status(404).json({ error: 'User not found' });
     const data = { id: doc.id, ...doc.data() };
+    if (!canAccessState(req, data.assigned_state)) return res.status(404).json({ error: 'User not found' });
     delete data.password_hash;
     res.json(data);
   } catch { res.status(500).json({ error: 'Failed to fetch user' }); }
@@ -245,6 +256,9 @@ router.post('/bulk-update', requirePerm('perm_create_users'), async (req, res) =
       const st = safeUpdates.assigned_state;
       safeUpdates.assigned_state = isNational(st) || !String(st || '').trim() ? 'All India' : toName(st);
       safeUpdates.assigned_state_code = toCode(safeUpdates.assigned_state);
+      if (!canAccessState(req, safeUpdates.assigned_state)) {
+        return res.status(403).json({ error: 'You can only move users into your own state' });
+      }
     }
     if (safeUpdates.role && !canGrantRole(req.user.role, safeUpdates.role)) {
       return res.status(403).json({ error: 'You cannot grant a role higher than your own' });

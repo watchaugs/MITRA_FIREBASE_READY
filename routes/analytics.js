@@ -27,7 +27,10 @@ router.use(authenticate);
 // to, or '' for national/unrestricted.
 function actorStateScope(req) {
   if (req.user?.role === 'master_admin') return '';          // national
-  const s = (req.user?.assigned_state || '').trim();
+  // The token carries the officer's state as `state` (routes/auth.js
+  // signAccess). Reading only `assigned_state` (never set on req.user) made
+  // every officer national, so a state officer could export every state.
+  const s = (req.user?.state || req.user?.assigned_state || '').trim();
   return isNational(s) ? '' : s;                             // '' / "All India" => national
 }
 

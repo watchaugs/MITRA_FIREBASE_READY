@@ -16,3 +16,8 @@ final-admin-fix.js
 update-admin.js
 *.md
 WALKTHROUGH.html
+# Keys and the deploy file must never be baked into the image
+fek.txt
+gcp-key.json
+*.key
+cloudbuild.yaml

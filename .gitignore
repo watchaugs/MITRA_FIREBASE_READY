@@ -60,3 +60,8 @@ temp/
 *.tmp
 .tmp/
 config/secrets/
+
+# Keys must never be committed (field-encryption key, service-account key)
+fek.txt
+gcp-key.json
+*.key

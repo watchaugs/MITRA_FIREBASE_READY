@@ -7,7 +7,7 @@
 // GET endpoints let the dashboard read them back for a Feedback tab.
 // ════════════════════════════════════════════════════════════════════════════
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
 const log = require('../lib/logger');
 
@@ -29,7 +29,7 @@ router.post('/', async (req, res) => {
       class_grade:  b.class_grade || null,
       app_version:  b.app_version || null,
       device_model: b.device_model || null,
-      student_id:   b.student_id || null,
+      student_id:   req.user.id || null,   // the signed-in student, not a value the app sends
       created_at:   new Date(),
       source:       'student_app',
     });
@@ -41,7 +41,9 @@ router.post('/', async (req, res) => {
 });
 
 // GET /  — dashboard reads recent feedback (capped; cheap).
-router.get('/', async (req, res) => {
+// Reading feedback is for dashboard analytics staff only: entries hold minors'
+// ids, district, class and free text (any signed-in app user could list them).
+router.get('/', requirePerm('perm_view_analytics'), async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('app_feedback').orderBy('created_at', 'desc').limit(500).get();
@@ -53,7 +55,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /nps  — NPS summary (Promoters 9–10, Passives 7–8, Detractors 0–6).
-router.get('/nps', async (req, res) => {
+router.get('/nps', requirePerm('perm_view_analytics'), async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('app_feedback').where('type', '==', 'nps').limit(5000).get();

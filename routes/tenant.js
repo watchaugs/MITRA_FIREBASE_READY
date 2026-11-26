@@ -12,7 +12,7 @@ router.get('/files', requirePerm('perm_publish_apps'), async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('app_builds').orderBy('created_at', 'desc').limit(100).get();
-    const data = filterByState(req, snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    const data = filterByState(req, snap.docs.map(d => ({ ...d.data(), id: d.id })));
     res.json({ data, total: data.length });
   } catch (_) {
     res.json({ data: [], total: 0 });
@@ -25,8 +25,8 @@ router.post('/files', requirePerm('perm_publish_apps'), requireStateMatch('state
     const db  = getFirestore();
     const id  = uuidv4();
     const doc = {
-      id,
       ...req.body,
+      id, // after the body: a client-sent "id" can't replace it
       build_status: 'building',
       active_students: 0,
       file_size_mb: null,

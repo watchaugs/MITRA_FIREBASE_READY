@@ -4280,8 +4280,8 @@ function _arConfirmResolve(result) {
           <td><div style="width:16px;height:16px;border-radius:4px;background:${esc(b.theme_color || '#6366f1')};display:inline-block"></div></td>
           <td><span class="sdot ${dot}"></span>${esc(status)}</td>
           <td><div style="display:flex;gap:4px">
-            <button class="btn btn-s btn-sm" onclick="otaUpdateApp('${esc(b.id)}')">OTA Update</button>
-            <button class="btn btn-r btn-sm" onclick="rollbackApp('${esc(b.id)}')">Rollback</button>
+            <button class="btn btn-s btn-sm" onclick="otaUpdateApp('${jsq(b.id)}')">OTA Update</button>
+            <button class="btn btn-r btn-sm" onclick="rollbackApp('${jsq(b.id)}')">Rollback</button>
           </div></td>
         </tr>`;
       }).join('');
@@ -9705,17 +9705,17 @@ async function loadNotifHistory() {
   }
   tbody.innerHTML = data.data.map(n => {
     const statusBadge = {sent:'tag tag-g',scheduled:'tag tag-b',cancelled:'tag tag-r',failed:'tag tag-r'}[n.status] || 'tag';
-    const dl = n.deep_link_type ? `<span class="tag tag-b" style="font-size:9px">${n.deep_link_type}</span>` : '—';
-    const target = [n.target_state||'All', n.target_class||''].filter(Boolean).join(' · ');
+    const dl = n.deep_link_type ? `<span class="tag tag-b" style="font-size:9px">${escHtml(n.deep_link_type)}</span>` : '—';
+    const target = escHtml([n.target_state||'All', n.target_class||''].filter(Boolean).join(' · '));
     const ts = n.sent_at ? new Date(n.sent_at).toLocaleString('en-IN') : (n.scheduled_at ? '⏰ '+new Date(n.scheduled_at).toLocaleString('en-IN') : '—');
-    const cancelBtn = n.status === 'scheduled' ? `<button class="btn btn-s" style="font-size:10px;padding:3px 8px" onclick="cancelNotif('${n.id}')">Cancel</button>` : '';
+    const cancelBtn = n.status === 'scheduled' ? `<button class="btn btn-s" style="font-size:10px;padding:3px 8px" onclick="cancelNotif('${jsq(n.id)}')">Cancel</button>` : '';
     return `<tr>
       <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(n.title)}">${escHtml(n.title)}</td>
       <td>${target}</td>
       <td>${dl}</td>
-      <td><span class="${statusBadge}" ${n.error ? `title="${String(n.error).replace(/"/g, '&quot;')}"` : ''}>${n.status}</span></td>
+      <td><span class="${statusBadge}" ${n.error ? `title="${escHtml(n.error)}"` : ''}>${escHtml(n.status)}</span></td>
       <td style="white-space:nowrap">${ts}</td>
-      <td>${n.sent_by_name || '—'}</td>
+      <td>${escHtml(n.sent_by_name || '—')}</td>
       <td>${cancelBtn}</td>
     </tr>`;
   }).join('');
@@ -10131,24 +10131,24 @@ async function loadTenantFiles() {
 
   tbody.innerHTML = data.data.map(f => {
     const ota = f.last_ota_push ? new Date(f.last_ota_push).toLocaleDateString('en-IN') : '—';
-    const hash = f.sha256_hash ? `<code style="font-size:10px;color:var(--text3)">${f.sha256_hash.slice(0,8)}…</code>` : '—';
-    const size = f.file_size_mb ? `${f.file_size_mb} MB` : '—';
-    const students = f.active_students ? f.active_students.toLocaleString('en-IN') : '0';
+    const hash = f.sha256_hash ? `<code style="font-size:10px;color:var(--text3)">${escHtml(String(f.sha256_hash).slice(0,8))}…</code>` : '—';
+    const size = f.file_size_mb ? `${escHtml(f.file_size_mb)} MB` : '—';
+    const students = f.active_students ? escHtml(f.active_students.toLocaleString('en-IN')) : '0';
     const st = f.build_status || f.status || 'building';
-    const badge = statusBadge[st] || st;
+    const badge = statusBadge[st] || escHtml(st);
     return `<tr>
       <td><span style="font-weight:600">${escHtml(f.app_name || 'MITRA')}</span></td>
       <td>${escHtml(f.target_state || f.state || '—')}</td>
       <td><span class="tag tag-b">${escHtml(f.platform || 'Android')}</span></td>
       <td>${escHtml(f.version_name || f.version || '—')}</td>
       <td>${size}</td>
-      <td>${f.skin_name || '—'}</td>
-      <td>${f.primary_language || '—'}</td>
+      <td>${escHtml(f.skin_name || '—')}</td>
+      <td>${escHtml(f.primary_language || '—')}</td>
       <td>${students}</td>
       <td style="font-size:11px">${ota}</td>
       <td>${badge}</td>
       <td>${hash}</td>
-      <td><button class="btn btn-s" style="font-size:10px;padding:3px 8px" onclick="Promise.resolve(otaUpdateApp('${f.id}')).then(() => loadTenantFiles())">OTA Push</button></td>
+      <td><button class="btn btn-s" style="font-size:10px;padding:3px 8px" onclick="Promise.resolve(otaUpdateApp('${jsq(f.id)}')).then(() => loadTenantFiles())">OTA Push</button></td>
     </tr>`;
   }).join('');
 
@@ -10392,7 +10392,7 @@ function renderUserTable(users) {
       <td style="font-size:11px">${escHtml(u.phone||'—')}</td>
       <td>${escHtml(ROLE_LABELS[u.role]||u.role)}</td>
       <td style="font-size:11px">${escHtml(u.assigned_state||'—')}</td>
-      <td style="font-size:11px">${u.assigned_district||'—'}</td>
+      <td style="font-size:11px">${escHtml(u.assigned_district||'—')}</td>
       <td>${statusBadge}</td>
       <td style="font-size:11px">${lastLogin}</td>
       <td>
@@ -11094,7 +11094,7 @@ async function filterTelemetry() {
   if (noRes) noRes.style.display = 'none';
   tbody.innerHTML = filtered.map(r => `
     <tr>
-      <td>${r.region}</td>
+      <td>${escHtml(r.region)}</td>
       <td>${r.users.toLocaleString('en-IN')}</td>
       <td>${r.avg_time}</td>
       <td>${r.drop}%</td>

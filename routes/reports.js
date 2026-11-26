@@ -15,6 +15,7 @@ const fs = require('fs');
 const PizZip = require('pizzip');
 const router = require('express').Router();
 const { authenticate, requirePerm } = require('../middleware/auth');
+const { scopeState } = require('../lib/stateScope');
 
 router.use(authenticate);
 
@@ -76,7 +77,9 @@ router.get('/monthly.pptx', requirePerm('perm_export_data'), async (req, res) =>
     if (!fs.existsSync(TEMPLATE_PATH)) {
       return res.status(500).json({ error: 'Report template not found on server' });
     }
-    const { month = '', scope = 'All India', gender = 'All' } = req.query;
+    const { month = '', gender = 'All' } = req.query;
+    // A state officer gets their own state's report only (any ?scope= used to work).
+    const scope = scopeState(req) || req.query.scope || 'All India';
     const data = await buildReportData({ month, scope, gender });
     const out = fillTemplate(fs.readFileSync(TEMPLATE_PATH), data);
 

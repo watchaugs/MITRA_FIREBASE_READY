@@ -462,7 +462,8 @@ router.get('/data-export/:userId', requirePerm('perm_manage_compliance'), async 
 
     // State-scope: a non-national officer may only export a student in THEIR state.
     // master_admin and officers with no assigned_state (national) may export anyone.
-    const actorState = (req.user?.assigned_state || '').trim();
+    // The token carries the officer's state as `state` (see routes/auth.js).
+    const actorState = (req.user?.state || req.user?.assigned_state || '').trim();
     const isNational = req.user?.role === 'master_admin' || actorState === '' || isNationalState(actorState);
     if (!isNational) {
       const studentDoc = await db.collection('app_users').doc(uid).get();

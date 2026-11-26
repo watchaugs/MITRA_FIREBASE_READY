@@ -78,6 +78,21 @@ async function authenticate(req, res, next) {
     }
     return res.status(401).json({ error: 'Invalid token' });
   }
+  // Every token this server issues carries the account id. One without it can
+  // only be forged, and would skip the live status / role / permission check
+  // below — so it is rejected.
+  if (!decoded || typeof decoded.id !== 'string' || !decoded.id) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+
+  // App (student / teacher) tokens never carry dashboard permissions. Drop any
+  // perm_* claim so a forged app token can't pass requirePerm (app tokens skip
+  // the live lookup below).
+  if (APP_ROLES.has(decoded.role)) {
+    for (const k of Object.keys(decoded)) {
+      if (k.startsWith('perm_')) delete decoded[k];
+    }
+  }
 
   // H11: confirm user is still active (dashboard accounts only)
   if (decoded.id && !APP_ROLES.has(decoded.role)) {
