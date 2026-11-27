@@ -582,8 +582,9 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
   .sb-btn:hover::after, .sb-btn:focus::after { opacity: 1; }
 }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Served from this site, pinned versions (SEC-020): Chart.js 4.6.2, SheetJS 0.18.5 -->
+<script src="/vendor/chart.umd.min.js"></script>
+<script src="/vendor/xlsx.full.min.js"></script>
 <!-- The one list of states and union territories (also used by the server). -->
 <script src="/mitra-states.js"></script>
 
@@ -9969,12 +9970,12 @@ function initGeofenceLeaflet() {
     const link = document.createElement('link');
     link.id = 'leaflet-css';
     link.rel = 'stylesheet';
-    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    link.href = '/vendor/leaflet/leaflet.css'; // Leaflet 1.9.4, served from this site (SEC-020)
     document.head.appendChild(link);
   }
 
   const script = document.createElement('script');
-  script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+  script.src = '/vendor/leaflet/leaflet.js';
   script.onload = () => {
     const mapDiv = document.getElementById('gf-leaflet-map');
     if (!mapDiv) return;

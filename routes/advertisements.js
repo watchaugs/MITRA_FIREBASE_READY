@@ -107,9 +107,21 @@ router.get('/frequency', async (req, res) => {
 // ── PUT /frequency  — Update frequency cap ────────────────────────────────────
 router.put('/frequency', requirePerm('perm_manage_ads'), async (req, res) => {
   try {
+    // One setting for every state's app, so national staff only; and only the
+    // three numbers the app reads (SEC-018).
+    if (scopeState(req) !== null) return res.status(403).json({ error: 'Only national staff can change the ad frequency for all states.' });
+    const LIMITS = { cap: [0, 50], daily_push: [0, 50], window_hours: [1, 168] };
+    const safe = {};
+    for (const [k, [lo, hi]] of Object.entries(LIMITS)) {
+      if (req.body == null || req.body[k] === undefined || req.body[k] === null || req.body[k] === '') continue;
+      const n = Number(req.body[k]);
+      if (!Number.isInteger(n) || n < lo || n > hi) return res.status(400).json({ error: `${k} must be a whole number from ${lo} to ${hi}` });
+      safe[k] = n;
+    }
+    if (!Object.keys(safe).length) return res.status(400).json({ error: 'Send cap, daily_push or window_hours' });
     const db = getFirestore();
-    await db.collection('ad_settings').doc('frequency').set({ ...req.body, updated_at: new Date() }, { merge: true });
-    res.json({ success: true, ...req.body });
+    await db.collection('ad_settings').doc('frequency').set({ ...safe, updated_by: req.user.id, updated_at: new Date() }, { merge: true });
+    res.json({ success: true, ...safe });
   } catch (_) {
     res.status(500).json({ error: 'Failed to update frequency settings' });
   }
@@ -327,7 +339,14 @@ router.put('/:id', requirePerm('perm_manage_ads'), async (req, res) => {
     // id, or publish state) via a plain edit. Publishing has its own endpoint.
     const safe = { ...req.body };
     ['id', 'impressions', 'clicks', 'created_by', 'created_at',
-     'published_at', 'published_by', 'status', 'last_impression_at'].forEach(k => delete safe[k]);
+     'published_at', 'published_by', 'status', 'last_impression_at',
+     'approved_by', '__proto__', 'constructor', 'prototype'].forEach(k => delete safe[k]);
+    // Approval is recorded under the editor's own id (SEC-018).
+    if ('approved_first_party' in safe) {
+      safe.approved_first_party = safe.approved_first_party === true;
+      safe.approved_by = safe.approved_first_party ? req.user.id : null;
+    }
+    if ('state' in safe && safe.state && !canAccessState(req, safe.state)) return res.status(403).json(OUT_OF_STATE(req));
     if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);
     const badEdit = unknownStates(safe.target_states || []);
     if (badEdit.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badEdit) });

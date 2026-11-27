@@ -536,19 +536,26 @@ router.post('/incident-report', requirePerm('perm_manage_compliance'), async (re
   try {
     const db  = getFirestore();
     const id  = require('uuid').v4();
+    // Only the report's own fields; who/when/status are set here (SEC-018).
+    const report = {};
+    for (const k of ['type', 'severity', 'description', 'systems_affected', 'affected_users']) {
+      if (req.body && req.body[k] !== undefined && req.body[k] !== null) report[k] = String(req.body[k]).slice(0, 4000);
+    }
+    const seen = req.body && req.body.detected_at ? new Date(req.body.detected_at) : null;
+    if (seen && !isNaN(seen)) report.detected_at = seen;
     await db.collection('incident_reports').doc(id).set({
       id,
-      ...req.body,
+      ...report,
       reported_by: req.user.id,
       status: 'open',
       created_at: new Date(),
     });
     await db.collection('audit_log').add({
       action: 'incident_reported', actor: req.user.id,
-      detail: { incident_id: id, type: req.body.type }, created_at: new Date(),
+      detail: { incident_id: id, type: report.type || null }, created_at: new Date(),
     });
     // CERT-In Directions (2022): report within 6 hours of noticing the incident.
-    const detected = new Date(req.body.detected_at || Date.now());
+    const detected = report.detected_at || new Date();
     const deadline = new Date(detected.getTime() + 6 * 60 * 60 * 1000);
     res.json({ success: true, id, incident_id: id,
       cert_in_deadline: deadline.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST' });

@@ -3,7 +3,9 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
-const { filterByState, canAccessState } = require('../lib/stateScope');
+const { filterByState, canAccessState, requireStateMatch } = require('../lib/stateScope');
+const { pickFields } = require('../lib/writeGuard');
+const { cleanBuild } = require('../lib/appBuildFields');
 const log = require('../lib/logger');
 
 // ── PUBLIC app config (no auth) — the Flutter app calls this at STARTUP, before
@@ -40,7 +42,8 @@ router.get('/config/:state', async (req, res) => {
       version:       live.version        || base.version,
       min_supported_build: live.min_supported_build || base.min_supported_build,
       latest_build:        live.latest_build        || base.latest_build,
-      update_url:          live.update_url          || base.update_url,
+      // Older records may hold any link; only a Play Store link is sent (SEC-018).
+      update_url:          (cleanBuild({ update_url: live.update_url }).fields || {}).update_url || base.update_url,
       feature_flags: { ...base.feature_flags, ...(live.feature_flags || {}) },
     });
   } catch (err) {
@@ -85,11 +88,14 @@ router.get('/builds', async (req, res) => {
   const builds = await getBuilds(req);
   res.json({ data: builds, total: builds.length });
 });
-router.post('/builds', requirePerm('perm_publish_apps'), async (req, res) => {
+router.post('/builds', requirePerm('perm_publish_apps'), requireStateMatch('state'), async (req, res) => {
   try {
+    // Only known fields; a new build is always a draft until "Publish" (SEC-018).
+    const { fields, error } = cleanBuild(req.body);
+    if (error) return res.status(400).json({ error });
     const db  = getFirestore();
     const id  = uuidv4();
-    const doc = { ...req.body, id, status: 'building', created_by: req.user.id, created_at: new Date() }; // id after the body
+    const doc = { ...fields, id, status: 'building', build_status: 'building', created_by: req.user.id, created_at: new Date() };
     await db.collection('app_builds').doc(id).set(doc);
     res.status(201).json({ id, ...doc });
   } catch (err) {
@@ -100,7 +106,7 @@ router.get('/builds/:id', async (req, res) => {
   try {
     const db  = getFirestore();
     const doc = await db.collection('app_builds').doc(req.params.id).get();
-    if (doc.exists) return res.json({ id: doc.id, ...doc.data() });
+    if (doc.exists && canAccessState(req, doc.data().state)) return res.json({ ...doc.data(), id: doc.id });
     return res.status(404).json({ error: 'Build not found' });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load build');
@@ -163,11 +169,12 @@ router.get('/ota-updates', async (req, res) => {
     res.json({ data: [], total: 0 });
   }
 });
-router.post('/ota-updates', requirePerm('perm_publish_apps'), async (req, res) => {
+router.post('/ota-updates', requirePerm('perm_publish_apps'), requireStateMatch('state'), async (req, res) => {
   try {
     const db  = getFirestore();
     const id  = uuidv4();
-    const doc = { ...req.body, status: 'queued', created_by: req.user.id, created_at: new Date() };
+    const fields = pickFields(req.body, ['state', 'build_id', 'version', 'platform', 'notes']);
+    const doc = { ...fields, status: 'queued', created_by: req.user.id, created_at: new Date() };
     await db.collection('ota_updates').doc(id).set(doc);
     res.status(201).json({ id, ...doc });
   } catch (err) {

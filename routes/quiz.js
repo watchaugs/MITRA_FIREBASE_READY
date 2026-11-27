@@ -314,7 +314,10 @@ router.post('/', requirePerm('perm_edit_curriculum'), async (req, res) => {
   try {
     const db = getFirestore();
     const id = uuidv4();
-    const { go_live_immediately, release, ...fields } = req.body || {};
+    const { go_live_immediately, release, ...rest } = req.body || {};
+    // System fields are set here, not by the caller (SEC-018).
+    const fields = stripFields(rest, ['id', 'status', 'created_by', 'created_at', 'question_count',
+      'published_at', 'published_by', 'paused_at', 'paused_by', 'updated_at']);
     const tgt = scopedTargets(req, fields.target_states); // state officer → own state
     if (!tgt) return res.status(403).json(OUT_OF_STATE(req));
     fields.target_states = tgt;
@@ -355,6 +358,7 @@ router.put('/:id', requirePerm('perm_edit_curriculum'), async (req, res) => {
     const db = getFirestore();
     const safe = stripFields(req.body, [
       'id', 'status', 'release', 'created_by', 'created_at', 'question_count', 'published_at',
+      'published_by', 'paused_at', 'paused_by', 'updated_at',
     ]);
     // Edits save codes too ("Gujarat" → "GJ"), the same as a new quiz.
     if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);

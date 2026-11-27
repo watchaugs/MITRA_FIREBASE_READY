@@ -5,6 +5,7 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
 const { filterByState, requireStateMatch } = require('../lib/stateScope');
 const { State } = require('country-state-city');
+const { cleanBuild } = require('../lib/appBuildFields');
 router.use(authenticate);
 
 // ── GET /files  — List all state-specific app builds ─────────────────────────
@@ -22,11 +23,15 @@ router.get('/files', requirePerm('perm_publish_apps'), async (req, res) => {
 // ── POST /files  — Trigger a new state app build ──────────────────────────────
 router.post('/files', requirePerm('perm_publish_apps'), requireStateMatch('state'), async (req, res) => {
   try {
+    // Only known fields; a new build is always a draft until "Publish" (SEC-018).
+    const { fields, error } = cleanBuild(req.body);
+    if (error) return res.status(400).json({ error });
     const db  = getFirestore();
     const id  = uuidv4();
     const doc = {
-      ...req.body,
-      id, // after the body: a client-sent "id" can't replace it
+      ...fields,
+      id,
+      status: 'building',
       build_status: 'building',
       active_students: 0,
       file_size_mb: null,
