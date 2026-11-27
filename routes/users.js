@@ -149,7 +149,8 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
     const setupToken   = crypto.randomBytes(32).toString('hex');
     const setupExpires = Date.now() + 1000 * 60 * 60 * 24; // 24 hours
     const setupUrl     = `${process.env.APP_BASE_URL}/reset?token=${setupToken}`;
-    await db.collection('password_reset_tokens').doc(setupToken).set({
+    // Stored under its SHA-256 (same as reset links in auth.js).
+    await db.collection('password_reset_tokens').doc(crypto.createHash('sha256').update(setupToken).digest('hex')).set({
       userId: id, email, expiresAt: setupExpires, used: false,
     });
     // AWAIT the email before responding. On Cloud Run with min-instances=0 the
@@ -161,7 +162,7 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
     try {
       await sendWelcomeEmail({ to: email, full_name, role, setupUrl });
       emailSent = true;
-      log.info({ userId: id, email }, 'Welcome/setup email sent');
+      log.info({ userId: id }, 'Welcome/setup email sent');
     } catch (err) {
       emailError = err.message;
       log.error({ err: err.message, userId: id }, 'Welcome email failed — account still created');

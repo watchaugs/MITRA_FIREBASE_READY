@@ -144,7 +144,7 @@ router.post('/builds/:id/rollback', requirePerm('perm_publish_apps'), async (req
       .where('state', '==', curData.state || null)
       .orderBy('created_at', 'desc').limit(20).get();
     const prev = snap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
+      .map(d => ({ ...d.data(), id: d.id })) // a stored "id" can't replace the real one
       .find(b => b.id !== req.params.id && (b.app_name === curData.app_name || !curData.app_name));
     if (!prev) return res.status(400).json({ error: 'No previous build to roll back to.' });
     await ref.update({ status: 'rolled_back', build_status: 'rolled_back', rolled_back_at: new Date() });

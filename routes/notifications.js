@@ -28,12 +28,13 @@ const { getFirestore }              = require('../lib/firebase');
 const { State }                     = require('country-state-city');
 const log = require('../lib/logger');
 const { toName, sameState, unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
+const { safeEqual } = require('../lib/safeEqual');
 
 router.use((req, res, next) => {
   // Optional: a Cloud Scheduler job may still call /dispatch-scheduled with a shared secret.
   if (req.path === '/dispatch-scheduled' &&
       process.env.DISPATCH_SECRET &&
-      req.get('x-cron-secret') === process.env.DISPATCH_SECRET) {
+      safeEqual(req.get('x-cron-secret'), process.env.DISPATCH_SECRET)) {
     req.user = { id: 'cloud-scheduler', role: 'master_admin' };
     return next();
   }
@@ -142,8 +143,16 @@ router.get('/', async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('notifications').orderBy('created_at', 'desc').limit(100).get();
-    let data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    // A student only sees notifications that were sent to them (all / their state / their class).
+    let data = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    // The app sees only notices sent to everyone or to the student's own state
+    // (from the sign-in token, not the request), without sender details (Low, CWE-284).
+    if (['student', 'teacher'].includes(req.user?.role)) {
+      const own = req.user.state || '';
+      data = data
+        .filter(n => (n.status || 'sent') === 'sent' && (!n.target_state || (own && sameState(n.target_state, own))))
+        .map(({ sent_by, sent_by_name, fcm_message_id, ...n }) => n);
+      return res.json({ data, total: data.length });
+    }
     if (req.query.state) {
       const st = slug(req.query.state);
       data = data.filter(n => !n.target_state || slug(n.target_state) === st || sameState(n.target_state, req.query.state));

@@ -11,7 +11,7 @@ const { runExport } = require('../lib/telemetry_exporter');
 function checkSecret(req, res, next) {
   const secret = process.env.EXPORT_SECRET;
   if (!secret) return res.status(500).json({ error: 'EXPORT_SECRET not set' });
-  if (req.get('x-export-secret') !== secret) {
+  if (!require('../lib/safeEqual').safeEqual(req.get('x-export-secret'), secret)) {
     return res.status(403).json({ error: 'forbidden' });
   }
   next();

@@ -9,6 +9,10 @@ const { unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
 const storage = require('../lib/storage');
 const log = require('../lib/logger');
 const { isAppCaller } = require('../lib/release');
+// Campaign details, impressions and KPIs are for dashboard staff; the app only
+// lists live ads (GET /) and posts impressions/engagement (Low, CWE-284).
+const staffOnly = (req, res, next) => (isAppCaller(req)
+  ? res.status(403).json({ error: 'Dashboard staff only' }) : next());
 const tms = (v) => (v && typeof v.toDate === 'function') ? v.toDate().getTime() : (v ? new Date(v).getTime() : null);
 // A campaign reaches phones only when it is live (or scheduled and its start
 // date has passed) and it has not expired.
@@ -72,7 +76,7 @@ router.post('/upload', requirePerm('perm_manage_ads'), memUpload.single('file'),
 
 // ── GET /kpi  — Aggregate stats ───────────────────────────────────────────────
 // NOTE: /kpi must be declared BEFORE /:id to avoid Express matching 'kpi' as an id
-router.get('/kpi', async (req, res) => {
+router.get('/kpi', staffOnly, async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('ad_campaigns').get();
@@ -149,7 +153,7 @@ router.put('/keywords', requirePerm('perm_manage_ads'), async (req, res) => {
 });
 
 // ── GET /impressions  — Impression log ────────────────────────────────────────
-router.get('/impressions', async (req, res) => {
+router.get('/impressions', staffOnly, async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('ad_impressions').orderBy('created_at', 'desc').limit(500).get();
@@ -224,7 +228,7 @@ router.post('/engagement', async (req, res) => {
 });
 
 // ── GET /analytics/overview  ──────────────────────────────────────────────────
-router.get('/analytics/overview', async (req, res) => {
+router.get('/analytics/overview', staffOnly, async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('ad_campaigns').where('status', '==', 'live').get();
@@ -242,7 +246,7 @@ router.get('/analytics/overview', async (req, res) => {
 });
 
 // ── GET /:id  ─────────────────────────────────────────────────────────────────
-router.get('/:id', async (req, res) => {
+router.get('/:id', staffOnly, async (req, res) => {
   try {
     const db  = getFirestore();
     const doc = await db.collection('ad_campaigns').doc(req.params.id).get();

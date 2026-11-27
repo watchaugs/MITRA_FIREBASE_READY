@@ -100,6 +100,8 @@ function pointInPolygon(lat, lng, geojson) {
 }
 
 router.get('/', async (req, res) => {
+  // The full geofence list is for dashboard staff; the app uses /check-point and /territory.
+  if (['student', 'teacher'].includes(req.user?.role)) return res.status(403).json({ error: 'Dashboard staff only' });
   try {
     const db   = getFirestore();
     const snap = await db.collection('geofences').get();

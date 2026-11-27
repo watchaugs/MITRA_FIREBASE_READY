@@ -43,6 +43,7 @@ async function loadUserStatus(userId) {
       active: data.is_active !== false,
       role: data.role,
       state: data.assigned_state || null, // live, so a state change applies at once
+      tokensValidAfter: Number(data.tokens_valid_after) || 0, // set by a password reset
       perms,
       fetchedAt: Date.now(),
     };
@@ -100,6 +101,10 @@ async function authenticate(req, res, next) {
     const status = await loadUserStatus(decoded.id);
     if (status && status.active === false) {
       return res.status(401).json({ error: 'Account deactivated', code: 'ACCOUNT_INACTIVE' });
+    }
+    // A password reset ends every session: tokens issued before it stop working.
+    if (status && status.tokensValidAfter && decoded.iat && (decoded.iat + 1) * 1000 <= status.tokensValidAfter) {
+      return res.status(401).json({ error: 'Session ended. Please sign in again.', code: 'SESSION_REVOKED' });
     }
     // Prefer the live role over the JWT claim (defense against token-replay after demotion)
     if (status && status.role) decoded.role = status.role;

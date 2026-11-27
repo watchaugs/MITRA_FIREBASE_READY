@@ -6130,6 +6130,13 @@ function escHtml(str) {
   if (!str) return '';
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+// One CSV cell for downloads: quoted, and text starting with = + - @ (or a tab /
+// carriage return) gets a leading ' so Excel shows it instead of running it (CWE-1236).
+function csvCell(v) {
+  let s = v == null ? '' : String(v);
+  if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return '"' + s.replace(/"/g, '""') + '"';
+}
 // For a value placed INSIDE an inline handler string — onclick="fn('...')":
 // JS-escape (backslash, quote, newline) first, THEN HTML-escape, so a name like
 // "Newton's Laws" can't break out of the quotes or inject markup.
@@ -8490,7 +8497,7 @@ function exportCurriculumSummary(format) {
   const data    = rows.map(r => [r.stateName, r.stateCode, r.className, r.subject, r.topic, r.arLinked, r.assetId, r.quizzes, r.quizCount]);
 
   if (format === 'csv') {
-    const csvLines = [headers.join(','), ...data.map(row => row.map(v => `"${String(v).replace(/"/g,'""')}"`).join(','))];
+    const csvLines = [headers.join(','), ...data.map(row => row.map(csvCell).join(','))];
     const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -10182,7 +10189,7 @@ function exportTenantFilesCsv() {
     if (!data?.data) return;
     const headers = ['App Name','State','Platform','Version','Size MB','Skin','Language','Students','Last OTA','Status'];
     const rows = data.data.map(f => [f.app_name,f.target_state,f.platform,f.version_name,f.file_size_mb||'',f.skin_name||'',f.primary_language||'',f.active_students||0,f.last_ota_push||'',f.build_status]);
-    const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const csv = [headers, ...rows].map(r => r.map(csvCell).join(',')).join('\n');
     const a = document.createElement('a');
     a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
     a.download = 'MITRA_TenantFiles_' + new Date().toISOString().slice(0,10) + '.csv';

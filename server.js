@@ -83,6 +83,22 @@ async function boot() {
     next();
   });
 
+  // ── Server errors: keep internal error text out of responses (Low, CWE-209) ──
+  // Many routes reply { error, detail: err.message } on a 500. The detail goes to
+  // the log (with the request id) instead of to the browser or app.
+  app.use((req, res, next) => {
+    const json = res.json.bind(res);
+    res.json = (body) => {
+      if (res.statusCode >= 500 && body && typeof body === 'object' && !Array.isArray(body) && 'detail' in body) {
+        const { detail, ...rest } = body;
+        log.warn({ reqId: req.id, path: req.path, detail: String(detail).slice(0, 500) }, 'Error detail withheld from response');
+        return json({ ...rest, reqId: req.id });
+      }
+      return json(body);
+    };
+    next();
+  });
+
   // ── CSP nonce — per request (H4) ────────────────────────────────────────────
   app.use((req, res, next) => {
     res.locals.cspNonce = crypto.randomBytes(16).toString('base64');

@@ -177,7 +177,7 @@ router.post('/login', async (req, res) => {
       if (!phone || !role) {
         return res.status(400).json({ error: 'Phone and role are required for OTP login' });
       }
-      log.info({ phone, role }, 'OTP send requested');
+      log.info({ role }, 'OTP send requested');
       return res.status(200).json({ message: `OTP sent successfully via ${method}` });
     }
 
@@ -207,8 +207,6 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    await clearFailedLogins(email);
-
     const userId = userDoc.id;
 
     // Second step: email a 6-digit code when MFA applies to this account.
@@ -227,11 +225,14 @@ router.post('/login', async (req, res) => {
         log.error({ err: err.message, userId }, 'MFA email failed');
         return res.status(503).json({ error: 'Could not email your sign-in code. Ask an administrator to check the SMTP settings.' });
       }
-      log.info({ userId, email }, 'Password OK — MFA code emailed');
+      log.info({ userId }, 'Password OK — MFA code emailed');
       return res.json({ mfa_required: true, challenge_id: challengeId, email_hint: maskEmail(userRow.email) });
     }
 
-    log.info({ userId, email, role: userRow.role }, 'Dashboard login successful');
+    // Failed tries are cleared only once sign-in is complete (after the code
+    // when MFA applies), so the password step can't reset the lockout.
+    await clearFailedLogins(email);
+    log.info({ userId, role: userRow.role }, 'Dashboard login successful');
     res.json(buildLoginResponse(userId, userRow));
   } catch (err) {
     log.error({ err: err.message }, 'login error');
@@ -272,6 +273,7 @@ router.post('/verify-mfa', async (req, res) => {
     if (!userDoc.exists || userDoc.data().is_active === false) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
+    await clearFailedLogins(c.email);
     log.info({ userId: c.user_id }, 'Dashboard login successful (MFA)');
     res.json(buildLoginResponse(userDoc.id, userDoc.data()));
   } catch (err) {
@@ -487,11 +489,12 @@ router.post('/request-reset', async (req, res) => {
         const token      = crypto.randomBytes(32).toString('hex');
         const expiresAt  = Date.now() + 1000 * 60 * 60; // 1 hour
         const resetUrl   = `${process.env.APP_BASE_URL}/reset?token=${token}`;
-        await db.collection('password_reset_tokens').doc(token).set({
+        // Stored under its SHA-256, so a database read never yields a usable link.
+        await db.collection('password_reset_tokens').doc(hashToken(token)).set({
           userId: userDoc.id, email, expiresAt, used: false,
         });
         sendResetEmail({ to: email, resetUrl })
-          .catch(err => log.error({ err: err.message, email }, 'reset email send failed'));
+          .catch(err => log.error({ err: err.message, userId: userDoc.id }, 'reset email send failed'));
       }
     }
   } catch (err) {
@@ -507,8 +510,11 @@ router.post('/reset-password', async (req, res) => {
     if (!token || !newPassword) return res.status(400).json({ error: 'Token and password are required.' });
     if (newPassword.length < 12) return res.status(400).json({ error: 'Password must be at least 12 characters.' });
 
+    if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return res.status(400).json({ error: 'Invalid or expired reset link.' });
     const db       = getFirestore();
-    const tokenDoc = await db.collection('password_reset_tokens').doc(token).get();
+    // New links are stored by hash; links sent before this change by the raw token.
+    let tokenDoc = await db.collection('password_reset_tokens').doc(hashToken(token)).get();
+    if (!tokenDoc.exists) tokenDoc = await db.collection('password_reset_tokens').doc(token).get();
 
     if (!tokenDoc.exists)             return res.status(400).json({ error: 'Invalid or expired reset link.' });
     const data = tokenDoc.data();
@@ -518,7 +524,8 @@ router.post('/reset-password', async (req, res) => {
     const bcrypt      = require('bcryptjs');
     const password_hash = await bcrypt.hash(newPassword, 12);
 
-    await db.collection('dashboard_users').doc(data.userId).update({ password_hash });
+    // tokens_valid_after: sign-in tokens issued before now stop working (8 h tokens included).
+    await db.collection('dashboard_users').doc(data.userId).update({ password_hash, tokens_valid_after: Date.now() });
     await tokenDoc.ref.update({ used: true });
     // A password reset must invalidate every existing session (a compromised
     // account's stolen tokens are killed).

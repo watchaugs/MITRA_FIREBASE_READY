@@ -138,7 +138,7 @@ router.use((req, res, next) => {
   // Cloud Scheduler calls /dispatch-scheduled with a shared secret (no user token).
   if (req.path === '/dispatch-scheduled' &&
       process.env.DISPATCH_SECRET &&
-      req.get('x-cron-secret') === process.env.DISPATCH_SECRET) {
+      require('../lib/safeEqual').safeEqual(req.get('x-cron-secret'), process.env.DISPATCH_SECRET)) {
     req.user = { id: 'cloud-scheduler', role: 'master_admin' };
     return next();
   }
@@ -830,7 +830,7 @@ router.get('/template', requirePerm('perm_edit_curriculum'), async (req, res) =>
 });
 
 // ── Change #31: Quiz analytics KPIs + top quizzes table ──────────────────────
-router.get('/analytics', async (req, res) => {
+router.get('/analytics', staffOnly, async (req, res) => {
   try {
     // Filters from the dashboard: state, district, class_name, subject, language, days
     const { rows, quizzes } = await loadAttempts(getFirestore(), req.query);

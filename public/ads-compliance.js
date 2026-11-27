@@ -65,7 +65,7 @@ function _xlsxOrCSV(data, filename, fmt) {
     XLSX.writeFile(wb, `${filename}_${stamp}.xlsx`);
   } else {
     const keys = Object.keys(data[0] || {});
-    const csv = [keys.join(','), ...data.map(r => keys.map(k => '"' + String(r[k] == null ? '' : r[k]).replace(/"/g, '""') + '"').join(','))].join('\n');
+    const csv = [keys.join(','), ...data.map(r => keys.map(k => csvCell(r[k])).join(','))].join('\n');
     _downloadBlob(csv, `${filename}_${stamp}.csv`, 'text/csv');
   }
 }
