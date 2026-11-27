@@ -42,6 +42,7 @@ async function loadUserStatus(userId) {
     const status = {
       active: data.is_active !== false,
       role: data.role,
+      state: data.assigned_state || null, // live, so a state change applies at once
       perms,
       fetchedAt: Date.now(),
     };
@@ -102,6 +103,8 @@ async function authenticate(req, res, next) {
     }
     // Prefer the live role over the JWT claim (defense against token-replay after demotion)
     if (status && status.role) decoded.role = status.role;
+    // Same for the officer's state: the token's claim can be up to 8 h old.
+    if (status && 'state' in status) decoded.state = status.state;
     // Overwrite the token's perm_* claims with the LIVE flags from Firestore, so a
     // permission revoked in the dashboard is enforced immediately (within the 60s
     // cache) — not only after the 8h token expires.

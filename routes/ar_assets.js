@@ -14,7 +14,7 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const { visibleInState, parseTargetStates, canTouchTargets, scopedTargets, guardTargets, scopeState } = require('../lib/stateScope');
 const { unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
 const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
-const { stripFields } = require('../lib/writeGuard');
+const { stripFields, pickFields } = require('../lib/writeGuard');
 const log = require('../lib/logger');
 const { transcodeNarration } = require('../lib/audioTranscode');
 const bhashini = require('../lib/bhashini');
@@ -651,15 +651,13 @@ router.get('/assets/:id', async (req, res) => {
 router.put('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => {
   try {
     const db = getFirestore();
-    // Never let an uploader set system/workflow fields via the body (status,
-    // release, ownership, URLs). Publishing/releasing have their own guarded routes.
-    const safe = stripFields(req.body, [
-      'id', 'status', 'release', 'uploaded_by', 'created_at', 'created_by',
-      'flutter_url', 'native_url', 'unity_url', 'file_size_mb', 'compression',
-      'published_at', 'published_by', 'submitted_by', 'submitted_at',
-      'release_updated_by', 'release_updated_at',
-      // Video file fields change only through POST/DELETE /assets/:id/video.
-      'video_url', 'video_mb', 'video_duration', 'video_quality',
+    // Only the descriptive tags the Edit form sends can change here (SEC-014).
+    // Workflow fields (status, prev_status, release), file and media URLs
+    // (models, audio, video, page target) change only through their own
+    // guarded routes — a deny-list left prev_status and the media URLs open.
+    const safe = pickFields(req.body, [
+      'title', 'class_name', 'subject', 'topic', 'language', 'description',
+      'target_states', 'video_region', 'video_sound', 'video_default_view',
     ]);
     try { Object.assign(safe, cleanVideoSettings(safe)); }
     catch (e) { return res.status(400).json({ error: e.message }); }
@@ -1244,6 +1242,10 @@ router.post('/assets/bulk', requirePerm('perm_upload_unity'), async (req, res) =
   const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
   const action = (req.body.action || '').toLowerCase();
   if (!ids.length) return res.status(400).json({ error: 'No ids given' });
+  // Publishing needs the approver's permission, the same as one-by-one (SEC-014).
+  if (action === 'publish' && !req.user.perm_approve_content && req.user.role !== 'master_admin') {
+    return res.status(403).json({ error: 'Publishing needs the approve-content permission' });
+  }
   const db = getFirestore();
   const results = [];
   for (const id of ids) {

@@ -17,6 +17,7 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const { runQuery, FQ_TABLE } = require('../lib/bq');
 const { runExport } = require('../lib/telemetry_exporter');
 const { isNational, sameState, stateKeys, toName } = require('../lib/states');
+const { scopeState } = require('../lib/stateScope');
 
 router.use(authenticate);
 
@@ -26,12 +27,9 @@ router.use(authenticate);
 // (national scope) may export anyone. Returns the state the caller is confined
 // to, or '' for national/unrestricted.
 function actorStateScope(req) {
-  if (req.user?.role === 'master_admin') return '';          // national
-  // The token carries the officer's state as `state` (routes/auth.js
-  // signAccess). Reading only `assigned_state` (never set on req.user) made
-  // every officer national, so a state officer could export every state.
-  const s = (req.user?.state || req.user?.assigned_state || '').trim();
-  return isNational(s) ? '' : s;                             // '' / "All India" => national
+  // One rule everywhere (lib/stateScope): master_admin / admin / superadmin
+  // and officers without a state are national; others see their own state.
+  return scopeState(req) || '';
 }
 
 // ── Zeroed defaults (shown until the first Refresh populates the snapshot) ────

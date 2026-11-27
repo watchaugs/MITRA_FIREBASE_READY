@@ -8,6 +8,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 const router = require('express').Router();
 const { authenticate, requirePerm } = require('../middleware/auth');
+const { filterByState } = require('../lib/stateScope');
 const { getFirestore } = require('../lib/firebase');
 const log = require('../lib/logger');
 
@@ -47,7 +48,7 @@ router.get('/', requirePerm('perm_view_analytics'), async (req, res) => {
   try {
     const db   = getFirestore();
     const snap = await db.collection('app_feedback').orderBy('created_at', 'desc').limit(500).get();
-    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const data = filterByState(req, snap.docs.map(d => ({ id: d.id, ...d.data() }))); // officers: own state
     res.json({ data, total: data.length });
   } catch (_) {
     res.json({ data: [], total: 0 });

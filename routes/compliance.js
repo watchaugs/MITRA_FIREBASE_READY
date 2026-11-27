@@ -5,6 +5,15 @@ const { getFirestore } = require('../lib/firebase');
 const XLSX = require('xlsx');
 const log = require('../lib/logger');
 const { sameState, isNational: isNationalState } = require('../lib/states');
+const { scopeState, canAccessState, filterByState } = require('../lib/stateScope');
+const { canGrantRole } = require('../middleware/auth');
+const { pickFields } = require('../lib/writeGuard');
+// National-only compliance actions (global settings, all-India exports).
+const NATIONAL_ONLY = (req, res) => {
+  if (scopeState(req) === null) return false;
+  res.status(403).json({ error: 'Only national staff can do this.' });
+  return true;
+};
 
 // The score shown on the Compliance page now comes from the LIVE engine
 // (lib/complianceEngine.js). The old list below had 8 of 10 checks hard-coded
@@ -219,6 +228,15 @@ router.post('/purge-user', requirePerm('perm_manage_compliance'), async (req, re
     const reason = req.body?.reason || 'Manual purge request';
     if (!student_id) return res.status(400).json({ error: 'student_id required' });
     const db    = getFirestore();
+    // A state officer erases only their own state's students, and only
+    // national staff may skip the 48-hour notice (override).
+    if (scopeState(req) !== null) {
+      if (req.body?.override === true) return res.status(403).json({ error: 'Only national staff can skip the 48-hour notice.' });
+      const stu = await db.collection('app_users').doc(student_id).get();
+      if (!stu.exists || !canAccessState(req, (stu.data() || {}).assigned_state)) {
+        return res.status(404).json({ error: 'Student not found' });
+      }
+    }
 
     // DPDPA Rule 8 — 48-hour pre-erasure notice. If this student filed a
     // self-service deletion request, it may only be actioned once 48 hours have
@@ -436,6 +454,12 @@ router.post('/enforce-mfa', requirePerm('perm_manage_compliance'), async (req, r
       if (snap.empty) return res.status(404).json({ error: 'No dashboard user with that id or email' });
       doc = snap.docs[0]; ref = doc.ref;
     }
+    // Only someone who outranks the account (and covers its state) may change
+    // its sign-in code rule — a compliance officer can't drop a master admin's.
+    const target = doc.data() || {};
+    if (doc.id === req.user.id || !canGrantRole(req.user.role, target.role) || !canAccessState(req, target.assigned_state)) {
+      return res.status(403).json({ error: 'You cannot change sign-in security for this account.' });
+    }
     await ref.update({ mfa_required: !!enforce, updated_at: new Date() });
     await db.collection('audit_log').add({
       action: enforce ? 'mfa_enforced' : 'mfa_removed', actor: req.user.id,
@@ -461,10 +485,9 @@ router.get('/data-export/:userId', requirePerm('perm_manage_compliance'), async 
     const uid = req.params.userId;
 
     // State-scope: a non-national officer may only export a student in THEIR state.
-    // master_admin and officers with no assigned_state (national) may export anyone.
-    // The token carries the officer's state as `state` (see routes/auth.js).
-    const actorState = (req.user?.state || req.user?.assigned_state || '').trim();
-    const isNational = req.user?.role === 'master_admin' || actorState === '' || isNationalState(actorState);
+    // National staff may export anyone; a state officer only their state's students.
+    const actorState = scopeState(req) || '';
+    const isNational = !actorState;
     if (!isNational) {
       const studentDoc = await db.collection('app_users').doc(uid).get();
       const studentState = studentDoc.exists ? (studentDoc.data().assigned_state || '') : '';
@@ -542,7 +565,7 @@ router.get('/data-requests', requirePerm('perm_manage_compliance'), async (req, 
     const snap = await db.collection('data_requests').limit(500).get();
     const statusFilter = (req.query.status || '').trim();
     const toMs = (v) => (v && v.toDate ? v.toDate().getTime() : new Date(v || 0).getTime());
-    let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    let rows = filterByState(req, snap.docs.map(d => ({ id: d.id, ...d.data() }))); // officers: own state
     if (statusFilter) rows = rows.filter(r => (r.status || 'pending') === statusFilter);
     rows.sort((a, b) => toMs(a.requested_at) - toMs(b.requested_at));
     const pending = rows.filter(r => (r.status || 'pending') === 'pending').length;
@@ -563,6 +586,10 @@ router.post('/data-requests/:id/action', requirePerm('perm_manage_compliance'), 
     const allowed = ['pending', 'actioned', 'rejected'];
     if (!allowed.includes(newStatus)) {
       return res.status(400).json({ error: 'status must be one of ' + allowed.join(', ') });
+    }
+    const reqDoc = await db.collection('data_requests').doc(req.params.id).get();
+    if (!reqDoc.exists || !canAccessState(req, (reqDoc.data() || {}).state)) { // officers: own state
+      return res.status(404).json({ error: 'Request not found' });
     }
     await db.collection('data_requests').doc(req.params.id).set({
       status: newStatus,
@@ -607,8 +634,14 @@ router.get('/settings', requirePerm('perm_manage_compliance'), async (req, res) 
   }
 });
 
+// Only these global settings exist (the Compliance tab and engine use them).
+const SETTINGS_FIELDS = ['retention_days', 'auto_purge', 'mfa_required', 'privacy_policy_url',
+  'breach_contact', 'breach_procedure_url', 'erasure', 'withdrawal'];
 router.put('/settings', requirePerm('perm_manage_compliance'), async (req, res) => {
   try {
+    if (NATIONAL_ONLY(req, res)) return;                      // settings are all-India
+    req.body = pickFields(req.body || {}, SETTINGS_FIELDS);  // nothing else is stored
+    if (!Object.keys(req.body).length) return res.status(400).json({ error: 'No known setting given' });
     // Safety: switching the email sign-in code on for everyone without working
     // email would lock every admin out.
     if (req.body && req.body.mfa_required === true && !(process.env.SMTP_USER && process.env.SMTP_PASSWORD)) {
@@ -665,6 +698,7 @@ router.put('/findings/:id/resolve', requirePerm('perm_manage_compliance'), async
 // ── Change #29: Consent log export ────────────────────────────────────────
 router.get('/consent-log/export', requirePerm('perm_export_data'), async (req, res) => {
   try {
+    if (NATIONAL_ONLY(req, res)) return; // every state's consent log: national staff only
     const db   = getFirestore();
     const snap = await db.collection('consent_records').limit(5000).get();
     const rows = snap.docs.map(d => {

@@ -347,6 +347,10 @@ router.post('/refresh', async (req, res) => {
         db.collection('app_users').doc(decoded.id).get(),
       ]);
       if (staff.exists) {
+        // A deactivated staff account gets no new token (SEC-015).
+        if (staff.data().is_active === false) {
+          return res.status(401).json({ error: 'Account deactivated', code: 'ACCOUNT_INACTIVE' });
+        }
         claims = { id: decoded.id, ...staff.data() };
       } else if (app.exists) {
         const u = app.data() || {};

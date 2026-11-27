@@ -23,6 +23,12 @@ const BACKEND_PERMS = ['perm_publish_apps','perm_upload_unity','perm_manage_geo'
 // Only someone who OUTRANKS an account may change or remove it (the master
 // admin may manage anyone), and nobody may hand out a permission they don't
 // hold themselves. Every change is written to audit_log (CERT-In).
+// Dashboard staff are never given an app role ('student' / 'teacher'): app-role
+// tokens skip the live active / permission check, so a deactivated staff
+// "teacher" kept working (SEC-015).
+const isAppRole = (r) => r === 'student' || r === 'teacher';
+const APP_ROLE_MSG = { error: 'Student and teacher roles belong to the app, not to dashboard staff' };
+
 // A state-scoped officer may also only manage accounts of their own state.
 function canManage(req, target) {
   return !!target && canGrantRole(req.user.role, target.role) &&
@@ -97,6 +103,7 @@ router.post('/', requirePerm('perm_create_users'), async (req, res) => {
     const badState = unknownStates(assigned_state);
     if (badState.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badState) });
     if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'valid email required' });
+    if (isAppRole(role)) return res.status(400).json(APP_ROLE_MSG);
     if (!canGrantRole(req.user.role, role)) {
       return res.status(403).json({ error: 'You cannot grant a role higher than your own' });
     }
@@ -183,6 +190,7 @@ router.get('/:id', requirePerm('perm_create_users'), async (req, res) => {
 router.put('/:id', requirePerm('perm_create_users'), async (req, res) => {
   try {
     const { full_name, role, is_active, permissions, mfa_required } = req.body;
+    if (role !== undefined && isAppRole(role)) return res.status(400).json(APP_ROLE_MSG);
     if (role !== undefined && !canGrantRole(req.user.role, role)) {
       return res.status(403).json({ error: 'You cannot grant a role higher than your own' });
     }
@@ -260,6 +268,7 @@ router.post('/bulk-update', requirePerm('perm_create_users'), async (req, res) =
         return res.status(403).json({ error: 'You can only move users into your own state' });
       }
     }
+    if (safeUpdates.role && isAppRole(safeUpdates.role)) return res.status(400).json(APP_ROLE_MSG);
     if (safeUpdates.role && !canGrantRole(req.user.role, safeUpdates.role)) {
       return res.status(403).json({ error: 'You cannot grant a role higher than your own' });
     }
