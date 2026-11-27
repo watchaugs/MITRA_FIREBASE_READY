@@ -4,7 +4,7 @@ const multer  = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
-const { filterByState, canAccessState, visibleInState, parseTargetStates } = require('../lib/stateScope');
+const { filterByState, canAccessState, visibleInState, parseTargetStates, canTouchTargets, scopedTargets, guardTargets, scopeState } = require('../lib/stateScope');
 const { unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
 const storage = require('../lib/storage');
 const log = require('../lib/logger');
@@ -277,6 +277,10 @@ async function noticeScopeError(b) {
   return null;
 }
 
+// A state officer changes only campaigns aimed at their own state.
+router.param('id', guardTargets('ad_campaigns'));
+const OUT_OF_STATE = (req) => ({ error: `Your account can only manage ${scopeState(req)}.` });
+
 router.post('/', requirePerm('perm_manage_ads'), async (req, res) => {
   try {
     const db  = getFirestore();
@@ -285,6 +289,9 @@ router.post('/', requirePerm('perm_manage_ads'), async (req, res) => {
     if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Campaign name is required' });
     const badStates = unknownStates(parseTargetStates(b.target_states));
     if (badStates.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badStates) });
+    const tgt = scopedTargets(req, b.target_states); // state officer → own state
+    if (!tgt) return res.status(403).json(OUT_OF_STATE(req));
+    b.target_states = tgt;
     const scopeErr = await noticeScopeError(b);
     if (scopeErr) return res.status(422).json({ error: scopeErr });
     const doc = { ...b, id,
@@ -324,6 +331,7 @@ router.put('/:id', requirePerm('perm_manage_ads'), async (req, res) => {
     if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);
     const badEdit = unknownStates(safe.target_states || []);
     if (badEdit.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badEdit) });
+    if ('target_states' in safe && !canTouchTargets(req, safe.target_states)) return res.status(403).json(OUT_OF_STATE(req));
     await ref.update({ ...safe, updated_at: new Date() });
     res.json({ id: req.params.id, ...safe });
   } catch (err) {

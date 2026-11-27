@@ -6,6 +6,12 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const storage = require('../lib/storage');
 const { getFirestore } = require('../lib/firebase');
 const log = require('../lib/logger');
+const { isAppCaller } = require('../lib/release');
+
+// What a student / teacher token may download: ad creatives and app images
+// shown in the app. Everything else (quiz sheets, original models, drafts,
+// pack drafts, upload jobs) is staff-only.
+const APP_READABLE = ['ad_media/', 'app_assets/'];
 
 router.use(authenticate);
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
@@ -108,6 +114,9 @@ router.get('/file/:key(*)', async (req, res) => {
         /^[a-zA-Z]:/.test(key) ||
         key.includes('\0')) {
       return res.status(400).json({ error: 'Bad file key' });
+    }
+    if (isAppCaller(req) && !APP_READABLE.some(p => key.startsWith(p))) {
+      return res.status(404).json({ error: 'File not found' });
     }
 
     // In production (GCS/R2), redirect to a direct URL so the bytes flow

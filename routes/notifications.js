@@ -20,6 +20,7 @@
 const router   = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { authenticate, requirePerm } = require('../middleware/auth');
+const { requireStateMatch } = require('../lib/stateScope');
 // Student/teacher app tokens pass authenticate(); block them from staff-only routes.
 const staffOnly = (req, res, next) => (['student', 'teacher'].includes(req.user?.role)
   ? res.status(403).json({ error: 'Dashboard staff only' }) : next());
@@ -154,7 +155,9 @@ router.get('/', async (req, res) => {
 });
 
 // ── POST /send  — send now ───────────────────────────────────────────────────
-router.post('/send', requirePerm('perm_send_notif'), async (req, res) => {
+// A state officer sends only to their own state (target_state required);
+// all-India (mitra_all) and other states stay with national staff.
+router.post('/send', requirePerm('perm_send_notif'), requireStateMatch('target_state'), async (req, res) => {
   try {
     const b = req.body || {};
     const title = String(b.title || '').trim();
@@ -185,7 +188,7 @@ router.post('/send', requirePerm('perm_send_notif'), async (req, res) => {
 });
 
 // ── POST /schedule  — store for later; sent by dispatchDue() ────────────────
-router.post('/schedule', requirePerm('perm_send_notif'), async (req, res) => {
+router.post('/schedule', requirePerm('perm_send_notif'), requireStateMatch('target_state'), async (req, res) => {
   try {
     const b = req.body || {};
     const title = String(b.title || '').trim();

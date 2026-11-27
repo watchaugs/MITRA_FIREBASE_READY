@@ -10,7 +10,7 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 // Student/teacher app tokens pass authenticate(); block them from staff-only routes.
 const staffOnly = (req, res, next) => (['student', 'teacher'].includes(req.user?.role)
   ? res.status(403).json({ error: 'Dashboard staff only' }) : next());
-const { visibleInState, parseTargetStates } = require('../lib/stateScope');
+const { visibleInState, parseTargetStates, canTouchTargets, scopedTargets, guardTargets, scopeState } = require('../lib/stateScope');
 const { toName, sameState, unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
 const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
 const { stateScope, studentState, allowedQuizzes } = require('../lib/contentScope');
@@ -305,11 +305,19 @@ router.get('/:id/questions', async (req, res) => {
   }
 });
 
+// A state officer changes only quizzes aimed at their own state (edit, publish,
+// pause, release, translate, delete). National staff are unaffected.
+router.param('id', guardTargets('quizzes'));
+const OUT_OF_STATE = (req) => ({ error: `Your account can only manage ${scopeState(req)}.` });
+
 router.post('/', requirePerm('perm_edit_curriculum'), async (req, res) => {
   try {
     const db = getFirestore();
     const id = uuidv4();
     const { go_live_immediately, release, ...fields } = req.body || {};
+    const tgt = scopedTargets(req, fields.target_states); // state officer → own state
+    if (!tgt) return res.status(403).json(OUT_OF_STATE(req));
+    fields.target_states = tgt;
     if (fields.language) fields.language = _langCode(fields.language); // "English" → "en"
     const status = go_live_immediately === true ? 'live' : 'draft';
     if (release) fields.release = cleanRelease(release);
@@ -350,6 +358,7 @@ router.put('/:id', requirePerm('perm_edit_curriculum'), async (req, res) => {
     ]);
     // Edits save codes too ("Gujarat" → "GJ"), the same as a new quiz.
     if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);
+    if ('target_states' in safe && !canTouchTargets(req, safe.target_states)) return res.status(403).json(OUT_OF_STATE(req));
     if (safe.language) safe.language = _langCode(safe.language);
     const badEdit = unknownStates(safe.target_states || []);
     if (badEdit.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badEdit) });
@@ -573,6 +582,10 @@ router.post('/bulk-upload', requirePerm('perm_edit_curriculum'), async (req, res
   try {
     const { quiz_id, questions } = req.body;
     if (!quiz_id) return res.status(400).json({ error: 'quiz_id required' });
+    if (scopeState(req) !== null) { // state officer: only their state's quizzes
+      const qd = await getFirestore().collection('quizzes').doc(String(quiz_id)).get();
+      if (qd.exists && !canTouchTargets(req, qd.data().target_states)) return res.status(403).json(OUT_OF_STATE(req));
+    }
     if (!Array.isArray(questions) || !questions.length) {
       return res.status(400).json({ error: 'questions array required' });
     }
@@ -663,6 +676,7 @@ router.post('/bulk-upload-grouped', requirePerm('perm_edit_curriculum'), caught(
     const targetStates = /^all india$/i.test(g.state) ? [] : [g.state];
     // Stage 4: a row with a state that is not in the list is skipped, not saved.
     if (unknownStates(targetStates).length) { skipped.push({ reason: UNKNOWN_STATE_MSG(targetStates), topic: g.topic }); continue; }
+    if (!canTouchTargets(req, targetStates)) { skipped.push({ reason: OUT_OF_STATE(req).error, topic: g.topic }); continue; }
     await db.collection('quizzes').doc(id).set({
       title: `${g.subject} — ${g.topic} (${g.class_name})`,
       class_name: g.class_name, subject: g.subject, topic: g.topic,
@@ -912,6 +926,12 @@ router.post('/bulk-action', requirePerm('perm_edit_curriculum'), async (req, res
       return res.status(400).json({ error: 'Select at most 450 quizzes at a time' });
     }
     const db    = getFirestore();
+    if (scopeState(req) !== null) { // state officer: every quiz must be their state's
+      const docs = await db.getAll(...quizIds.map(id => db.collection('quizzes').doc(String(id))));
+      if (docs.some(d => d.exists && !canTouchTargets(req, d.data().target_states))) {
+        return res.status(403).json(OUT_OF_STATE(req));
+      }
+    }
     const batch = db.batch();
     const now   = new Date();
     const by    = (req.user && req.user.id) || null;

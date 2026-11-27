@@ -36,6 +36,17 @@ router.get('/status', consentLimiter, async (req, res) => {
 // The app sends its Firebase ID token with consent calls. We only accept a
 // consent record for the signed-in student themself (DPDPA: consent must be
 // given by the data principal / guardian — nobody else may write it).
+// True when the request carries a Firebase ID token whose phone number was
+// OTP-verified (the app sends its Firebase token to /grant).
+async function callerPhoneVerified(req) {
+  const h = req.headers['authorization'] || '';
+  if (!h.startsWith('Bearer ')) return false;
+  try {
+    const decoded = await require('../lib/firebase').verifyIdToken(h.slice(7).trim());
+    return !!decoded.phone_number;
+  } catch (_) { return false; }
+}
+
 async function callerUid(req) {
   const h = req.headers['authorization'] || '';
   if (!h.startsWith('Bearer ')) return null;
@@ -52,7 +63,10 @@ async function callerUid(req) {
 
 router.post('/grant', consentLimiter, async (req, res) => {
   try {
-    const { student_id, consents, version, verified_parental } = req.body;
+    // `verified_parental` from the request is ignored (SEC-023): the app used
+    // to decide it, so any client could claim it. It is worked out below
+    // from what the server itself can confirm.
+    const { student_id, consents, version } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id required' });
     if (!Array.isArray(consents) || consents.length === 0) {
       return res.status(400).json({ error: 'consents must be a non-empty array' });
@@ -62,6 +76,7 @@ router.post('/grant', consentLimiter, async (req, res) => {
     }
     const uid = await callerUid(req);
     if (!uid || uid !== student_id) return res.status(401).json({ error: 'Sign in to record your own consent' });
+    const phoneVerified = await callerPhoneVerified(req); // OTP sign-in, from Google
     const db = getFirestore();
     // This is a children's education app, so a grant here IS the guardian's
     // parental consent. Record it explicitly (and the guardian relationship
@@ -78,9 +93,14 @@ router.post('/grant', consentLimiter, async (req, res) => {
     let record = {
       student_id, consents, version, granted: true, granted_at: new Date(),
       parental_consent: true, guardian_name: guardian,
-      // Declared consent is always true here; verified_parental is only true
-      // when the app confirms the guardian's phone was OTP-verified (DPDPA VPC).
-      verified_parental: verified_parental === true,
+      // Declared consent is always true here. verified_parental is true only
+      // when the server confirms BOTH: the phone was OTP-verified at sign-in
+      // (Firebase token) and the profile says that phone is a parent's or
+      // guardian's (not "self"). The second part is still the family's own
+      // declaration — a guardian OTP step is the full DPDPA proof.
+      verified_parental: phoneVerified && !!guardian &&
+        String(guardian).trim().toLowerCase() !== 'self',
+      vpc_basis: 'server: firebase phone OTP + profile mobile_belongs_to',
     };
     try {
       if (process.env.FIELD_ENCRYPTION_KEY) {

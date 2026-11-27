@@ -61,6 +61,18 @@ service cloud.firestore {
     }
 
     // ── Users Collection ──────────────────────────────────────────────────────
+    // The home state is chosen once, at registration (location screen). After
+    // that only the backend (Admin SDK) can change it: the server uses it to
+    // decide which state's lessons and quizzes a student gets (SEC-013).
+    function homeStateUnchanged() {
+      return !('assigned_state' in resource.data)
+        || resource.data.assigned_state == null
+        || resource.data.assigned_state == ''
+        || (request.resource.data.get('assigned_state', null) == resource.data.assigned_state
+            && request.resource.data.get('assigned_state_code', null)
+               == resource.data.get('assigned_state_code', null));
+    }
+
     // Class may change only if the lock is absent or older than 90 days,
     // and the write must stamp class_locked_at to the server time.
     function classChangeAllowed() {
@@ -114,7 +126,8 @@ service cloud.firestore {
              'perm_upload_unity', 'perm_manage_geo', 'perm_view_analytics',
              'perm_create_users', 'perm_edit_curriculum', 'perm_approve_content',
              'perm_export_data', 'perm_manage_ads'])
-        && classChangeAllowed();
+        && classChangeAllowed()
+        && homeStateUnchanged();
 
       // App users don't delete their own profile from the client; erasure runs
       // through the backend (DPDPA flow) with the Admin SDK.

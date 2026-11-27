@@ -52,6 +52,9 @@ router.post('/state/:code', requirePerm('perm_manage_geo'), async (req, res) => 
     // older codes (OR, DN), so fall back to the official name.
     const entry = byKey[key] || byKey[String(toName(key) || '').toLowerCase()];
     if (!entry) return res.status(404).json({ error: 'Unknown state code/name' });
+    if (!canAccessState(req, entry.state)) { // a state officer applies only their own state
+      return res.status(403).json({ error: 'Your account cannot change this state\'s geofence.' });
+    }
     const db = getFirestore();
     const docId = 'state_' + (entry.code || entry.state).toLowerCase().replace(/\s+/g, '_');
     const doc = {
@@ -111,6 +114,9 @@ router.post('/', requirePerm('perm_manage_geo'), async (req, res) => {
   try {
     const id  = uuidv4();
     const safe = stripFields(req.body, ['id', 'created_by', 'created_at', 'is_active']);
+    if (!canAccessState(req, safe.state)) { // a state officer adds fences in their own state only
+      return res.status(403).json({ error: 'Your account cannot change this state\'s geofence.' });
+    }
     const doc = { ...safe, is_active: true, created_by: req.user.id, created_at: new Date() };
     const db  = getFirestore();
     await db.collection('geofences').doc(id).set(doc);
@@ -207,6 +213,8 @@ router.post('/:id/sync-boundary', requirePerm('perm_manage_geo'), async (req, re
     // Body: { geojson: { type: 'Polygon', coordinates: [...] } }
     const { geojson } = req.body;
     if (!geojson) return res.status(400).json({ error: 'geojson body required' });
+    const own = await _ownGeofence(req, res); // exists + inside the caller's state
+    if (!own) return;
     const db = getFirestore();
     await db.collection('geofences').doc(req.params.id).update({
       geojson,

@@ -11,7 +11,7 @@ const { compressGlb, MODEL_SPECS, estimateOutputs, QUALITY_PRESETS } = require('
 const { toGlb, needsConversion } = require('../lib/modelConvert');
 const storage          = require('../lib/storage');
 const { authenticate, requirePerm } = require('../middleware/auth');
-const { visibleInState, parseTargetStates } = require('../lib/stateScope');
+const { visibleInState, parseTargetStates, canTouchTargets, scopedTargets, guardTargets, scopeState } = require('../lib/stateScope');
 const { unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
 const { isAppCaller, isReleased, cleanRelease, mergeStateRelease } = require('../lib/release');
 const { stripFields } = require('../lib/writeGuard');
@@ -118,6 +118,11 @@ router.get('/model-specs', (req, res) => res.json(MODEL_SPECS));
 // level (triangles, approx MB, peak memory) WITHOUT storing or publishing
 // anything. Powers the "preview before upload" dropdown. Fast: triangle math
 // only, no compression.
+// A state officer changes only assets aimed at their own state (publish,
+// unpublish, edit, delete, release, media …). National staff are unaffected.
+router.param('id', guardTargets('ar_assets'));
+const OUT_OF_STATE = (req) => ({ error: `Your account can only manage ${scopeState(req)}.` });
+
 router.post('/estimate', requirePerm('perm_upload_unity'),
   (req, res, next) => arUpload.single('model')(req, res, err => err ? res.status(400).json({ error: err.message }) : next()),
   (req, res) => {
@@ -141,6 +146,9 @@ router.post('/upload', requirePerm('perm_upload_unity'),
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const badStates = unknownStates(parseTargetStates(req.body.target_states));
     if (badStates.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badStates) });
+    const tgt = scopedTargets(req, req.body.target_states); // state officer → own state
+    if (!tgt) return res.status(403).json(OUT_OF_STATE(req));
+    req.body.target_states = tgt;
     const { class_name, subject, topic, language, title } = req.body;
     const id  = uuidv4();
     const ext = path.extname(req.file.originalname).toLowerCase();
@@ -440,6 +448,9 @@ router.post('/upload-rich', requirePerm('perm_upload_unity'),
     try { videoSettings = cleanVideoSettings(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
     const badStates = unknownStates(parseTargetStates(req.body.target_states));
     if (badStates.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badStates) });
+    const tgt = scopedTargets(req, req.body.target_states); // state officer → own state
+    if (!tgt) return res.status(403).json(OUT_OF_STATE(req));
+    req.body.target_states = tgt;
 
     const { class_name, subject, topic, language, title } = req.body;
     const id  = uuidv4();
@@ -657,6 +668,7 @@ router.put('/assets/:id', requirePerm('perm_upload_unity'), async (req, res) => 
     if ('target_states' in safe) safe.target_states = parseTargetStates(safe.target_states);
     const badEdit = unknownStates(safe.target_states || []);
     if (badEdit.length) return res.status(400).json({ error: UNKNOWN_STATE_MSG(badEdit) });
+    if ('target_states' in safe && !canTouchTargets(req, safe.target_states)) return res.status(403).json(OUT_OF_STATE(req));
     await db.collection('ar_assets').doc(req.params.id).update({ ...safe, updated_at: new Date() });
     await invalidateManifests(db);
     res.json({ id: req.params.id, ...safe });
@@ -1239,6 +1251,7 @@ router.post('/assets/bulk', requirePerm('perm_upload_unity'), async (req, res) =
       const ref = db.collection('ar_assets').doc(id);
       const snap = await ref.get();
       if (!snap.exists) { results.push({ id, ok: false, error: 'not found' }); continue; }
+      if (!canTouchTargets(req, snap.data().target_states)) { results.push({ id, ok: false, error: 'outside your state' }); continue; }
       if (action === 'delete') {
         const block = assetDeletionBlock(snap.data());
         if (block) { results.push({ id, ok: false, error: `locked (${block.status}) — unpublish first` }); continue; }

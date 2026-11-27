@@ -29,7 +29,7 @@ const { getFirestore } = require('../lib/firebase');
 const storage = require('../lib/storage');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { sameState, isNational, unknownStates, UNKNOWN_STATE_MSG } = require('../lib/states');
-const { parseTargetStates } = require('../lib/stateScope');
+const { parseTargetStates, canTouchTargets, scopedTargets, guardTargets, scopeState } = require('../lib/stateScope');
 const log = require('../lib/logger');
 
 const COLL = 'app_packs';
@@ -220,6 +220,10 @@ router.get('/file/:id/:version', async (req, res) => {
 
 // ── Admin ───────────────────────────────────────────────────────────────────
 router.use(authenticate, requirePerm('perm_publish_apps'));
+// A state publisher changes only packs aimed at their own state; all-India
+// packs stay with national staff.
+router.param('id', guardTargets(COLL));
+const OUT_OF_STATE = (req) => ({ error: `Your account can only manage ${scopeState(req)}.` });
 
 router.get('/template/:type', (req, res) => {
   const t = TEMPLATES[req.params.type];
@@ -292,6 +296,12 @@ router.post('/', upload.single('file'), async (req, res) => {
     const old = prev.exists ? prev.data() : null;
     if (old && old.type !== type) return res.status(400).json({ error: `Pack "${id}" is a ${old.type} pack; use another id` });
     if (old && old.sha256 === sha256) return res.status(400).json({ error: 'This file is the same as the current version' });
+    if (scopeState(req) !== null) { // state publisher: own state's packs only
+      if (old && !canTouchTargets(req, old.target_states)) return res.status(403).json(OUT_OF_STATE(req));
+      const t = scopedTargets(req, 'target_states' in body ? body.target_states : (old ? old.target_states : []));
+      if (!t) return res.status(403).json(OUT_OF_STATE(req));
+      body.target_states = t;
+    }
 
     const version = (old ? old.version || 0 : 0) + 1;
     const key = `app_packs/${id}/v${version}.json`;
@@ -333,7 +343,9 @@ router.put('/:id', async (req, res) => {
   try {
     const ref = getFirestore().collection(COLL).doc(String(req.params.id));
     if (!(await ref.get()).exists) return res.status(404).json({ error: 'Pack not found' });
-    await ref.set({ ...metaFrom(req.body || {}), updated_at: new Date(), updated_by: req.user.id }, { merge: true });
+    const meta = metaFrom(req.body || {});
+    if ('target_states' in meta && !canTouchTargets(req, meta.target_states)) return res.status(403).json(OUT_OF_STATE(req));
+    await ref.set({ ...meta, updated_at: new Date(), updated_by: req.user.id }, { merge: true });
     _dropCache();
     res.json({ ok: true });
   } catch (err) {
