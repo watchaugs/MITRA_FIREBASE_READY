@@ -1,5 +1,5 @@
 # ── builder ────────────────────────────────────────────────────────────────
-FROM node:20-bookworm-slim AS builder
+FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 
 # Install build deps for native modules (bcryptjs is JS so this is light)
@@ -12,7 +12,7 @@ RUN npm install --omit=dev
 COPY . .
 
 # ── runner (distroless for minimal attack surface) ─────────────────────────
-FROM gcr.io/distroless/nodejs20-debian12
+FROM gcr.io/distroless/nodejs22-debian12
 WORKDIR /app
 
 ENV NODE_ENV=production
