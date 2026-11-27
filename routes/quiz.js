@@ -804,8 +804,8 @@ router.post('/extract-subjects', requirePerm('perm_edit_curriculum'), async (req
 
 // ── GET /template — Download a blank XLSX question template ──────────────────
 // index.html calls this when admin clicks "Download Template"
-router.get('/template', requirePerm('perm_edit_curriculum'), (req, res) => {
-  const XLSX = require('xlsx');
+router.get('/template', requirePerm('perm_edit_curriculum'), async (req, res) => {
+  const { rowsToXlsx } = require('../lib/sheetExport');
   const rows = [
     {
       question_text: 'What is the powerhouse of the cell?',
@@ -821,15 +821,8 @@ router.get('/template', requirePerm('perm_edit_curriculum'), (req, res) => {
     },
   ];
 
-  const ws = XLSX.utils.json_to_sheet(rows);
-  // Set column widths
-  ws['!cols'] = [
-    { wch: 60 }, { wch: 30 }, { wch: 30 }, { wch: 30 }, { wch: 30 },
-    { wch: 10 }, { wch: 60 },
-  ];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Questions');
-  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  // Column widths: question, A–D, Answer, Explanation
+  const buf = await rowsToXlsx(rows, 'Questions', { widths: [60, 30, 30, 30, 30, 10, 60] });
 
   res.setHeader('Content-Disposition', 'attachment; filename="MITRA_Quiz_Template.xlsx"');
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -884,7 +877,7 @@ router.get('/analytics', async (req, res) => {
 // ── Change #32: Quiz analytics export (XLSX) ──────────────────────────────────
 router.get('/analytics/export', requirePerm('perm_export_data'), async (req, res) => {
   try {
-    const XLSX = require('xlsx');
+    const { rowsToXlsx } = require('../lib/sheetExport');
     const { rows, quizzes } = await loadAttempts(getFirestore(), req.query);
     const out = rows.map(a => ({
       'Quiz': (quizzes[a.quiz_id] || {}).title || a.quiz_id || '',
@@ -895,10 +888,7 @@ router.get('/analytics/export', requirePerm('perm_export_data'), async (req, res
       'State': a.state || '', 'District': a.district || '', 'Language': a.language || '',
       'Completed At': a.at ? new Date(a.at).toISOString() : '',
     }));
-    const ws = XLSX.utils.json_to_sheet(out);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Quiz Attempts');
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const buf = await rowsToXlsx(out, 'Quiz Attempts');
     res.setHeader('Content-Disposition', 'attachment; filename="Quiz_Analytics_Export.xlsx"');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);

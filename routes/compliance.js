@@ -2,7 +2,7 @@
 const router = require('express').Router();
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
-const XLSX = require('xlsx');
+const { rowsToXlsx, rowsToCsv } = require('../lib/sheetExport');
 const log = require('../lib/logger');
 const { sameState, isNational: isNationalState } = require('../lib/states');
 const { scopeState, canAccessState, filterByState } = require('../lib/stateScope');
@@ -718,10 +718,7 @@ router.get('/consent-log/export', requirePerm('perm_export_data'), async (req, r
         'Consents':        c.consents ? JSON.stringify(c.consents) : '',
       };
     });
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Consent Log');
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const buf = await rowsToXlsx(rows, 'Consent Log');
     res.setHeader('Content-Disposition', 'attachment; filename="Consent_Log_Export.xlsx"');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);
@@ -740,16 +737,13 @@ router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
     const rows = result.checks.map(c => ({
       'Check': c.label, 'Severity': c.severity, 'Status': c.pass ? 'Pass' : 'Fail',
     }));
-    const ws = XLSX.utils.json_to_sheet(rows);
     if (format === 'csv') {
-      const csv = XLSX.utils.sheet_to_csv(ws);
+      const csv = rowsToCsv(rows);
       res.setHeader('Content-Disposition', 'attachment; filename="Compliance_Export.csv"');
       res.setHeader('Content-Type', 'text/csv');
       return res.send(csv);
     }
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Compliance');
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const buf = await rowsToXlsx(rows, 'Compliance');
     res.setHeader('Content-Disposition', 'attachment; filename="Compliance_Export.xlsx"');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);

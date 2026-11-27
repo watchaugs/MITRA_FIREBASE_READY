@@ -12,7 +12,7 @@
 'use strict';
 
 const router = require('express').Router();
-const XLSX   = require('xlsx');
+const { rowsToXlsx, rowsToCsv } = require('../lib/sheetExport');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { runQuery, FQ_TABLE } = require('../lib/bq');
 const { runExport } = require('../lib/telemetry_exporter');
@@ -772,13 +772,8 @@ router.get('/export', requirePerm('perm_export_data'), async (req, res) => {
       });
     }
 
-    const ws = XLSX.utils.json_to_sheet(out);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'RAW_Sessions');
-
     const ext      = format === 'csv' ? 'csv' : 'xlsx';
-    const bookType = format === 'csv' ? 'csv' : 'xlsx';
-    const buf      = XLSX.write(wb, { type: 'buffer', bookType });
+    const buf      = format === 'csv' ? rowsToCsv(out) : await rowsToXlsx(out, 'RAW_Sessions');
 
     res.setHeader('Content-Disposition',
       `attachment; filename="MITRA_Analytics_${new Date().toISOString().slice(0, 10)}.${ext}"`);
