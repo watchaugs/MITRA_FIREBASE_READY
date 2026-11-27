@@ -17,7 +17,7 @@
     "@google-cloud/bigquery": "^8.3.1",
     "@google-cloud/secret-manager": "^5.5.0",
     "@google-cloud/storage": "^7.21.0",
-    "adm-zip": "^0.5.16",
+    "adm-zip": "^0.6.1",
     "assimpjs": "0.0.10",
     "axios": "^1.16.1",
     "bcryptjs": "^2.4.3",
@@ -43,7 +43,7 @@
     "pino": "^9.2.0",
     "pino-pretty": "^11.2.1",
     "pizzip": "^3.1.7",
-    "sharp": "^0.33.5",
+    "sharp": "^0.35.5",
     "uuid": "^9.0.1",
     "xlsx": "^0.18.5"
   },
