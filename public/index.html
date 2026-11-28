@@ -3776,8 +3776,18 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
           <button class="btn btn-s btn-sm" onclick="loadDataRequests()">🔄 Refresh</button>
         </div>
-        <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Erasure &amp; data-copy requests students filed from the app. DPDPA requires you to action these within the response window — oldest shown first.</div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Erasure &amp; data-copy requests students filed from the app. Each is due 30 days after it was filed (the privacy policy's promise; the legal limit is 90 days) — oldest shown first, overdue in red.</div>
         <div id="data-requests-list"><div style="font-size:12px;color:var(--text2);padding:8px">Click Refresh to load…</div></div>
+      </div>
+      <div style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;grid-column:1/-1">
+        <div style="font-size:13px;font-weight:600;margin-bottom:6px">🏠 Change a student's home state (helpdesk)</div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Only when a family has really moved and has contacted the helpdesk, Grievance Officer or DPO. National staff only; the change and the reason go to the audit log. The student sees the new state the next time the app starts.</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          <input id="hs-student-id" class="inp" placeholder="Student ID" style="flex:1 1 180px" autocomplete="off">
+          <select id="hs-state" class="inp" style="flex:1 1 180px"></select>
+          <input id="hs-reason" class="inp" placeholder="Reason / ticket number" style="flex:2 1 240px" autocomplete="off">
+          <button class="btn btn-p btn-sm" onclick="changeHomeState()">Change home state</button>
+        </div>
       </div>
       <div style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
         <div style="font-size:13px;font-weight:600;margin-bottom:6px">♻️ Auto-purge inactive students (12+ months)</div>
@@ -9876,7 +9886,8 @@ async function logIncident() {
     body: JSON.stringify({ type, severity, description, detected_at: new Date().toISOString() })
   });
   if (data?.success) {
-    showToast('🚨 Incident logged — report to CERT-In (incident@cert-in.org.in) by ' + data.cert_in_deadline);
+    showToast('🚨 Incident logged — report to CERT-In (incident@cert-in.org.in) by ' + data.cert_in_deadline
+      + '. If students\u2019 personal data is affected: tell them and the Data Protection Board now, and send the Board a detailed report by ' + data.dpdp_board_deadline + ' (DPDP Rules, Rule 7).');
     document.getElementById('incident-desc').value = '';
     loadAuditLogs();
   }
@@ -10726,7 +10737,7 @@ async function loadDataRequests() {
     listEl.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:8px">Could not load requests.</div>';
     return;
   }
-  if (badgeEl) badgeEl.textContent = (data.pending || 0) + ' pending';
+  if (badgeEl) badgeEl.textContent = (data.pending || 0) + ' pending' + (data.overdue ? ' · ' + data.overdue + ' overdue' : '');
   const rows = data.requests || [];
   if (!rows.length) {
     listEl.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:8px">No student data requests.</div>';
@@ -10742,7 +10753,7 @@ async function loadDataRequests() {
   listEl.innerHTML = `
     <table class="data-table" style="width:100%">
       <thead><tr>
-        <th>Student</th><th>Type</th><th>State / Class</th><th>Requested</th><th>Status</th><th>Action</th>
+        <th>Student</th><th>Type</th><th>State / Class</th><th>Requested</th><th>Due</th><th>Status</th><th>Action</th>
       </tr></thead>
       <tbody>
       ${rows.map(r => {
@@ -10754,6 +10765,7 @@ async function loadDataRequests() {
           <td>${typeLabel}</td>
           <td>${escHtml([r.state, r.class].filter(Boolean).join(' · ') || '—')}</td>
           <td>${fmtDate(r.requested_at)}</td>
+          <td style="${r.overdue ? 'color:#f87171;font-weight:600' : ''}">${r.due_at ? fmtDate(r.due_at) : '—'}${r.overdue ? ' · overdue' : ''}</td>
           <td><span class="tag ${isPending ? '' : 'tag-g'}">${status}</span></td>
           <td>${r.type !== 'deletion' && r.student_id
             ? `<button class="btn btn-s btn-xs" style="margin-right:4px" title="Download everything MITRA holds about this student (JSON) to send them" onclick="downloadDataCopy('${jsq(r.student_id)}')">⬇️ Data copy</button>`
@@ -10765,6 +10777,27 @@ async function loadDataRequests() {
       </tbody>
     </table>`;
 }
+
+// Helpdesk: change a student's home state when the family has moved (rule F1).
+async function changeHomeState() {
+  const id = (document.getElementById('hs-student-id').value || '').trim();
+  const state = document.getElementById('hs-state').value;
+  const reason = (document.getElementById('hs-reason').value || '').trim();
+  if (!id || !state || reason.length < 5) { showToast('⚠️ Enter the student ID, the new state and the reason.'); return; }
+  const data = await safeFetch('/api/compliance/students/' + encodeURIComponent(id) + '/home-state', {
+    method: 'POST', body: JSON.stringify({ state, reason })
+  });
+  if (data?.success) {
+    showToast('✅ Home state changed: ' + (data.from || '—') + ' → ' + data.to);
+    document.getElementById('hs-reason').value = '';
+  }
+}
+(function fillHomeStateOptions() {
+  const sel = document.getElementById('hs-state');
+  if (!sel || !Array.isArray(window.MITRA_STATES)) return;
+  sel.innerHTML = '<option value="">New home state…</option>' + window.MITRA_STATES
+    .map(s => '<option value="' + escHtml(s.name) + '">' + escHtml(s.name) + '</option>').join('');
+})();
 
 // DPDPA right of access: one JSON file with the student's profile, progress,
 // consent, quiz attempts and telemetry, for the officer to send to the family.

@@ -230,6 +230,7 @@ async function boot() {
   app.use('/api/compliance',   complianceRoutes);
   const consentLimiter = createRateLimiter({ windowMs: 60_000, max: 20, message: 'Too many consent requests.' });
   app.use('/api/consent',      consentLimiter, consentRoutes);
+  app.use('/api/public',       require('./routes/public_contact')); // DPO / grievance contact for the policy page
   app.use('/api/users',        usersRoutes);
   app.use('/api/ads',          advertisementsRoutes);
   app.use('/api/feedback',     feedbackRoutes);

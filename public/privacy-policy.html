@@ -97,7 +97,7 @@
   <li>AES-256 encryption at rest and TLS 1.3 in transit</li>
   <li>Multi-Factor Authentication (MFA) for all dashboard administrators</li>
   <li>Role-Based Access Control (RBAC) with least-privilege principles</li>
-  <li>180-day audit log retention as required by CERT-In 2022 directions</li>
+  <li>Audit logs kept for at least one year (currently 400 days), as required by the DPDP Rules 2025 (one-year minimum) and CERT-In 2022 directions (180 days)</li>
   <li>Regular penetration testing (quarterly)</li>
   <li>Incident Response Plan documented in INCIDENT_RESPONSE.md</li>
 </ul>
@@ -105,19 +105,19 @@
 <h2>9. Your Rights (DPDP Act 2023)</h2>
 <table>
   <tr><th>Right</th><th>What It Means</th><th>How to Exercise</th></tr>
-  <tr><td>Right to Access (§11)</td><td>Get a copy of your personal data</td><td>Email: dpo@mitra.gov.in</td></tr>
+  <tr><td>Right to Access (§11)</td><td>Get a copy of your personal data</td><td>In the app: Profile → Download my data → Request copy; or write to the DPO (section 13)</td></tr>
   <tr><td>Right to Correction (§12)</td><td>Correct inaccurate data</td><td>Dashboard settings or email</td></tr>
-  <tr><td>Right to Erasure (§12)</td><td>Request deletion of your data</td><td>Admin portal "Hard Delete" button</td></tr>
-  <tr><td>Right to Grievance (§13)</td><td>Raise complaints about data use</td><td>grievance@mitra.gov.in within 48 hrs</td></tr>
+  <tr><td>Right to Erasure (§12)</td><td>Request deletion of your data</td><td>In the app: Profile → Delete my account → Request deletion; or write to the DPO (section 13)</td></tr>
+  <tr><td>Right to Grievance (§13)</td><td>Raise complaints about data use</td><td>Grievance Officer (section 13), resolved within 30 days</td></tr>
   <tr><td>Right to Nominate (§14)</td><td>Nominate someone to exercise rights on death/incapacity</td><td>Written request to DPO</td></tr>
 </table>
 
 <h2>10. Data Retention &amp; Deletion</h2>
 <ul>
   <li>Active accounts: Data retained while account is active</li>
-  <li>Inactive accounts: Auto-purged after 12 months of inactivity</li>
+  <li>Inactive accounts: Erased after 12 months of inactivity. You are told at least 48 hours before; opening the app in that time keeps your account</li>
   <li>Deleted accounts: All personal data anonymised within 30 days of deletion request</li>
-  <li>Audit logs: Retained for 180 days as mandated by CERT-In directions (2022)</li>
+  <li>Audit logs: Retained for at least one year (currently 400 days), as required by the DPDP Rules 2025 and CERT-In directions (2022)</li>
   <li>Anonymised analytics: May be retained indefinitely for research purposes</li>
 </ul>
 
@@ -125,16 +125,17 @@
 <p>The MITRA Dashboard uses session cookies for authentication only. We do not use third-party advertising cookies. The student mobile app uses only essential functionality analytics.</p>
 
 <h2>12. Cross-Border Data Transfer</h2>
-<p>All personal data of Indian citizens is stored on servers physically located within India (Mumbai/Hyderabad AWS regions) in compliance with Section 16 of the DPDP Act 2023. No personal data is transferred outside India without explicit consent and data transfer agreements.</p>
+<p>All personal data of Indian citizens is stored on servers physically located within India (Google Cloud, Mumbai region, asia-south1) in compliance with Section 16 of the DPDP Act 2023. No personal data is transferred outside India without explicit consent and data transfer agreements.</p>
 
 <h2>13. Grievance Officer &amp; Data Protection Officer</h2>
-<div class="contact">
+<div class="contact" id="contact">
+  <!-- Filled from Legal & Compliance → Officers on the dashboard (GET /api/public/contact). -->
   <strong>Data Protection Officer (DPO):</strong><br>
-  MITRA EdTech Pvt. Ltd.<br>
-  Email: <a href="mailto:dpo@mitra.gov.in">dpo@mitra.gov.in</a><br>
-  Grievance: <a href="mailto:grievance@mitra.gov.in">grievance@mitra.gov.in</a><br>
+  <span id="dpo-line">Shown in the MITRA app under Profile → Grievance.</span><br>
+  <strong>Grievance Officer:</strong><br>
+  <span id="go-line">Shown in the MITRA app under Profile → Grievance.</span><br>
   Response time: Within 48 hours (business days)<br>
-  Grievance resolution: Within 30 days as required by DPDP Act<br>
+  Grievance resolution: Within 30 days (the DPDP Rules 2025 allow at most 90)<br>
   <br>
   <strong>Registered Address:</strong><br>
   MITRA EdTech Platform, Ministry of Education Initiative<br>
@@ -148,9 +149,30 @@
 <p>This Privacy Policy is governed by the laws of India, including the Information Technology Act 2000, the Digital Personal Data Protection Act 2023, and applicable CERT-In directions. Disputes shall be subject to the jurisdiction of courts in New Delhi.</p>
 
 <footer>
-  <p>© 2025 MITRA EdTech Platform | Privacy Policy v2.1 | <a href="terms-of-service.html">Terms of Service</a> | <a href="mailto:dpo@mitra.gov.in">Contact DPO</a></p>
+  <p>© 2025 MITRA EdTech Platform | Privacy Policy v2.1 | <a href="terms-of-service.html">Terms of Service</a> | <a href="#contact">Contact DPO</a></p>
   <p><em>यह गोपनीयता नीति डिजिटल व्यक्तिगत डेटा संरक्षण अधिनियम, 2023 के अनुसार तैयार की गई है।</em><br>
   <small>(This Privacy Policy is prepared in accordance with the Digital Personal Data Protection Act, 2023.)</small></p>
 </footer>
+<script>
+(function () {
+  function line(el, o) {
+    if (!el || !o) return;
+    el.textContent = '';
+    el.appendChild(document.createTextNode(o.name || ''));
+    if (o.email) {
+      el.appendChild(document.createTextNode(' \u00b7 '));
+      var a = document.createElement('a');
+      a.href = 'mailto:' + o.email; a.textContent = o.email;
+      el.appendChild(a);
+    }
+    if (o.phone) el.appendChild(document.createTextNode(' \u00b7 ' + o.phone));
+  }
+  fetch('/api/public/contact').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+    if (!d) return;
+    line(document.getElementById('dpo-line'), d.dpo);
+    line(document.getElementById('go-line'), d.grievance_officer);
+  }).catch(function () {});
+})();
+</script>
 </body>
 </html>

@@ -356,6 +356,15 @@ router.post('/refresh', async (req, res) => {
         claims = { id: decoded.id, ...staff.data() };
       } else if (app.exists) {
         const u = app.data() || {};
+        // The app renews its session at least every 8 hours of use, so this is
+        // the "still active" date for the 12-month inactivity rule (DPDP).
+        // last_login alone changes only on a fresh OTP sign-in. Written at most
+        // twice a day per student.
+        const lastActive = u.last_active_at && typeof u.last_active_at.toDate === 'function'
+          ? u.last_active_at.toDate().getTime() : (u.last_active_at ? new Date(u.last_active_at).getTime() : 0);
+        if (!(lastActive > Date.now() - 12 * 60 * 60 * 1000)) {
+          db.collection('app_users').doc(decoded.id).update({ last_active_at: new Date() }).catch(() => {});
+        }
         claims = {
           id: decoded.id,
           role: ['student', 'teacher'].includes(u.role) ? u.role : 'student',
@@ -423,6 +432,10 @@ router.post('/firebase', async (req, res) => {
     // Register this app-login session so its refresh token is revocable +
     // reuse-detected (same protection as the dashboard login path).
     refreshStore.openSession(userId, familyId, refreshToken).catch(() => {});
+    // Activity date for the 12-month inactivity rule (DPDP): a sign-in counts.
+    if (Object.keys(userData).length) {
+      db.collection('app_users').doc(userId).update({ last_active_at: new Date() }).catch(() => {});
+    }
 
     return res.json({
       access_token:  accessToken,

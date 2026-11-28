@@ -4,10 +4,13 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const { getFirestore } = require('../lib/firebase');
 const { rowsToXlsx, rowsToCsv } = require('../lib/sheetExport');
 const log = require('../lib/logger');
-const { sameState, isNational: isNationalState } = require('../lib/states');
+const { sameState, isNational: isNationalState, toName } = require('../lib/states');
 const { scopeState, canAccessState, filterByState } = require('../lib/stateScope');
 const { canGrantRole } = require('../middleware/auth');
 const { pickFields } = require('../lib/writeGuard');
+// Student data requests must be actioned within this many days (privacy policy).
+const REQUEST_DUE_DAYS = 30;
+
 // National-only compliance actions (global settings, all-India exports).
 const NATIONAL_ONLY = (req, res) => {
   if (scopeState(req) === null) return false;
@@ -308,27 +311,66 @@ router.post('/run-auto-purge', requirePerm('perm_manage_compliance'), async (req
     const db = getFirestore();
     const dryRun = req.body?.dry_run === true;
     // SAFETY: a student counts as inactive only when we can PROVE it — their last
-    // app sign-in (users/{id}.last_login) and their consent record are both older
-    // than 12 months. Students with no timestamps are never purged.
-    // (The old version checked a collection the app never writes to, so it would
-    // have anonymised every student.)
+    // app activity (app_users last_active_at / last_login) and their consent
+    // record are all older than 12 months. Students with no dates are never purged.
+    //
+    // DPDP Rules 2025, Rule 8(2): the student is told at least 48 hours before
+    // erasure. So this runs in two steps:
+    //   1. an inactive student without a notice gets one (push to their own
+    //      channel "student_<uid>", plus erasure_notice_at on the consent record);
+    //   2. only a student noticed 48+ hours ago and STILL inactive is erased.
+    // Any activity after the notice (the app renews its session) clears it.
+    const NOTICE_MS = 48 * 60 * 60 * 1000;
     const cutoff = Date.now() - 365 * 24 * 60 * 60 * 1000;
     const ms = (v) => (v && typeof v.toDate === 'function') ? v.toDate().getTime() : (v ? new Date(v).getTime() : 0);
     const consentSnap = await db.collection('consent_records').get();
     const candidates = consentSnap.docs.filter(d => !d.data().purged);
-    const toPurge = [];
+    const toPurge = [];   // noticed 48+ h ago and still inactive
+    const toNotice = [];  // inactive, not yet told
+    const waiting = [];   // told, 48 h not yet passed
+    const backActive = []; // told, but active again: clear the notice
     for (let i = 0; i < candidates.length; i += 100) {
       const chunk = candidates.slice(i, i + 100);
       const users = await db.getAll(...chunk.map(d => db.collection('app_users').doc(d.id)));
       chunk.forEach((d, k) => {
         const c = d.data();
         const u = users[k].exists ? users[k].data() : null;
-        const lastSeen = Math.max(ms(u && (u.last_login || u.last_login_at)), ms(c.granted_at), ms(c.revoked_at));
-        if (lastSeen > 0 && lastSeen < cutoff) toPurge.push(d);
+        const lastSeen = Math.max(ms(u && (u.last_login || u.last_login_at)), ms(u && u.last_active_at), ms(c.granted_at), ms(c.revoked_at));
+        const inactive = lastSeen > 0 && lastSeen < cutoff;
+        const noticed = ms(c.erasure_notice_at);
+        if (!inactive) { if (noticed) backActive.push(d); return; }
+        if (!noticed) toNotice.push(d);
+        else if (Date.now() - noticed >= NOTICE_MS && lastSeen < noticed) toPurge.push(d);
+        else waiting.push(d);
       });
     }
     if (dryRun) {
-      return res.json({ success: true, dry_run: true, would_purge: toPurge.length, checked: candidates.length });
+      return res.json({ success: true, dry_run: true, would_notify: toNotice.length, would_purge: toPurge.length,
+        waiting: waiting.length, checked: candidates.length });
+    }
+
+    // Step 1: notices. The push is best effort (an unused phone may never get
+    // it); the record is what proves the notice was given.
+    let notified = 0;
+    let messaging = null;
+    try { messaging = require('firebase-admin/messaging').getMessaging(); } catch (_) { /* no push in this environment */ }
+    for (const doc of toNotice) {
+      await doc.ref.set({ erasure_notice_at: new Date(), erasure_due_at: new Date(Date.now() + NOTICE_MS) }, { merge: true });
+      if (messaging && /^[A-Za-z0-9_-]{1,128}$/.test(doc.id)) {
+        await messaging.send({
+          topic: `student_${doc.id}`,
+          notification: {
+            title: 'Your MITRA account will be deleted',
+            body: 'You have not used MITRA for 12 months. Open the app within 48 hours to keep your learning record.',
+          },
+          data: { type: 'erasure_notice' },
+          android: { priority: 'high' },
+        }).catch((e) => log.warn({ err: e.message }, 'Erasure notice push failed'));
+      }
+      notified++;
+    }
+    for (const doc of backActive) {
+      await doc.ref.set({ erasure_notice_at: null, erasure_due_at: null }, { merge: true });
     }
     let purged = 0;
     for (const doc of toPurge) {
@@ -352,10 +394,11 @@ router.post('/run-auto-purge', requirePerm('perm_manage_compliance'), async (req
     }, { merge: true });
     await db.collection('audit_log').add({
       action: 'auto_purge_run', actor: req.user.id,
-      detail: { purged }, created_at: new Date(),
+      detail: { purged, notified, waiting: waiting.length, cleared: backActive.length }, created_at: new Date(),
     });
 
-    res.json({ success: true, purged, purged_count: purged, message: `Purge completed. ${purged} inactive account(s) anonymised.` });
+    res.json({ success: true, purged, purged_count: purged, notified, waiting: waiting.length,
+      message: `Purge completed. ${purged} inactive account(s) anonymised after the 48-hour notice; ${notified} notified now; ${waiting.length} within their 48 hours.` });
   } catch (err) {
     res.status(500).json({ error: 'Auto-purge failed', detail: err.message });
   }
@@ -555,10 +598,15 @@ router.post('/incident-report', requirePerm('perm_manage_compliance'), async (re
       detail: { incident_id: id, type: report.type || null }, created_at: new Date(),
     });
     // CERT-In Directions (2022): report within 6 hours of noticing the incident.
+    // DPDP Rules 2025, Rule 7: tell the Data Protection Board and affected
+    // students without delay, and send the Board a detailed report within 72 hours.
     const detected = report.detected_at || new Date();
     const deadline = new Date(detected.getTime() + 6 * 60 * 60 * 1000);
+    const boardDeadline = new Date(detected.getTime() + 72 * 60 * 60 * 1000);
+    const ist = (d) => d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST';
+    await db.collection('incident_reports').doc(id).set({ cert_in_due_at: deadline, dpdp_board_due_at: boardDeadline }, { merge: true });
     res.json({ success: true, id, incident_id: id,
-      cert_in_deadline: deadline.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST' });
+      cert_in_deadline: ist(deadline), dpdp_board_deadline: ist(boardDeadline) });
   } catch (err) {
     res.status(500).json({ error: 'Incident report failed' });
   }
@@ -575,8 +623,17 @@ router.get('/data-requests', requirePerm('perm_manage_compliance'), async (req, 
     let rows = filterByState(req, snap.docs.map(d => ({ id: d.id, ...d.data() }))); // officers: own state
     if (statusFilter) rows = rows.filter(r => (r.status || 'pending') === statusFilter);
     rows.sort((a, b) => toMs(a.requested_at) - toMs(b.requested_at));
+    // Due date: the privacy policy promises action within 30 days (the legal
+    // ceiling is 90 days, DPDP Rules 2025, Rule 14(3)).
+    const DUE_MS = REQUEST_DUE_DAYS * 24 * 60 * 60 * 1000;
+    for (const r of rows) {
+      const at = toMs(r.requested_at);
+      r.due_at = at > 0 ? new Date(at + DUE_MS).toISOString() : null;
+      r.overdue = (r.status || 'pending') === 'pending' && at > 0 && Date.now() > at + DUE_MS;
+    }
     const pending = rows.filter(r => (r.status || 'pending') === 'pending').length;
-    res.json({ requests: rows, total: rows.length, pending });
+    const overdue = rows.filter(r => r.overdue).length;
+    res.json({ requests: rows, total: rows.length, pending, overdue, due_days: REQUEST_DUE_DAYS });
   } catch (err) {
     log.error({ err: err.message }, 'Failed to load data requests');
     res.status(500).json({ error: 'Failed to load data requests' });
@@ -762,6 +819,36 @@ router.get('/status', requirePerm('perm_view_legal'), async (req, res) => {
   } catch (err) {
     log.error({ err: err.message }, 'live compliance status failed');
     res.status(500).json({ error: 'Could not evaluate compliance status' });
+  }
+});
+
+// ── POST /students/:id/home-state ── helpdesk correction when a family really
+// moves (business rule F1). The app can never change its own home state
+// (firestore.rules); national staff can, with a reason, and it is audited.
+router.post('/students/:id/home-state', requirePerm('perm_manage_compliance'), async (req, res) => {
+  if (NATIONAL_ONLY(req, res)) return;
+  try {
+    const id = String(req.params.id || '');
+    const newState = toName(req.body?.state || '');
+    const reason = String(req.body?.reason || '').trim().slice(0, 500);
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) return res.status(400).json({ error: 'Invalid student id' });
+    if (!newState || isNationalState(newState)) return res.status(400).json({ error: 'Choose a valid state' });
+    if (reason.length < 5) return res.status(400).json({ error: 'Give the reason (for example, the helpdesk ticket number)' });
+    const db = getFirestore();
+    const ref = db.collection('app_users').doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) return res.status(404).json({ error: 'Student not found' });
+    const oldState = doc.data().assigned_state || null;
+    if (oldState && sameState(oldState, newState)) return res.status(400).json({ error: `Home state is already ${newState}` });
+    await ref.update({ assigned_state: newState, home_state_changed_at: new Date(), home_state_changed_by: req.user.id });
+    await db.collection('audit_log').add({
+      action: 'home_state_changed', actor: req.user.id,
+      detail: { student_id: id, from: oldState, to: newState, reason }, created_at: new Date(),
+    });
+    log.info({ studentId: id, from: oldState, to: newState }, 'Home state changed by staff');
+    res.json({ success: true, student_id: id, from: oldState, to: newState });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not change the home state' });
   }
 });
 
